@@ -1,4 +1,4 @@
-import type { Chat, ChatId, ChatMessage, ChatUiState } from "./types"
+import type { Chat, ChatId, ChatMessage, ChatMessageAttachment, ChatUiState } from "./types"
 
 export const NEW_CHAT_TITLE = "New chat"
 export const MOCK_ASSISTANT_REPLY = "Got it. (UI-only reply)"
@@ -43,9 +43,13 @@ export function selectChat(state: ChatUiState, chatId: ChatId): ChatUiState {
   }
 }
 
-export function sendMessage(state: ChatUiState, content: string): ChatUiState {
+export function sendMessage(
+  state: ChatUiState,
+  content: string,
+  attachments: ChatMessageAttachment[] = []
+): ChatUiState {
   const trimmed = content.trim()
-  if (trimmed === "") {
+  if (trimmed === "" && attachments.length === 0) {
     return state
   }
 
@@ -54,7 +58,7 @@ export function sendMessage(state: ChatUiState, content: string): ChatUiState {
     const chat: Chat = {
       id: createId(),
       title: titleFromContent(trimmed),
-      messages: [userMessage(trimmed), assistantReply()],
+      messages: [userMessage(trimmed, attachments), assistantReply()],
     }
     return {
       chats: [chat, ...state.chats],
@@ -70,18 +74,30 @@ export function sendMessage(state: ChatUiState, content: string): ChatUiState {
       return {
         ...chat,
         title:
-          chat.title === NEW_CHAT_TITLE
+          chat.title === NEW_CHAT_TITLE && trimmed.length > 0
             ? titleFromContent(trimmed)
             : chat.title,
-        messages: [...chat.messages, userMessage(trimmed), assistantReply()],
+        messages: [
+          ...chat.messages,
+          userMessage(trimmed, attachments),
+          assistantReply(),
+        ],
       }
     }),
     activeChatId: active.id,
   }
 }
 
-function userMessage(content: string): ChatMessage {
-  return { id: createId(), role: "user", content }
+function userMessage(
+  content: string,
+  attachments: ChatMessageAttachment[]
+): ChatMessage {
+  return {
+    id: createId(),
+    role: "user",
+    content,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  }
 }
 
 function assistantReply(): ChatMessage {

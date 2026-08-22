@@ -2,10 +2,18 @@ export type ChatId = string
 export type MessageId = string
 export type MessageRole = "user" | "assistant"
 
+export type ChatMessageAttachment = {
+  id: string
+  name: string
+  mimeType: string
+  previewUrl: string
+}
+
 export type ChatMessage = {
   id: MessageId
   role: MessageRole
   content: string
+  attachments?: ChatMessageAttachment[]
 }
 
 export type Chat = {

@@ -3,39 +3,21 @@
 import { useState } from "react"
 
 import { ChatMain } from "@/components/chat/chat-main"
-import { ChatSidebar } from "@/components/chat/chat-sidebar"
-import { SidebarProvider } from "@/components/ui/sidebar"
 import { initialChatUiState } from "@/lib/chat/seed"
-import {
-  createChat,
-  getActiveChat,
-  selectChat,
-  sendMessage,
-} from "@/lib/chat/state"
-import type { ChatId } from "@/lib/chat/types"
+import { getActiveChat, sendMessage } from "@/lib/chat/state"
 
 export function ChatWorkspace() {
   const [state, setState] = useState(initialChatUiState)
   const activeChat = getActiveChat(state)
 
   return (
-    <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
-      <ChatSidebar
-        chats={state.chats}
-        activeChatId={state.activeChatId}
-        onSelect={(chatId: ChatId) => {
-          setState((current) => selectChat(current, chatId))
-        }}
-        onNewChat={() => {
-          setState(createChat)
-        }}
-      />
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
       <ChatMain
         chat={activeChat}
-        onSend={(content) => {
-          setState((current) => sendMessage(current, content))
+        onSend={(content, attachments) => {
+          setState((current) => sendMessage(current, content, attachments))
         }}
       />
-    </SidebarProvider>
+    </div>
   )
 }

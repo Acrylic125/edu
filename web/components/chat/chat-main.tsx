@@ -1,15 +1,17 @@
 "use client"
 
+import Link from "next/link"
+import { Settings } from "lucide-react"
+
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { MessageList } from "@/components/chat/message-list"
-import { Separator } from "@/components/ui/separator"
-import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
-import type { Chat } from "@/lib/chat/types"
+import { Button } from "@/components/ui/button"
+import type { Chat, ChatMessageAttachment } from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
 type ChatMainProps = {
   chat: Chat | null
-  onSend: (content: string) => void
+  onSend: (content: string, attachments: ChatMessageAttachment[]) => void
 }
 
 export function ChatMain({ chat, onSend }: ChatMainProps) {
@@ -17,18 +19,25 @@ export function ChatMain({ chat, onSend }: ChatMainProps) {
   const hasMessages = chat !== null && chat.messages.length > 0
 
   return (
-    <SidebarInset className="min-h-0 overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-        <SidebarTrigger />
-        <Separator orientation="vertical" className="h-4" />
-        <h1 className="truncate text-sm font-medium">
-          {chat === null ? "Pick a chat" : chat.title}
+        <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
+          {chat === null ? "Chat" : chat.title}
         </h1>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Settings"
+          nativeButton={false}
+          render={<Link href="/settings" />}
+        >
+          <Settings />
+        </Button>
       </header>
 
       {chat === null ? (
         <div className="flex flex-1 items-center justify-center px-4">
-          <p className="text-sm text-muted-foreground">Pick a chat</p>
+          <p className="text-sm text-muted-foreground">No chat selected</p>
         </div>
       ) : (
         <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -70,6 +79,6 @@ export function ChatMain({ chat, onSend }: ChatMainProps) {
           </div>
         </div>
       )}
-    </SidebarInset>
+    </div>
   )
 }
