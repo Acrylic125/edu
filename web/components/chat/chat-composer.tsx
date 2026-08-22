@@ -9,7 +9,7 @@ import {
 } from "@/components/chat/composer-attachments"
 import { ComposerHighlightText } from "@/components/chat/composer-highlight-text"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
   ingestComposerImageFiles,
@@ -152,7 +152,7 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative flex min-h-28 w-full flex-col rounded-2xl border border-border/80 bg-input/50 shadow-lg backdrop-blur-xl",
+          "relative flex min-h-28 w-full flex-col rounded-2xl border border-border/80 bg-input/25 shadow-lg backdrop-blur-xl",
           isDragOver && "border-primary/60 ring-2 ring-primary/20",
           className
         )}
@@ -262,15 +262,18 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
             </Button>
           </div>
 
-          <Button
+          <button
             type="submit"
-            size="icon-sm"
-            disabled={!canSend}
             aria-label="Send"
-            className="rounded-full"
+            {...(!canSend ? { "aria-disabled": true as const, tabIndex: -1 } : {})}
+            className={cn(
+              buttonVariants({ size: "icon-sm" }),
+              "rounded-full",
+              !canSend && "pointer-events-none opacity-50"
+            )}
           >
             <ArrowUpIcon />
-          </Button>
+          </button>
         </div>
       </form>
 
