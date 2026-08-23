@@ -2,7 +2,8 @@ import { ChatDurableObject, EDU_USER_ID_HEADER } from "./do/chat";
 import { createDb } from "../db/client";
 import { selectTopic } from "./chat/select-topic";
 import { requireUser } from "./lib/auth-middleware";
-import { listUserTopics } from "./topics/repository";
+import { loadAllMessages, toResponseMessage } from "./messages/persistence";
+import { getCurrentTopic, listUserTopics } from "./topics/repository";
 
 export { ChatDurableObject };
 
@@ -116,6 +117,44 @@ export default {
 			}
 
 			return withCors(env, request, jsonResponse({ success: true, topicId }));
+		}
+
+		if (url.pathname === "/topics/current/messages" && request.method === "GET") {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) {
+				return withCors(env, request, authResult);
+			}
+
+			if (!env.DB) {
+				return withCors(
+					env,
+					request,
+					jsonResponse({ error: "DB is not configured" }, 500),
+				);
+			}
+
+			const db = createDb(env.DB);
+			const current = await getCurrentTopic(db, authResult.userId);
+			if (!current) {
+				return withCors(
+					env,
+					request,
+					jsonResponse({ topic: null, messages: [] }),
+				);
+			}
+
+			const messages = await loadAllMessages(db, current.topic.id);
+			return withCors(
+				env,
+				request,
+				jsonResponse({
+					topic: {
+						id: current.topic.id,
+						title: current.topic.title,
+					},
+					messages: messages.map(toResponseMessage),
+				}),
+			);
 		}
 
 		if (url.pathname === "/topics" && request.method === "GET") {

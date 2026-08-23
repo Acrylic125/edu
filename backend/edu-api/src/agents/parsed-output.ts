@@ -39,11 +39,10 @@ export type ProposedUpdate = z.infer<typeof ProposedUpdateSchema>;
 export function parseJsonFromLlm<T extends z.ZodType>(
 	schema: T,
 	response: string,
-	fallback: z.infer<T>,
 ) {
 	const jsonMatch = response.match(/\{[\s\S]*\}/);
 	if (!jsonMatch) {
-		return fallback;
+		return null;
 	}
 
 	try {
@@ -52,8 +51,8 @@ export function parseJsonFromLlm<T extends z.ZodType>(
 			return result.data;
 		}
 	} catch {
-		return fallback;
+		return null;
 	}
 
-	return fallback;
+	return null;
 }

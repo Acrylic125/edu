@@ -1,11 +1,15 @@
 import type { AgentContext } from "./context";
+import { formatMessagesForModel } from "./context";
 import type { AgentRunner } from "../agents/runner";
+import type { PersistedTopicMessage } from "../messages/schema";
+import { partsToText } from "../messages/parts";
 
 export type IntentType =
 	| "new-topic"
 	| "update-topic"
 	| "answer"
-	| "new-question";
+	| "new-question"
+	| "chat";
 
 export type DeducedIntent = {
 	type: IntentType;
@@ -21,7 +25,7 @@ export const EXPLICIT_COMMANDS: Array<{
 	{ prefix: "/update ", type: "update-topic" },
 	{ prefix: "/ans ", type: "answer" },
 	{ prefix: "/new-qns ", type: "new-question" },
-	{ prefix: "/topic ", type: "answer" },
+	{ prefix: "/topic ", type: "chat" },
 ];
 
 export function parseExplicitCommand(message: string): DeducedIntent | null {
@@ -43,46 +47,108 @@ export function parseExplicitCommand(message: string): DeducedIntent | null {
 	if (trimmed === "/update") return { type: "update-topic", message: "" };
 	if (trimmed === "/ans") return { type: "answer", message: "" };
 	if (trimmed === "/new-qns") return { type: "new-question", message: "" };
-	if (trimmed === "/topic") return { type: "answer", message: "" };
+	if (trimmed === "/topic") return { type: "chat", message: "" };
 
 	return null;
 }
 
-export async function deduceIntent(
-	message: string,
-	context: AgentContext,
-	runner: AgentRunner,
-) {
-	const explicit = parseExplicitCommand(message);
-	if (explicit) {
-		await runner.recordRoutingStep("deduce_intent", { message }, explicit);
-		return explicit;
-	}
+const NEW_QUESTION_RE =
+	/\b(new\s*qns?|new\s*qn|new\s*questions?|another\s+question|similar\s+question|try\s+(a\s+)?similar|quiz\s+me|test\s+me)\b/i;
 
-	if (!context.topic) {
-		const intent: DeducedIntent = { type: "new-topic", message };
-		await runner.recordRoutingStep("deduce_intent", { message }, intent);
-		return intent;
+export function lastPracticeQuestion(
+	messages: PersistedTopicMessage[],
+): string | null {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message || message.role !== "agent") {
+			continue;
+		}
+		if (message.parts.some((part) => part.type === "proposal")) {
+			continue;
+		}
+		const text = partsToText(
+			message.parts.filter(
+				(part) => part.type === "text" || part.type === "options",
+			),
+		).trim();
+		if (text === "") {
+			continue;
+		}
+		if (looksLikePracticeQuestion(text)) {
+			return text;
+		}
 	}
-
-	const intent = await inferFromRaw(message, context, runner);
-	await runner.recordRoutingStep("deduce_intent", { message }, intent);
-	return intent;
+	return null;
 }
 
-async function inferFromRaw(
+function looksLikePracticeQuestion(text: string) {
+	if (/practice question/i.test(text)) {
+		return true;
+	}
+	if (/\?/.test(text)) {
+		return true;
+	}
+	if (/\b(compute|evaluate|simplify|find|let )\b/i.test(text)) {
+		return true;
+	}
+	return false;
+}
+
+export function looksLikeStudentWork(text: string) {
+	const trimmed = text.trim();
+	if (trimmed === "") {
+		return false;
+	}
+	const letters = (trimmed.match(/[A-Za-z]/g) ?? []).length;
+	const digits = (trimmed.match(/\d/g) ?? []).length;
+	if (digits >= 2 && letters <= 16) {
+		return true;
+	}
+	const lines = trimmed.split(/\n/).filter((line) => line.trim() !== "");
+	if (lines.length >= 2) {
+		const numericLines = lines.every((line) =>
+			/^[\d\s.,+\-eE]+$/.test(line.trim()),
+		);
+		if (numericLines) {
+			return true;
+		}
+	}
+	return false;
+}
+
+export function deduceObviousIntent(
+	message: string,
+	context: AgentContext,
+): DeducedIntent | null {
+	const trimmed = message.trim();
+	if (NEW_QUESTION_RE.test(trimmed)) {
+		return { type: "new-question", message };
+	}
+	const lastQuestion = lastPracticeQuestion(context.recentMessages);
+	if (lastQuestion && looksLikeStudentWork(trimmed)) {
+		return { type: "answer", message };
+	}
+	return null;
+}
+
+export async function inferFromRaw(
 	message: string,
 	context: AgentContext,
 	runner: AgentRunner,
 ) {
 	const parts = [
-		"Classify the user's intent into exactly one of: new-topic, update-topic, answer, new-question.",
+		"Classify the user's intent into exactly one of: new-topic, update-topic, answer, new-question, chat.",
 		"",
 		"Definitions:",
 		"- new-topic: user wants to start learning a new subject",
 		"- update-topic: user wants to change their learning plan or topic focus",
-		"- answer: user is asking a question or submitting a solution to be evaluated",
+		"- answer: user is submitting a solution to be graded",
 		"- new-question: user wants a practice question or quiz",
+		"- chat: user wants an explanation or discussion, not grading",
+		"",
+		"Execute when the intent is clear. Use chat only when the message is discussion or truly ambiguous.",
+		"If they ask for a new, similar, or another question, classify new-question.",
+		"If the last assistant message was a practice question and they sent numbers, a matrix, or working, classify answer.",
 		"",
 	];
 	if (context.topic) {
@@ -90,6 +156,10 @@ async function inferFromRaw(
 	}
 	if (context.topic?.part) {
 		parts.push(`Current focus: ${context.topic.part}`);
+	}
+	if (context.recentMessages.length > 0) {
+		parts.push("Recent conversation:");
+		parts.push(formatMessagesForModel(context.recentMessages));
 	}
 	const systemContext = parts.join("\n");
 
@@ -103,20 +173,23 @@ async function inferFromRaw(
 	const normalized = response.trim().toLowerCase();
 
 	if (normalized.includes("new-topic") || normalized.includes("new_topic")) {
-		return { type: "new-topic", message };
+		return { type: "new-topic" as const, message };
 	}
 	if (
 		normalized.includes("update-topic") ||
 		normalized.includes("update_topic")
 	) {
-		return { type: "update-topic", message };
+		return { type: "update-topic" as const, message };
 	}
 	if (
 		normalized.includes("new-question") ||
 		normalized.includes("new_question")
 	) {
-		return { type: "new-question", message };
+		return { type: "new-question" as const, message };
+	}
+	if (normalized.includes("answer")) {
+		return { type: "answer" as const, message };
 	}
 
-	return { type: "answer", message };
+	return { type: "chat" as const, message };
 }

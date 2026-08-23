@@ -1,49 +1,52 @@
-import type { Db } from "../../db/client";
 import type { AgentRunner } from "../agents/runner";
 import { buildSystemContext, type AgentContext } from "./context";
+import { lastPracticeQuestion } from "./intent";
 import {
-	createTopicMessage,
-	toResponseMessage,
-} from "../messages/persistence";
+	MATH_MARKDOWN_RULE,
+	optionLabel,
+	shortFocus,
+} from "./option-label";
 import { optionsPart, textPart } from "../messages/parts";
+import type { MessagePart } from "../messages/schema";
 
 export async function executeNewQuestion(
-	db: Db,
 	runner: AgentRunner,
 	context: AgentContext,
 	message: string,
-	topicId: string,
+	onDelta: (text: string) => void,
 ) {
 	const systemContext = buildSystemContext(context);
-	const part = context.topic?.part ?? "the current topic";
+	const part = shortFocus(context.topic?.part ?? "the current topic");
+	const previous = lastPracticeQuestion(context.recentMessages);
 
-	const questionText = await runner.llmCall({
+	runner.announce("Writing a question");
+	const instructions = [
+		systemContext,
+		"",
+		`Generate a practice question appropriate for: ${part}`,
+		"Write a variant of the last practice question.",
+		"Keep the same skill and structure.",
+		"Change the numbers and the concrete setup so it is not a copy.",
+		"Do not switch topics or skills.",
+		"Consider the student's demonstrated proficiency and recent mistakes.",
+		"Do not include hints.",
+		MATH_MARKDOWN_RULE,
+	];
+	if (previous) {
+		instructions.push("", "Last practice question:", previous);
+	}
+
+	const questionText = await runner.llmStream({
 		name: "generate_question",
-		instructions: [
-			systemContext,
-			"",
-			`Generate a practice question appropriate for: ${part}`,
-			"Consider the student's demonstrated proficiency and recent mistakes.",
-			"Do not repeat questions from recent history.",
-			"Write a clear, specific question.",
-		].join("\n"),
-		input: message || `Generate a question on ${part}`,
+		instructions: instructions.join("\n"),
+		input: message || `Generate a similar question on ${part}`,
+		onChunk: onDelta,
 	});
 
-	const msg = await createTopicMessage(db, {
-		topicId,
-		role: "agent",
-		parts: [
-			textPart(questionText),
-			optionsPart([
-				"Give me a hint",
-				"Another question",
-				`Explain ${part}`,
-			]),
-		],
-	});
+	const parts: MessagePart[] = [
+		textPart(questionText),
+		optionsPart(["Another question", optionLabel("Explain", part)]),
+	];
 
-	return {
-		messages: [toResponseMessage(msg)],
-	};
+	return { parts };
 }

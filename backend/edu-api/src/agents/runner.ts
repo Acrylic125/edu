@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agentRun, agentStep, modelUsage } from "../../db/schema";
 import { nanoid } from "nanoid";
-import { callLlm, type LlmEnv } from "./llm";
+import { callLlm, streamLlm, type LlmEnv } from "./llm";
+import { drainWordChunks, flushWords } from "../chat/word-buffer";
 
 const PROVIDER = "openrouter";
 
@@ -15,18 +16,32 @@ export class AgentRunner {
 	private llmEnv: LlmEnv;
 	readonly runId: string;
 	private topicId: string | null;
+	private signal: AbortSignal | undefined;
 	private sequence = 0;
+
+	private onProgress: ((label: string) => void) | undefined;
 
 	constructor(options: {
 		db: Db;
 		llmEnv: LlmEnv;
 		runId: string;
 		topicId: string | null;
+		signal?: AbortSignal;
+		onProgress?: (label: string) => void;
 	}) {
 		this.db = options.db;
 		this.llmEnv = options.llmEnv;
 		this.runId = options.runId;
 		this.topicId = options.topicId;
+		this.signal = options.signal;
+		this.onProgress = options.onProgress;
+	}
+
+	announce(label: string) {
+		if (!this.onProgress) {
+			return;
+		}
+		this.onProgress(label);
 	}
 
 	private async nextSequence() {
@@ -42,6 +57,10 @@ export class AgentRunner {
 		error?: string;
 	}) {
 		const stepId = `step_${nanoid()}`;
+		if (!this.topicId) {
+			return stepId;
+		}
+
 		const sequence = await this.nextSequence();
 
 		await this.db.insert(agentStep).values({
@@ -79,7 +98,62 @@ export class AgentRunner {
 			const result = await callLlm(this.llmEnv, {
 				instructions: params.instructions,
 				input: params.input,
+				signal: this.signal,
 			});
+
+			await this.db
+				.update(agentStep)
+				.set({ output: { text: result.text } })
+				.where(eq(agentStep.id, stepId));
+
+			if (this.topicId) {
+				await this.recordModelUsage(stepId, result);
+			}
+
+			return result.text;
+		} catch (error) {
+			const errorMessage =
+				error instanceof Error ? error.message : "LLM call failed";
+			await this.db
+				.update(agentStep)
+				.set({ error: errorMessage })
+				.where(eq(agentStep.id, stepId));
+			throw error;
+		}
+	}
+
+	async llmStream(params: {
+		name: string;
+		stepType?: string;
+		instructions: string;
+		input: string;
+		onChunk: (text: string) => void;
+	}) {
+		const stepId = await this.recordStep({
+			type: params.stepType ?? "llm",
+			name: params.name,
+			input: { instructions: params.instructions, input: params.input },
+		});
+
+		try {
+			let pending = "";
+			const result = await streamLlm(this.llmEnv, {
+				instructions: params.instructions,
+				input: params.input,
+				signal: this.signal,
+				onDelta: async (delta) => {
+					pending = await drainWordChunks(
+						pending,
+						delta,
+						params.onChunk,
+					);
+				},
+			});
+
+			const remainder = flushWords(pending);
+			if (remainder.flush !== "") {
+				params.onChunk(remainder.flush);
+			}
 
 			await this.db
 				.update(agentStep)
@@ -166,12 +240,15 @@ export async function createAgentRun(
 	db: Db,
 	llmEnv: LlmEnv,
 	params: {
+		runId?: string;
 		topicId: string | null;
 		userMessageId: string;
 		intent: string | null;
+		signal?: AbortSignal;
+		onProgress?: (label: string) => void;
 	},
 ) {
-	const runId = `run_${nanoid()}`;
+	const runId = params.runId ?? `run_${nanoid()}`;
 
 	if (params.topicId) {
 		await db.insert(agentRun).values({
@@ -189,6 +266,8 @@ export async function createAgentRun(
 		llmEnv,
 		runId,
 		topicId: params.topicId,
+		signal: params.signal,
+		onProgress: params.onProgress,
 	});
 }
 

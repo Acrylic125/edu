@@ -12,4 +12,5 @@ export const initialChatUiState: ChatUiState = {
   ],
   activeChatId: seedChatId,
   connection: { status: "connecting" },
+  activity: { status: "idle" },
 }

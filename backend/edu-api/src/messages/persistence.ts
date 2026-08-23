@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import type { Db } from "../../db/client";
@@ -38,6 +38,27 @@ export async function createTopicMessage(
 		role: input.role,
 		parts: input.parts,
 		createdAt: now,
+	});
+}
+
+export async function loadAllMessages(db: Db, topicId: string) {
+	const rows = await db
+		.select()
+		.from(topicMessage)
+		.where(eq(topicMessage.topicId, topicId))
+		.orderBy(asc(topicMessage.createdAt));
+
+	return rows.map((row) => {
+		const partsResult = MessagePartsSchema.safeParse(row.parts);
+		const parts = partsResult.success ? partsResult.data : [];
+
+		return PersistedTopicMessageSchema.parse({
+			id: row.id,
+			topicId: row.topicId,
+			role: MessageRoleSchema.parse(row.role),
+			parts,
+			createdAt: row.createdAt,
+		});
 	});
 }
 

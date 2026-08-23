@@ -6,34 +6,45 @@ import { Settings } from "lucide-react"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { MessageList } from "@/components/chat/message-list"
 import { Button } from "@/components/ui/button"
-import type { Chat, ChatConnection, ChatMessageAttachment } from "@/lib/chat/types"
+import type {
+  Chat,
+  ChatActivity,
+  ChatConnection,
+  ChatMessageAttachment,
+} from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
 type ChatMainProps = {
   chat: Chat | null
   connection: ChatConnection
-  composerDisabled: boolean
+  activity: ChatActivity
   onSend: (content: string, attachments: ChatMessageAttachment[]) => void
+  onStop: () => void
+  onOption: (label: string) => void
+  onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }
 
-function connectionLabel(connection: ChatConnection) {
+function connectionLabel(connection: ChatConnection, activity: ChatActivity) {
   if (connection.status === "connecting") {
     return "Connecting"
   }
-  if (connection.status === "ready") {
-    return "Online"
-  }
-  if (connection.status === "busy") {
+  if (connection.status === "error") {
     return connection.message
   }
-  return connection.message
+  if (activity.status === "running") {
+    return "Working…"
+  }
+  return "Online"
 }
 
 export function ChatMain({
   chat,
   connection,
-  composerDisabled,
+  activity,
   onSend,
+  onStop,
+  onOption,
+  onDecision,
 }: ChatMainProps) {
   const isEmptyChat = chat !== null && chat.messages.length === 0
   const hasMessages = chat !== null && chat.messages.length > 0
@@ -50,7 +61,7 @@ export function ChatMain({
           {chat === null ? "Chat" : chat.title}
         </h1>
         <p className={cn("shrink-0 text-xs", statusClassName)}>
-          {connectionLabel(connection)}
+          {connectionLabel(connection, activity)}
         </p>
         <Button
           variant="ghost"
@@ -76,7 +87,11 @@ export function ChatMain({
             )}
             aria-hidden={!hasMessages}
           >
-            <MessageList messages={chat.messages} />
+            <MessageList
+              messages={chat.messages}
+              onOption={onOption}
+              onDecision={onDecision}
+            />
           </div>
 
           <div
@@ -105,7 +120,9 @@ export function ChatMain({
               <ChatComposer
                 key={chat.id}
                 onSend={onSend}
-                disabled={composerDisabled}
+                onStop={onStop}
+                connection={connection}
+                activity={activity}
               />
             </div>
           </div>

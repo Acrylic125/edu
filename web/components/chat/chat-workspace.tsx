@@ -5,13 +5,19 @@ import { useState } from "react"
 import { ChatMain } from "@/components/chat/chat-main"
 import { useSession } from "@/lib/auth-client"
 import { initialChatUiState } from "@/lib/chat/seed"
-import { applyServerMessage, getActiveChat, sendMessage } from "@/lib/chat/state"
+import { getActiveChat, reduceChat } from "@/lib/chat/state"
+import type { ChatUiState } from "@/lib/chat/types"
 import { getChatWebSocketUrl, useChatWebSocket } from "@/lib/chat/ws"
-import { WsChatClientMessageSchema, WsServerMessageSchema } from "@/lib/chat/ws-schema"
+import {
+  WsChatClientDecisionSchema,
+  WsChatClientMessageSchema,
+  WsChatClientStopSchema,
+  WsServerMessageSchema,
+} from "@/lib/chat/ws-schema"
 
-export function ChatWorkspace() {
+export function ChatWorkspace({ initial }: { initial?: ChatUiState }) {
   const session = useSession()
-  const [state, setState] = useState(initialChatUiState)
+  const [state, setState] = useState(initial ?? initialChatUiState)
   const activeChat = getActiveChat(state)
 
   let socketUrl: string | null = null
@@ -26,53 +32,73 @@ export function ChatWorkspace() {
         if (!parsed.success) {
           return
         }
-        setState((current) => applyServerMessage(current, parsed.data))
+        setState((current) =>
+          reduceChat(current, { type: "ws", message: parsed.data })
+        )
       } catch {
         return
       }
     },
     onClose: () => {
-      setState((current) => ({
-        ...current,
-        connection: { status: "connecting" },
-      }))
+      setState((current) => reduceChat(current, { type: "socket_closed" }))
     },
   })
 
-  const composerDisabled =
-    state.connection.status === "connecting" ||
-    state.connection.status === "busy"
+  function sendUserText(content: string) {
+    if (state.connection.status !== "ready") {
+      return
+    }
+    if (state.activity.status === "running") {
+      return
+    }
+    const messageId = crypto.randomUUID()
+    const text = content.trim()
+    if (text === "") {
+      return
+    }
+    setState((current) =>
+      reduceChat(current, {
+        type: "user_sent",
+        messageId,
+        content: text,
+        attachments: [],
+      })
+    )
+    sendJsonMessage(
+      WsChatClientMessageSchema.parse({
+        type: "message",
+        message: messageId,
+        parts: [{ type: "text", content: text }],
+      })
+    )
+  }
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
       <ChatMain
         chat={activeChat}
         connection={state.connection}
-        composerDisabled={composerDisabled}
+        activity={state.activity}
         onSend={(content, attachments) => {
-          if (composerDisabled) {
+          if (state.connection.status !== "ready") {
             return
           }
-          if (!session.data) {
+          if (state.activity.status === "running") {
             return
           }
           const messageId = crypto.randomUUID()
           const text = content.trim()
-          const userId = session.data.user.id
-          setState((current) => {
-            const next = sendMessage(current, content, attachments, messageId)
-            if (text === "") {
-              return next
-            }
-            return {
-              ...next,
-              connection: {
-                status: "busy",
-                userId,
-                message: "Working…",
-              },
-            }
-          })
+          if (text === "" && attachments.length === 0) {
+            return
+          }
+          setState((current) =>
+            reduceChat(current, {
+              type: "user_sent",
+              messageId,
+              content: text,
+              attachments,
+            })
+          )
           if (text === "") {
             return
           }
@@ -81,6 +107,38 @@ export function ChatWorkspace() {
               type: "message",
               message: messageId,
               parts: [{ type: "text", content: text }],
+            })
+          )
+        }}
+        onStop={() => {
+          if (state.activity.status !== "running") {
+            return
+          }
+          if (state.activity.runId === "") {
+            return
+          }
+          sendJsonMessage(
+            WsChatClientStopSchema.parse({
+              type: "stop",
+              runId: state.activity.runId,
+            })
+          )
+        }}
+        onOption={(label) => {
+          sendUserText(label)
+        }}
+        onDecision={(proposalId, decision) => {
+          if (state.connection.status !== "ready") {
+            return
+          }
+          if (state.activity.status === "running") {
+            return
+          }
+          sendJsonMessage(
+            WsChatClientDecisionSchema.parse({
+              type: "decision",
+              proposalId,
+              decision,
             })
           )
         }}

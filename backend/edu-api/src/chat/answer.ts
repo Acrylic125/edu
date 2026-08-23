@@ -1,79 +1,73 @@
-import type { Db } from "../../db/client";
 import type { AgentRunner } from "../agents/runner";
 import {
 	parseJsonFromLlm,
 	QuestionIdentificationSchema,
 } from "../agents/parsed-output";
 import { buildSystemContext, type AgentContext } from "./context";
-import {
-	createTopicMessage,
-	toResponseMessage,
-} from "../messages/persistence";
+import { lastPracticeQuestion } from "./intent";
 import { optionsPart, textPart } from "../messages/parts";
+import type { MessagePart } from "../messages/schema";
+import { MATH_MARKDOWN_RULE, shortFocus } from "./option-label";
 import { determineDomain, verifySolution } from "../verification/verify";
 
 export async function executeAnswer(
-	db: Db,
 	runner: AgentRunner,
 	context: AgentContext,
 	message: string,
-	topicId: string,
+	onDelta: (text: string) => void,
+	questionOverride?: string,
 ) {
 	const systemContext = buildSystemContext(context);
 
-	const questionResult = await runner.llmCall({
-		name: "identify_question",
-		instructions: [
-			systemContext,
-			"",
-			"Identify the question or problem the user is trying to answer.",
-			'Respond in JSON: {"found": boolean, "question": string, "candidates": string[]}',
-			"If no question found, set found to false.",
-			"If multiple possible questions, list them in candidates.",
-		].join("\n"),
-		input: message,
-	});
-
-	const identified = parseJsonFromLlm(
-		QuestionIdentificationSchema,
-		questionResult,
-		{ found: true, question: questionResult, candidates: [] },
-	);
-
-	if (!identified.found) {
-		const msg = await createTopicMessage(db, {
-			topicId,
-			role: "agent",
-			parts: [
-				textPart("No question found. What are you trying to answer?"),
-			],
+	let question =
+		questionOverride ?? lastPracticeQuestion(context.recentMessages) ?? "";
+	if (question === "") {
+		runner.announce("Identifying the question");
+		const questionResult = await runner.llmCall({
+			name: "identify_question",
+			instructions: [
+				systemContext,
+				"",
+				"Identify the question or problem the user is trying to answer.",
+				'Respond in JSON: {"found": boolean, "question": string, "candidates": string[]}',
+				"If no question found, set found to false.",
+				"If multiple possible questions, list them in candidates.",
+			].join("\n"),
+			input: message,
 		});
-		return { messages: [toResponseMessage(msg)] };
+
+		const identified = parseJsonFromLlm(
+			QuestionIdentificationSchema,
+			questionResult,
+		);
+
+		if (!identified || !identified.found) {
+			return {
+				parts: [
+					textPart("No question found. What are you trying to answer?"),
+				],
+			};
+		}
+
+		if (identified.candidates.length > 1) {
+			return {
+				parts: [optionsPart(identified.candidates)],
+			};
+		}
+
+		question = identified.question;
 	}
 
-	if (identified.candidates.length > 1) {
-		const msg = await createTopicMessage(db, {
-			topicId,
-			role: "agent",
-			parts: [optionsPart(identified.candidates)],
-		});
-		return { messages: [toResponseMessage(msg)] };
-	}
-
-	const question = identified.question;
-
+	runner.announce("Checking your answer");
 	const domain = await determineDomain(
 		runner,
 		context.topic?.summary ?? "",
 	);
 
 	if (domain !== "STEM") {
-		const msg = await createTopicMessage(db, {
-			topicId,
-			role: "agent",
+		return {
 			parts: [textPart("Currently supports STEM subjects.")],
-		});
-		return { messages: [toResponseMessage(msg)] };
+		};
 	}
 
 	const verification = await verifySolution(runner, {
@@ -82,18 +76,22 @@ export async function executeAnswer(
 		domain,
 	});
 
-	const responseText = await runner.llmCall({
+	runner.announce("Writing a response");
+	const responseText = await runner.llmStream({
 		name: "generate_response",
 		instructions: [
 			systemContext,
 			"",
 			"Based on the verification results, explain what is correct, what is incorrect and why, and what the learner should do next.",
 			"Be encouraging but precise.",
+			"Do not offer hints as follow-up options.",
+			MATH_MARKDOWN_RULE,
 		].join("\n"),
 		input: JSON.stringify({ question, verification }),
+		onChunk: onDelta,
 	});
 
-	const part = context.topic?.part ?? "the current topic";
+	const part = shortFocus(context.topic?.part ?? "the current topic");
 	let followUpLabels: string[];
 	if (verification.correct) {
 		followUpLabels = [
@@ -101,16 +99,37 @@ export async function executeAnswer(
 			`Try another question on ${part}`,
 		];
 	} else {
-		followUpLabels = ["New Related Question"];
+		followUpLabels = ["Try a similar question"];
 	}
 
-	const msg = await createTopicMessage(db, {
-		topicId,
-		role: "agent",
-		parts: [textPart(responseText), optionsPart(followUpLabels)],
+	const parts: MessagePart[] = [
+		textPart(responseText),
+		optionsPart(followUpLabels),
+	];
+
+	return { parts };
+}
+
+export async function executeExplanation(
+	runner: AgentRunner,
+	context: AgentContext,
+	message: string,
+	onDelta: (text: string) => void,
+) {
+	const systemContext = buildSystemContext(context);
+	const responseText = await runner.llmStream({
+		name: "generate_response",
+		instructions: [
+			systemContext,
+			"",
+			"Answer the student's question clearly. Do not grade them. Do not change the learning plan.",
+			MATH_MARKDOWN_RULE,
+		].join("\n"),
+		input: message,
+		onChunk: onDelta,
 	});
 
 	return {
-		messages: [toResponseMessage(msg)],
+		parts: [textPart(responseText)],
 	};
 }

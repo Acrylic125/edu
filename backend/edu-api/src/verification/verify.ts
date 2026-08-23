@@ -41,12 +41,16 @@ export async function verifySolution(
 			input,
 		});
 
-		return parseJsonFromLlm(VerificationResultSchema, response, {
-			correct: false,
-			partiallyCorrect: false,
-			feedback: response,
-			errors: [],
-		});
+		const parsed = parseJsonFromLlm(VerificationResultSchema, response);
+		if (!parsed) {
+			return {
+				correct: false,
+				partiallyCorrect: false,
+				feedback: "Verification could not be completed.",
+				errors: ["Model did not return valid verification JSON"],
+			};
+		}
+		return parsed;
 	} catch (error) {
 		return {
 			correct: false,

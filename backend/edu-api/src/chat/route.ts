@@ -1,274 +1,765 @@
+import { nanoid } from "nanoid";
+
 import type { Db } from "../../db/client";
 import { createAgentRun } from "../agents/runner";
-import { callLlm, type LlmEnv } from "../agents/llm";
+import type { LlmEnv } from "../agents/llm";
 import {
 	parseJsonFromLlm,
+	ProposedUpdateSchema,
+	QuestionIdentificationSchema,
 	TopicGenerationSchema,
 } from "../agents/parsed-output";
-import { executeAnswer } from "./answer";
+import { executeAnswer, executeExplanation } from "./answer";
 import {
 	loadChatContext,
 	maybeScheduleSummaryUpdate,
+	type AgentContext,
 } from "./context";
-import { deduceIntent, parseExplicitCommand } from "./intent";
+import {
+	deduceObviousIntent,
+	inferFromRaw,
+	lastPracticeQuestion,
+	parseExplicitCommand,
+	type DeducedIntent,
+} from "./intent";
 import { executeNewQuestion } from "./new-question";
 import { executeNewTopicContinuation } from "./new-topic";
-import { executeUpdateTopic } from "./update-topic";
+import { shortFocus, TOPIC_PART_RULE } from "./option-label";
+import { applyTopicUpdate, generateTopicUpdate } from "./update-topic";
+import { createTopicMessage } from "../messages/persistence";
 import {
-	createTopicMessage,
-	toResponseMessage,
-} from "../messages/persistence";
-import { partsToText, textPart, optionsPart } from "../messages/parts";
-import { ChatRequestSchema, type ChatRequest } from "../messages/schema";
+	partsToText,
+	proposalPart,
+	textPart,
+} from "../messages/parts";
 import {
-	createTopic,
-	setCurrentTopic,
-} from "../topics/repository";
+	ChatRequestSchema,
+	type ChatRequest,
+	type MessagePart,
+	type Proposal,
+} from "../messages/schema";
+import { createTopic, setCurrentTopic } from "../topics/repository";
+import { flushWords, pushWords } from "./word-buffer";
+
+export type ChatRunIo = {
+	signal: AbortSignal;
+	runId: string;
+	assistantMessageId: string;
+	userMessageId: string;
+	onDelta: (partIndex: number, text: string) => void;
+	onProgress: (label: string) => void;
+};
+
+export type StoredProposal = {
+	proposalId: string;
+	prompt: string;
+	proposal: Proposal;
+};
+
+export type ChatTurnResult = {
+	parts: MessagePart[];
+	topicId?: string;
+	pendingProposal: StoredProposal | null;
+};
+
+export type Route =
+	| { type: "command"; intent: DeducedIntent }
+	| { type: "reply"; message: string }
+	| { type: "proposal"; prompt: string; proposal: Proposal };
+
+function emitVisible(io: ChatRunIo, text: string) {
+	const pushed = pushWords("", text);
+	if (pushed.flush !== "") {
+		io.onDelta(0, pushed.flush);
+	}
+	const rest = flushWords(pushed.pending);
+	if (rest.flush !== "") {
+		io.onDelta(0, rest.flush);
+	}
+}
 
 export async function handleChat(
 	db: Db,
 	llmEnv: LlmEnv,
 	userId: string,
 	body: object,
+	io: ChatRunIo,
 ) {
 	const parsed = ChatRequestSchema.parse(body);
 	const messageText = partsToText(parsed.parts);
-
 	const context = await loadChatContext(db, userId, messageText);
 
-	if (!context.topic) {
-		return handleNoTopic(db, llmEnv, userId, parsed, context);
-	}
-
-	const topicId = context.topic.id;
-
-	const userMsg = await createTopicMessage(db, {
-		id: parsed.message,
-		topicId,
-		role: "user",
-		parts: parsed.parts,
-	});
-
 	const runner = await createAgentRun(db, llmEnv, {
-		topicId,
-		userMessageId: userMsg.id,
+		runId: io.runId,
+		topicId: context.topic?.id ?? null,
+		userMessageId: io.userMessageId,
 		intent: null,
+		signal: io.signal,
+		onProgress: io.onProgress,
 	});
 
 	try {
-		const intent = await deduceIntent(messageText, context, runner);
-
-		const outputMessages = await dispatchIntent(
+		runner.announce("Reading your message");
+		const route = await routeMessage(messageText, context, runner);
+		const result = await fulfillRoute(
 			db,
 			runner,
 			context,
-			intent,
-			topicId,
+			io,
+			parsed,
+			route,
 		);
-
 		await runner.complete();
-		await maybeScheduleSummaryUpdate(db, runner, topicId, userId);
-
-		return {
-			messages: outputMessages,
-			runId: runner.runId,
-			topicId,
-		};
+		if (result.topicId) {
+			await maybeScheduleSummaryUpdate(
+				db,
+				runner,
+				result.topicId,
+				userId,
+			);
+		}
+		return result;
 	} catch (error) {
+		if (io.signal.aborted) {
+			await runner.complete("cancelled");
+			throw error;
+		}
 		await runner.fail(error instanceof Error ? error : String(error));
-
-		const errorMsg = await createTopicMessage(db, {
-			topicId,
-			role: "agent",
+		return {
 			parts: [
 				textPart("I couldn't complete that request. Please try again."),
 			],
-		});
-
-		return {
-			messages: [toResponseMessage(errorMsg)],
-			runId: runner.runId,
-			topicId,
+			topicId: context.topic?.id,
+			pendingProposal: null,
 		};
 	}
 }
 
-async function handleNoTopic(
+export async function handleDecision(
 	db: Db,
 	llmEnv: LlmEnv,
 	userId: string,
-	request: ChatRequest,
-	context: Awaited<ReturnType<typeof loadChatContext>>,
+	stored: StoredProposal,
+	decision: "accept" | "reject",
+	io: ChatRunIo,
 ) {
-	const messageText = partsToText(request.parts);
-	const explicit = parseExplicitCommand(messageText);
-	const topicContent = explicit?.message || messageText || "General learning";
+	const context = await loadChatContext(db, userId, "");
 
-	const generated = await callLlm(llmEnv, {
-		instructions: [
-			"Generate a learning topic from the user's request.",
-			'Respond in JSON: {"title": string, "summary": string, "part": string}',
-			"summary must be plain text describing what the student is learning.",
-			"part is a short semantic description of where to start.",
-		].join("\n"),
-		input: topicContent,
-	});
-
-	const topicMeta = parseJsonFromLlm(TopicGenerationSchema, generated.text, {
-		title: topicContent.slice(0, 80),
-		summary: `Student wants to learn about ${topicContent}.`,
-		part: "understanding the basics",
-	});
-
-	const topic = await createTopic(db, {
-		userId,
-		title: topicMeta.title,
-		summary: topicMeta.summary,
-		part: topicMeta.part,
-	});
-
-	await setCurrentTopic(db, userId, topic.id, topicMeta.part);
-
-	const userMsg = await createTopicMessage(db, {
-		id: request.message,
-		topicId: topic.id,
-		role: "user",
-		parts: request.parts,
-	});
+	if (context.topic) {
+		await createTopicMessage(db, {
+			id: io.userMessageId,
+			topicId: context.topic.id,
+			role: "user",
+			parts: [textPart(decision === "accept" ? "Confirm" : "Cancel")],
+		});
+	}
 
 	const runner = await createAgentRun(db, llmEnv, {
-		topicId: topic.id,
-		userMessageId: userMsg.id,
-		intent: "new-topic",
+		runId: io.runId,
+		topicId: context.topic?.id ?? null,
+		userMessageId: io.userMessageId,
+		intent: stored.proposal.kind,
+		signal: io.signal,
+		onProgress: io.onProgress,
 	});
 
 	try {
-		const result = await executeNewTopicContinuation(
+		if (decision === "reject") {
+			const text = "Okay, I won't do that.";
+			emitVisible(io, text);
+			await runner.complete();
+			return {
+				parts: [textPart(text)],
+				topicId: context.topic?.id,
+				pendingProposal: null,
+			};
+		}
+
+		const result = await acceptProposal(
 			db,
 			runner,
-			{
-				...context,
-				topic: {
-					id: topic.id,
-					title: topicMeta.title,
-					summary: topicMeta.summary,
-					part: topicMeta.part,
-				},
-			},
-			topicMeta,
+			context,
+			io,
+			stored.proposal,
 		);
-
 		await runner.complete();
-
-		return {
-			messages: result.messages,
-			runId: runner.runId,
-			topicId: topic.id,
-		};
+		if (result.topicId) {
+			await maybeScheduleSummaryUpdate(
+				db,
+				runner,
+				result.topicId,
+				userId,
+			);
+		}
+		return result;
 	} catch (error) {
+		if (io.signal.aborted) {
+			await runner.complete("cancelled");
+			throw error;
+		}
 		await runner.fail(error instanceof Error ? error : String(error));
 		return {
-			messages: [
-				toResponseMessage({
-					id: "error",
-					topicId: topic.id,
-					role: "agent",
-					parts: [
-						textPart(
-							"I couldn't complete that request. Please try again.",
-						),
-					],
-					createdAt: new Date(),
-				}),
+			parts: [
+				textPart("I couldn't complete that request. Please try again."),
 			],
-			runId: runner.runId,
-			topicId: topic.id,
+			topicId: context.topic?.id,
+			pendingProposal: null,
 		};
 	}
 }
 
-async function dispatchIntent(
+export async function routeMessage(
+	messageText: string,
+	context: AgentContext,
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+) {
+	const explicit = parseExplicitCommand(messageText);
+	if (explicit) {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "command", intent: explicit },
+		);
+		return { type: "command", intent: explicit } satisfies Route;
+	}
+
+	if (!context.topic) {
+		const proposal = await proposeCreateTopic(runner, messageText);
+		if (!proposal) {
+			await runner.recordRoutingStep(
+				"route",
+				{ message: messageText },
+				{ type: "reply" },
+			);
+			return { type: "reply", message: messageText } satisfies Route;
+		}
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "proposal", kind: proposal.proposal.kind },
+		);
+		return proposal;
+	}
+
+	const obvious = deduceObviousIntent(messageText, context);
+	if (obvious) {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "command", intent: obvious },
+		);
+		return { type: "command", intent: obvious } satisfies Route;
+	}
+
+	const inferred = await inferFromRaw(messageText, context, runner);
+
+	if (inferred.type === "chat") {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "reply" },
+		);
+		return { type: "reply", message: messageText } satisfies Route;
+	}
+
+	if (inferred.type === "new-topic") {
+		const proposal = await proposeCreateTopic(runner, messageText);
+		if (!proposal) {
+			return { type: "reply", message: messageText } satisfies Route;
+		}
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "proposal", kind: "create-topic" },
+		);
+		return proposal;
+	}
+
+	if (inferred.type === "update-topic") {
+		const generated = await runner.llmCall({
+			name: "propose_update",
+			instructions: [
+				buildUpdateInstructions(context),
+				"",
+				"The user may want to change their learning plan.",
+				`Respond in JSON: {"shouldUpdate": boolean, "title": string, "summary": string, "part": string, "explanation": string}. ${TOPIC_PART_RULE}`,
+				"If shouldUpdate is false, explain why no update is needed.",
+			].join("\n"),
+			input: messageText,
+		});
+		const parsed = parseJsonFromLlm(ProposedUpdateSchema, generated);
+		if (!parsed || !parsed.shouldUpdate) {
+			return { type: "reply", message: messageText } satisfies Route;
+		}
+		const prompt =
+			parsed.explanation ?? "Update your learning plan as follows?";
+		return {
+			type: "proposal",
+			prompt,
+			proposal: {
+				kind: "update-topic",
+				title: parsed.title,
+				summary: parsed.summary,
+				part: parsed.part,
+				explanation: parsed.explanation,
+			},
+		} satisfies Route;
+	}
+
+	if (inferred.type === "new-question") {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "command", intent: inferred },
+		);
+		return { type: "command", intent: inferred } satisfies Route;
+	}
+
+	const lastQuestion = lastPracticeQuestion(context.recentMessages);
+	if (lastQuestion) {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "command", intent: inferred },
+		);
+		return { type: "command", intent: inferred } satisfies Route;
+	}
+
+	const identifiedRaw = await runner.llmCall({
+		name: "identify_question",
+		instructions: [
+			"Identify the question or problem the user is trying to answer.",
+			'Respond in JSON: {"found": boolean, "question": string, "candidates": string[]}',
+		].join("\n"),
+		input: messageText,
+	});
+	const identified = parseJsonFromLlm(
+		QuestionIdentificationSchema,
+		identifiedRaw,
+	);
+	if (!identified || !identified.found) {
+		return { type: "reply", message: messageText } satisfies Route;
+	}
+
+	await runner.recordRoutingStep(
+		"route",
+		{ message: messageText },
+		{ type: "command", intent: inferred },
+	);
+	return { type: "command", intent: inferred } satisfies Route;
+}
+
+async function proposeCreateTopic(
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+	messageText: string,
+) {
+	const generated = await runner.llmCall({
+		name: "generate_topic",
+		instructions: [
+			"Generate a learning topic from the user's request.",
+			`Respond in JSON: {"title": string, "summary": string, "part": string}. ${TOPIC_PART_RULE}`,
+		].join("\n"),
+		input: messageText || "General learning",
+	});
+	const topicMeta = parseJsonFromLlm(TopicGenerationSchema, generated);
+	if (!topicMeta) {
+		return null;
+	}
+	return {
+		type: "proposal" as const,
+		prompt: `Start learning "${topicMeta.title}"?`,
+		proposal: {
+			kind: "create-topic" as const,
+			title: topicMeta.title,
+			summary: topicMeta.summary,
+			part: shortFocus(topicMeta.part),
+		},
+	};
+}
+
+function buildUpdateInstructions(context: AgentContext) {
+	if (!context.topic) {
+		return "The student has no current topic.";
+	}
+	return [
+		`Topic: ${context.topic.title}`,
+		`Summary: ${context.topic.summary}`,
+		context.topic.part ? `Current focus: ${context.topic.part}` : "",
+	]
+		.filter((line) => line.length > 0)
+		.join("\n");
+}
+
+async function fulfillRoute(
 	db: Db,
 	runner: Awaited<ReturnType<typeof createAgentRun>>,
-	context: Awaited<ReturnType<typeof loadChatContext>>,
-	intent: Awaited<ReturnType<typeof deduceIntent>>,
-	topicId: string,
+	context: AgentContext,
+	io: ChatRunIo,
+	request: ChatRequest,
+	route: Route,
+) {
+	if (route.type === "command") {
+		return executeCommand(db, runner, context, io, request, route.intent);
+	}
+	if (route.type === "reply") {
+		runner.announce("Writing a response");
+		const { parts } = await executeExplanation(
+			runner,
+			context,
+			route.message,
+			(text) => {
+				io.onDelta(0, text);
+			},
+		);
+		return {
+			parts,
+			topicId: context.topic?.id,
+			pendingProposal: null,
+		};
+	}
+
+	emitVisible(io, route.prompt);
+	const proposalId = `prop_${nanoid()}`;
+	const pendingProposal: StoredProposal = {
+		proposalId,
+		prompt: route.prompt,
+		proposal: route.proposal,
+	};
+	return {
+		parts: [
+			textPart(route.prompt),
+			proposalPart(proposalId, route.prompt, route.proposal),
+		],
+		topicId: context.topic?.id,
+		pendingProposal,
+	};
+}
+
+async function executeCommand(
+	db: Db,
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+	context: AgentContext,
+	io: ChatRunIo,
+	request: ChatRequest,
+	intent: DeducedIntent,
 ) {
 	switch (intent.type) {
-		case "new-topic": {
-			const generated = await runner.llmCall({
-				name: "generate_topic",
-				instructions: [
-					"Generate a learning topic from the user's request.",
-					'Respond in JSON: {"title": string, "summary": string, "part": string}',
-				].join("\n"),
-				input: intent.message || "General learning",
-			});
-			const topicMeta = parseJsonFromLlm(
-				TopicGenerationSchema,
-				generated,
-				{
-					title: (intent.message || "General learning").slice(0, 80),
-					summary: `Student wants to learn about ${intent.message || "this topic"}.`,
-					part: "understanding the basics",
-				},
+		case "new-topic":
+			return executeCreateTopicCommand(
+				db,
+				runner,
+				context,
+				io,
+				request,
+				intent.message,
 			);
+		case "update-topic": {
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			runner.announce("Updating your plan");
+			const update = await generateTopicUpdate(
+				runner,
+				context,
+				intent.message,
+			);
+			if (!update) {
+				return {
+					parts: [
+						textPart(
+							"I couldn't parse that plan update. Try /update again.",
+						),
+					],
+					topicId: context.topic.id,
+					pendingProposal: null,
+				};
+			}
+			const applied = await applyTopicUpdate(
+				db,
+				context,
+				context.topic.id,
+				update,
+			);
+			emitVisible(io, "Learning plan updated!");
+			return {
+				parts: applied.parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
+		}
+		case "new-question": {
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			const { parts } = await executeNewQuestion(
+				runner,
+				context,
+				intent.message,
+				(text) => {
+				io.onDelta(0, text);
+			},
+			);
+			return {
+				parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
+		}
+		case "answer": {
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			const lastQuestion = lastPracticeQuestion(context.recentMessages);
+			const { parts } = await executeAnswer(
+				runner,
+				context,
+				intent.message,
+				(text) => {
+					io.onDelta(0, text);
+				},
+				lastQuestion ?? undefined,
+			);
+			return {
+				parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
+		}
+		case "chat": {
+			runner.announce("Writing a response");
+			const { parts } = await executeExplanation(
+				runner,
+				context,
+				intent.message,
+				(text) => {
+				io.onDelta(0, text);
+			},
+			);
+			return {
+				parts,
+				topicId: context.topic?.id,
+				pendingProposal: null,
+			};
+		}
+		default: {
+			const _exhaustive: never = intent.type;
+			return _exhaustive;
+		}
+	}
+}
+
+async function executeCreateTopicCommand(
+	db: Db,
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+	context: AgentContext,
+	io: ChatRunIo,
+	request: ChatRequest,
+	message: string,
+) {
+	runner.announce("Drafting a topic");
+	const generated = await runner.llmCall({
+		name: "generate_topic",
+		instructions: [
+			"Generate a learning topic from the user's request.",
+			`Respond in JSON: {"title": string, "summary": string, "part": string}. ${TOPIC_PART_RULE}`,
+		].join("\n"),
+		input: message || "General learning",
+	});
+	const topicMeta = parseJsonFromLlm(TopicGenerationSchema, generated);
+	if (!topicMeta) {
+		return {
+			parts: [
+				textPart(
+					"I couldn't create that topic. Try /new with a clearer subject.",
+				),
+			],
+			topicId: context.topic?.id,
+			pendingProposal: null,
+		};
+	}
+
+	const part = shortFocus(topicMeta.part);
+	const topic = await createTopic(db, {
+		userId: context.userId,
+		title: topicMeta.title,
+		summary: topicMeta.summary,
+		part,
+	});
+	await setCurrentTopic(db, context.userId, topic.id, part);
+
+	if (!context.topic) {
+		await createTopicMessage(db, {
+			id: request.message,
+			topicId: topic.id,
+			role: "user",
+			parts: request.parts,
+		});
+	}
+
+	const nextContext = {
+		...context,
+		topic: {
+			id: topic.id,
+			title: topicMeta.title,
+			summary: topicMeta.summary,
+			part,
+		},
+	};
+	runner.announce("Writing an introduction");
+	const { parts } = await executeNewTopicContinuation(
+		runner,
+		nextContext,
+		topicMeta,
+		(text) => {
+			io.onDelta(0, text);
+		},
+	);
+	return {
+		parts,
+		topicId: topic.id,
+		pendingProposal: null,
+	};
+}
+
+async function acceptProposal(
+	db: Db,
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+	context: AgentContext,
+	io: ChatRunIo,
+	proposal: Proposal,
+) {
+	switch (proposal.kind) {
+		case "create-topic": {
+			const part = shortFocus(proposal.part);
 			const topic = await createTopic(db, {
 				userId: context.userId,
-				title: topicMeta.title,
-				summary: topicMeta.summary,
-				part: topicMeta.part,
+				title: proposal.title,
+				summary: proposal.summary,
+				part,
 			});
-			await setCurrentTopic(db, context.userId, topic.id, topicMeta.part);
-			const result = await executeNewTopicContinuation(
+			await setCurrentTopic(
 				db,
-				runner,
-				{
-					...context,
-					topic: {
-						id: topic.id,
-						title: topicMeta.title,
-						summary: topicMeta.summary,
-						part: topicMeta.part,
-					},
+				context.userId,
+				topic.id,
+				part,
+			);
+			if (!context.topic) {
+				await createTopicMessage(db, {
+					id: io.userMessageId,
+					topicId: topic.id,
+					role: "user",
+					parts: [textPart("Yes")],
+				});
+			}
+			const nextContext = {
+				...context,
+				topic: {
+					id: topic.id,
+					title: proposal.title,
+					summary: proposal.summary,
+					part,
 				},
-				topicMeta,
+			};
+			runner.announce("Writing an introduction");
+			const { parts } = await executeNewTopicContinuation(
+				runner,
+				nextContext,
+				proposal,
+				(text) => {
+				io.onDelta(0, text);
+			},
 			);
-			return result.messages;
+			return {
+				parts,
+				topicId: topic.id,
+				pendingProposal: null,
+			};
 		}
-
 		case "update-topic": {
-			const { messages } = await executeUpdateTopic(
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			const applied = await applyTopicUpdate(
 				db,
-				runner,
 				context,
-				intent.message,
-				topicId,
+				context.topic.id,
+				{
+					title: proposal.title,
+					summary: proposal.summary,
+					part: proposal.part,
+				},
 			);
-			return messages;
+			emitVisible(io, "Learning plan updated!");
+			return {
+				parts: applied.parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
 		}
-
 		case "new-question": {
-			const { messages } = await executeNewQuestion(
-				db,
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			const { parts } = await executeNewQuestion(
 				runner,
 				context,
-				intent.message,
-				topicId,
+				proposal.message,
+				(text) => {
+				io.onDelta(0, text);
+			},
 			);
-			return messages;
+			return {
+				parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
 		}
-
-		case "answer":
-		default: {
-			const { messages } = await executeAnswer(
-				db,
+		case "grade-answer": {
+			if (!context.topic) {
+				return {
+					parts: [textPart("Start a topic with /new first.")],
+					topicId: undefined,
+					pendingProposal: null,
+				};
+			}
+			const { parts } = await executeAnswer(
 				runner,
 				context,
-				intent.message,
-				topicId,
+				proposal.solution,
+				(text) => {
+				io.onDelta(0, text);
+			},
+				proposal.question,
 			);
-			return messages;
+			return {
+				parts,
+				topicId: context.topic.id,
+				pendingProposal: null,
+			};
+		}
+		default: {
+			const _exhaustive: never = proposal;
+			return _exhaustive;
 		}
 	}
 }

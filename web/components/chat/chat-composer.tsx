@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from "react"
-import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react"
+import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
 
 import {
   ComposerImageStrip,
@@ -16,12 +16,20 @@ import {
   revokeComposerImageAttachment,
   type ComposerImageAttachment,
 } from "@/lib/chat/composer-images"
-import type { ChatMessageAttachment } from "@/lib/chat/types"
+import { sendAffordance as composerSendAffordance } from "@/lib/chat/state"
+import type {
+  ChatActivity,
+  ChatConnection,
+  ChatMessageAttachment,
+  SendAffordance,
+} from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
 type ChatComposerProps = {
   onSend: (content: string, attachments: ChatMessageAttachment[]) => void
-  disabled?: boolean
+  onStop: () => void
+  connection: ChatConnection
+  activity: ChatActivity
   className?: string
 }
 
@@ -33,7 +41,9 @@ const COMPOSER_MIRROR_CLASS =
 
 export function ChatComposer({
   onSend,
-  disabled = false,
+  onStop,
+  connection,
+  activity,
   className,
 }: ChatComposerProps) {
   const [draft, setDraft] = useState("")
@@ -46,8 +56,14 @@ export function ChatComposer({
   const imagesRef = useRef(images)
   imagesRef.current = images
 
-  const canSend =
-    !disabled && (draft.trim() !== "" || images.length > 0)
+  const sendAffordance = composerSendAffordance(
+    connection,
+    activity,
+    draft,
+    images.length > 0
+  )
+
+  const canSend = sendAffordance === "send"
 
   useEffect(() => {
     return () => {
@@ -82,7 +98,7 @@ export function ChatComposer({
   }
 
   function submit() {
-    if (!canSend || disabled) {
+    if (sendAffordance !== "send") {
       return
     }
 
@@ -219,7 +235,6 @@ export function ChatComposer({
           ) : null}
           <Textarea
             value={draft}
-            disabled={disabled}
             onChange={(event) => {
               setDraft(event.target.value)
             }}
@@ -261,7 +276,6 @@ export function ChatComposer({
               variant="ghost"
               size="icon-sm"
               aria-label="Attach images"
-              disabled={disabled}
               onClick={() => {
                 fileInputRef.current?.click()
               }}
@@ -270,18 +284,11 @@ export function ChatComposer({
             </Button>
           </div>
 
-          <button
-            type="submit"
-            aria-label="Send"
-            {...(!canSend ? { "aria-disabled": true as const, tabIndex: -1 } : {})}
-            className={cn(
-              buttonVariants({ size: "icon-sm" }),
-              "rounded-full",
-              !canSend && "pointer-events-none opacity-50"
-            )}
-          >
-            <ArrowUpIcon />
-          </button>
+          <ComposerActionButton
+            sendAffordance={sendAffordance}
+            canSend={canSend}
+            onStop={onStop}
+          />
         </div>
       </form>
 
@@ -299,5 +306,43 @@ export function ChatComposer({
         }
       />
     </>
+  )
+}
+
+function ComposerActionButton({
+  sendAffordance,
+  canSend,
+  onStop,
+}: {
+  sendAffordance: SendAffordance
+  canSend: boolean
+  onStop: () => void
+}) {
+  if (sendAffordance === "stop") {
+    return (
+      <button
+        type="button"
+        aria-label="Stop"
+        onClick={onStop}
+        className={cn(buttonVariants({ size: "icon-sm" }), "rounded-full")}
+      >
+        <SquareIcon />
+      </button>
+    )
+  }
+
+  return (
+    <button
+      type="submit"
+      aria-label="Send"
+      {...(!canSend ? { "aria-disabled": true as const, tabIndex: -1 } : {})}
+      className={cn(
+        buttonVariants({ size: "icon-sm" }),
+        "rounded-full",
+        !canSend && "pointer-events-none opacity-50"
+      )}
+    >
+      <ArrowUpIcon />
+    </button>
   )
 }
