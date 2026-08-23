@@ -1,6 +1,10 @@
 /**
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Secrets (BETTER_AUTH_SECRET, OPENROUTER_API_KEY):
+ *   local → .dev.vars
+ *   prod  → `wrangler secret put <NAME>`
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -23,8 +27,14 @@
 		]
 	},
 	"vars": {
-		"BETTER_AUTH_URL": "http://localhost:8787"
+		"WEB_ORIGIN": "http://localhost:3000"
 	},
+	"routes": [
+		{
+			"pattern": "edu-api.benapps.dev",
+			"custom_domain": true
+		}
+	],
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -37,41 +47,5 @@
 	"observability": {
 		"enabled": true
 	},
-	"upload_source_maps": true,
-	"env": {
-		"production": {
-			"routes": [
-				{
-					"pattern": "edu-api.benapps.dev",
-					"custom_domain": true
-				}
-			],
-			"vars": {
-				"BETTER_AUTH_URL": "https://edu-api.benapps.dev"
-			},
-			"migrations": [
-				{
-					"new_sqlite_classes": ["ChatDurableObject"],
-					"tag": "v1"
-				}
-			],
-			"durable_objects": {
-				"bindings": [
-					{
-						"class_name": "ChatDurableObject",
-						"name": "CHAT_DURABLE_OBJECT"
-					}
-				]
-			},
-			"d1_databases": [
-				{
-					"binding": "DB",
-					"database_name": "edu-api",
-					"database_id": "16cc2e87-d2b9-4a65-bf36-c236864c91e6",
-					"migrations_dir": "migrations",
-					"migrations_pattern": "migrations/*/migration.sql"
-				}
-			]
-		}
-	}
+	"upload_source_maps": true
 }

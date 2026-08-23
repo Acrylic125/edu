@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils"
 
 type ChatComposerProps = {
   onSend: (content: string, attachments: ChatMessageAttachment[]) => void
+  disabled?: boolean
   className?: string
 }
 
@@ -30,7 +31,11 @@ const COMPOSER_INPUT_CLASS =
 const COMPOSER_MIRROR_CLASS =
   "pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 
-export function ChatComposer({ onSend, className }: ChatComposerProps) {
+export function ChatComposer({
+  onSend,
+  disabled = false,
+  className,
+}: ChatComposerProps) {
   const [draft, setDraft] = useState("")
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -41,7 +46,8 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
   const imagesRef = useRef(images)
   imagesRef.current = images
 
-  const canSend = draft.trim() !== "" || images.length > 0
+  const canSend =
+    !disabled && (draft.trim() !== "" || images.length > 0)
 
   useEffect(() => {
     return () => {
@@ -76,7 +82,7 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
   }
 
   function submit() {
-    if (!canSend) {
+    if (!canSend || disabled) {
       return
     }
 
@@ -213,6 +219,7 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
           ) : null}
           <Textarea
             value={draft}
+            disabled={disabled}
             onChange={(event) => {
               setDraft(event.target.value)
             }}
@@ -254,6 +261,7 @@ export function ChatComposer({ onSend, className }: ChatComposerProps) {
               variant="ghost"
               size="icon-sm"
               aria-label="Attach images"
+              disabled={disabled}
               onClick={() => {
                 fileInputRef.current?.click()
               }}

@@ -6,17 +6,42 @@ import { Settings } from "lucide-react"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { MessageList } from "@/components/chat/message-list"
 import { Button } from "@/components/ui/button"
-import type { Chat, ChatMessageAttachment } from "@/lib/chat/types"
+import type { Chat, ChatConnection, ChatMessageAttachment } from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
 type ChatMainProps = {
   chat: Chat | null
+  connection: ChatConnection
+  composerDisabled: boolean
   onSend: (content: string, attachments: ChatMessageAttachment[]) => void
 }
 
-export function ChatMain({ chat, onSend }: ChatMainProps) {
+function connectionLabel(connection: ChatConnection) {
+  if (connection.status === "connecting") {
+    return "Connecting"
+  }
+  if (connection.status === "ready") {
+    return "Online"
+  }
+  if (connection.status === "busy") {
+    return connection.message
+  }
+  return connection.message
+}
+
+export function ChatMain({
+  chat,
+  connection,
+  composerDisabled,
+  onSend,
+}: ChatMainProps) {
   const isEmptyChat = chat !== null && chat.messages.length === 0
   const hasMessages = chat !== null && chat.messages.length > 0
+
+  let statusClassName = "text-muted-foreground"
+  if (connection.status === "error") {
+    statusClassName = "text-destructive"
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -24,6 +49,9 @@ export function ChatMain({ chat, onSend }: ChatMainProps) {
         <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
           {chat === null ? "Chat" : chat.title}
         </h1>
+        <p className={cn("shrink-0 text-xs", statusClassName)}>
+          {connectionLabel(connection)}
+        </p>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -74,7 +102,11 @@ export function ChatMain({ chat, onSend }: ChatMainProps) {
             </div>
 
             <div className="pointer-events-auto w-full max-w-3xl">
-              <ChatComposer key={chat.id} onSend={onSend} />
+              <ChatComposer
+                key={chat.id}
+                onSend={onSend}
+                disabled={composerDisabled}
+              />
             </div>
           </div>
         </div>

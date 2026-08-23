@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq } from 'drizzle-orm';
 
-import type { Db } from "../../db/client";
-import { topic, userCurrentTopic } from "../../db/schema";
-import { nanoid } from "nanoid";
+import type { Db } from '../../db/client';
+import { topic, userCurrentTopic } from '../../db/schema';
+import { nanoid } from 'nanoid';
 
 export type TopicRecord = {
 	id: string;
@@ -18,10 +18,7 @@ export type CurrentTopicContext = {
 	part: string | null;
 };
 
-export async function getCurrentTopic(
-	db: Db,
-	userId: string,
-): Promise<CurrentTopicContext | null> {
+export async function getCurrentTopic(db: Db, userId: string): Promise<CurrentTopicContext | null> {
 	const rows = await db
 		.select({
 			id: topic.id,
@@ -55,11 +52,7 @@ export async function getCurrentTopic(
 	};
 }
 
-export async function getTopicForUser(
-	db: Db,
-	topicId: string,
-	userId: string,
-): Promise<TopicRecord | null> {
+export async function getTopicForUser(db: Db, topicId: string, userId: string): Promise<TopicRecord | null> {
 	const rows = await db
 		.select()
 		.from(topic)
@@ -120,12 +113,7 @@ export async function updateTopicState(
 		.where(eq(topic.id, topicId));
 }
 
-export async function setCurrentTopic(
-	db: Db,
-	userId: string,
-	topicId: string,
-	part: string | null,
-): Promise<void> {
+export async function setCurrentTopic(db: Db, userId: string, topicId: string, part: string | null): Promise<void> {
 	const now = new Date();
 
 	const existing = await db
@@ -135,10 +123,7 @@ export async function setCurrentTopic(
 		.limit(1);
 
 	if (existing[0]) {
-		await db
-			.update(userCurrentTopic)
-			.set({ topicId, part, updatedAt: now })
-			.where(eq(userCurrentTopic.userId, userId));
+		await db.update(userCurrentTopic).set({ topicId, part, updatedAt: now }).where(eq(userCurrentTopic.userId, userId));
 	} else {
 		await db.insert(userCurrentTopic).values({
 			userId,
@@ -149,21 +134,11 @@ export async function setCurrentTopic(
 	}
 }
 
-export async function updateCurrentPart(
-	db: Db,
-	userId: string,
-	part: string,
-): Promise<void> {
+export async function updateCurrentPart(db: Db, userId: string, part: string): Promise<void> {
 	const now = new Date();
-	await db
-		.update(userCurrentTopic)
-		.set({ part, updatedAt: now })
-		.where(eq(userCurrentTopic.userId, userId));
+	await db.update(userCurrentTopic).set({ part, updatedAt: now }).where(eq(userCurrentTopic.userId, userId));
 }
 
-export async function listUserTopics(
-	db: Db,
-	userId: string,
-): Promise<TopicRecord[]> {
+export async function listUserTopics(db: Db, userId: string): Promise<TopicRecord[]> {
 	return db.select().from(topic).where(eq(topic.userId, userId));
 }
