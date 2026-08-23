@@ -50,6 +50,15 @@ export async function getOwnedAsset(db: Db, userId: string, assetId: string) {
 	return rows[0] ?? null;
 }
 
+export async function getAssetById(db: Db, assetId: string) {
+	const rows = await db
+		.select()
+		.from(asset)
+		.where(eq(asset.id, assetId))
+		.limit(1);
+	return rows[0] ?? null;
+}
+
 export async function updateAssetSize(db: Db, assetId: string, size: number) {
 	await db.update(asset).set({ size }).where(eq(asset.id, assetId));
 }

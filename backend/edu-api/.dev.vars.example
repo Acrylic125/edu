@@ -1,5 +1,6 @@
 # Copy to `.dev.vars` (gitignored). Secrets only.
-# See README.md for production secrets / deploy / CORS.
+# BETTER_AUTH_SECRET must match web/.env (local auth shares local D1).
+# See README.md for local D1 + production ops.
 
 BETTER_AUTH_SECRET=
 OPENROUTER_API_KEY=

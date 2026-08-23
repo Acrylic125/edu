@@ -29,8 +29,16 @@ export function ChatWorkspace({ initial }: { initial?: ChatUiState }) {
   const { sendJsonMessage } = useChatWebSocket(socketUrl, {
     onMessage: (event) => {
       try {
-        const parsed = WsServerMessageSchema.safeParse(JSON.parse(event.data))
+        const raw = JSON.parse(event.data) as { type?: string }
+        const parsed = WsServerMessageSchema.safeParse(raw)
         if (!parsed.success) {
+          // run.ended/error with unexpected parts must still clear the spinner.
+          if (raw.type === "run.ended" || raw.type === "error") {
+            setState((current) => ({
+              ...current,
+              activity: { status: "idle" },
+            }))
+          }
           return
         }
         setState((current) =>
@@ -107,25 +115,39 @@ export function ChatWorkspace({ initial }: { initial?: ChatUiState }) {
           for (const attachment of attachments) {
             parts.push({ type: "attachment", ref: attachment.id })
           }
-          sendJsonMessage(
-            WsChatClientMessageSchema.parse({
-              type: "message",
-              message: messageId,
-              parts,
-            })
-          )
+          try {
+            sendJsonMessage(
+              WsChatClientMessageSchema.parse({
+                type: "message",
+                message: messageId,
+                parts,
+              })
+            )
+          } catch {
+            setState((current) => ({
+              ...current,
+              activity: { status: "idle" },
+            }))
+          }
         }}
         onStop={() => {
           if (state.activity.status !== "running") {
             return
           }
-          if (state.activity.runId === "") {
+          const runId = state.activity.runId
+          // Always clear locally. Vision/LLM calls can hang and ignore abort;
+          // waiting for run.ended left the composer stuck on Working…
+          setState((current) => ({
+            ...current,
+            activity: { status: "idle" },
+          }))
+          if (runId === "") {
             return
           }
           sendJsonMessage(
             WsChatClientStopSchema.parse({
               type: "stop",
-              runId: state.activity.runId,
+              runId,
             })
           )
         }}

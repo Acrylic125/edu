@@ -17,7 +17,9 @@ export function getChatWebSocketUrl(token: string) {
 }
 
 const sharedWebSocketOptions = {
-  share: true,
+  // Do not share across mounts: Suspense/Strict Mode can unmount a sibling
+  // subscriber and tear down the socket while the live chat still needs it.
+  share: false,
   shouldReconnect: () => true,
   reconnectAttempts: 10,
   reconnectInterval: 3000,

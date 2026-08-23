@@ -58,11 +58,16 @@ export async function requestAssetUploadUrl(params: {
 export function putBlobWithProgress(params: {
   url: string
   blob: Blob
-  headers: { "Content-Type": string }
+  headers: Record<string, string>
   signal: AbortSignal
   onProgress: (progress: number) => void
 }) {
   return new Promise<void>((resolve, reject) => {
+    if (params.signal.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"))
+      return
+    }
+
     const xhr = new XMLHttpRequest()
     xhr.open("PUT", params.url)
     for (const [key, value] of Object.entries(params.headers)) {
@@ -72,7 +77,7 @@ export function putBlobWithProgress(params: {
     const onAbort = () => {
       xhr.abort()
     }
-    params.signal.addEventListener("abort", onAbort)
+    params.signal.addEventListener("abort", onAbort, { once: true })
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) {

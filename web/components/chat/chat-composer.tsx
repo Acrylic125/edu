@@ -1,6 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
 
 import { useSession } from "@/lib/auth-client"
@@ -59,22 +67,24 @@ export function ChatComposer({
   const [draft, setDraft] = useState("")
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
-  const [expandedImage, setExpandedImage] = useState<ComposerImageAttachment | null>(null)
+  const [expandedImage, setExpandedImage] = useState<ComposerImageAttachment | null>(
+    null
+  )
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mirrorRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef(images)
   imagesRef.current = images
-  const uploadsRef = useRef(new Map<string, AbortController>())
+  const submitAbortRef = useRef<AbortController | null>(null)
 
   const sendAffordance = composerSendAffordance(
     connection,
     activity,
     draft,
     images.length > 0,
-    composerImagesReady(images)
+    composerImagesReady(images) && !isSubmitting
   )
-
   const canSend = sendAffordance === "send"
 
   useEffect(() => {
@@ -82,9 +92,7 @@ export function ChatComposer({
       for (const image of imagesRef.current) {
         revokeComposerImageAttachment(image)
       }
-      for (const controller of uploadsRef.current.values()) {
-        controller.abort()
-      }
+      submitAbortRef.current?.abort()
     }
   }, [])
 
@@ -102,101 +110,24 @@ export function ChatComposer({
     )
   }
 
-  async function startUpload(image: ComposerImageAttachment) {
-    const token = session.data?.session.token
-    if (!token) {
-      patchImage(image.id, {
-        status: "error",
-        error: "Sign in to upload images.",
-      })
-      return
-    }
-
-    const previous = uploadsRef.current.get(image.id)
-    previous?.abort()
-    const controller = new AbortController()
-    uploadsRef.current.set(image.id, controller)
-
-    try {
-      patchImage(image.id, { status: "processing", progress: 0, error: null })
-      const blob = await compressImageForUpload(image.file)
-      if (controller.signal.aborted) {
-        return
-      }
-
-      patchImage(image.id, { status: "uploading", progress: 0 })
-      const signed = await requestAssetUploadUrl({
-        token,
-        filename: jpegFilename(image.name),
-        mimeType: "image/jpeg",
-        size: blob.size,
-      })
-      if (controller.signal.aborted) {
-        return
-      }
-
-      await putBlobWithProgress({
-        url: signed.uploadUrl,
-        blob,
-        headers: signed.headers,
-        signal: controller.signal,
-        onProgress: (progress) => {
-          patchImage(image.id, { status: "uploading", progress })
-        },
-      })
-      await completeAssetUpload({ token, assetId: signed.assetId })
-      if (controller.signal.aborted) {
-        return
-      }
-
-      patchImage(image.id, {
-        assetId: signed.assetId,
-        mimeType: "image/jpeg",
-        sizeBytes: blob.size,
-        status: "ready",
-        progress: 1,
-        error: null,
-      })
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return
-      }
-      if (controller.signal.aborted) {
-        return
-      }
-      const message =
-        error instanceof Error ? error.message : "Could not upload image"
-      patchImage(image.id, { status: "error", error: message })
-      setAttachmentError(message)
-    } finally {
-      if (uploadsRef.current.get(image.id) === controller) {
-        uploadsRef.current.delete(image.id)
-      }
-    }
-  }
-
   function addImageFiles(files: File[]) {
-    if (files.length === 0) {
+    if (files.length === 0 || isSubmitting) {
       return
     }
 
     let error: string | null = null
-    let added: ComposerImageAttachment[] = []
     setImages((current) => {
       const result = ingestComposerImageFiles(files, current)
       error = result.error
-      added = result.added
       return result.nextImages
     })
     setAttachmentError(error)
-    for (const image of added) {
-      void startUpload(image)
-    }
   }
 
   function removeImage(imageId: string) {
-    uploadsRef.current.get(imageId)?.abort()
-    uploadsRef.current.delete(imageId)
+    if (isSubmitting) {
+      return
+    }
     setImages((current) => {
       const removed = current.find((image) => image.id === imageId)
       if (removed) {
@@ -206,39 +137,127 @@ export function ChatComposer({
     })
   }
 
-  function submit() {
-    if (sendAffordance !== "send") {
+  async function uploadImage(
+    image: ComposerImageAttachment,
+    token: string,
+    signal: AbortSignal
+  ) {
+    patchImage(image.id, { status: "uploading", progress: 0, error: null })
+    const blob = await compressImageForUpload(image.file)
+    if (signal.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+
+    const signed = await requestAssetUploadUrl({
+      token,
+      filename: jpegFilename(image.name),
+      mimeType: "image/jpeg",
+      size: blob.size,
+    })
+    if (signal.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+
+    await putBlobWithProgress({
+      url: signed.uploadUrl,
+      blob,
+      headers: {
+        ...signed.headers,
+        Authorization: `Bearer ${token}`,
+      },
+      signal,
+      onProgress: (progress) => {
+        patchImage(image.id, { status: "uploading", progress })
+      },
+    })
+    await completeAssetUpload({ token, assetId: signed.assetId })
+    if (signal.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+
+    patchImage(image.id, {
+      assetId: signed.assetId,
+      mimeType: "image/jpeg",
+      sizeBytes: blob.size,
+      status: "ready",
+      progress: 1,
+      error: null,
+    })
+
+    return {
+      id: signed.assetId,
+      name: image.name,
+      mimeType: "image/jpeg",
+      previewUrl: image.previewUrl,
+    } satisfies ChatMessageAttachment
+  }
+
+  async function submit() {
+    if (sendAffordance !== "send" || isSubmitting) {
       return
     }
 
-    const attachments: ChatMessageAttachment[] = []
-    for (const image of images) {
-      if (!image.assetId) {
-        return
-      }
-      attachments.push({
-        id: image.assetId,
-        name: image.name,
-        mimeType: image.mimeType,
-        previewUrl: image.previewUrl,
-      })
+    const text = draft.trim()
+    const snapshot = imagesRef.current
+    if (text === "" && snapshot.length === 0) {
+      return
     }
 
-    onSend(draft.trim(), attachments)
-    setDraft("")
-    setImages([])
+    const token = session.data?.session.token
+    if (snapshot.length > 0 && !token) {
+      setAttachmentError("Sign in to upload images.")
+      return
+    }
+
+    setIsSubmitting(true)
     setAttachmentError(null)
+    const controller = new AbortController()
+    submitAbortRef.current = controller
+
+    try {
+      const attachments: ChatMessageAttachment[] = []
+      if (token) {
+        for (const image of snapshot) {
+          attachments.push(await uploadImage(image, token, controller.signal))
+        }
+      }
+
+      onSend(text, attachments)
+      setDraft("")
+      // Keep preview URLs alive for the message bubble (t3code clearComposerContent).
+      setImages([])
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
+      }
+      const message =
+        error instanceof Error ? error.message : "Could not upload image"
+      setAttachmentError(message)
+      setImages((current) =>
+        current.map((image) => {
+          if (image.status !== "uploading") {
+            return image
+          }
+          return { ...image, status: "error", error: message }
+        })
+      )
+    } finally {
+      if (submitAbortRef.current === controller) {
+        submitAbortRef.current = null
+      }
+      setIsSubmitting(false)
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    submit()
+    void submit()
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
-      submit()
+      void submit()
     }
   }
 
@@ -253,7 +272,7 @@ export function ChatComposer({
   }
 
   function handleDragOver(event: DragEvent<HTMLFormElement>) {
-    if (!event.dataTransfer.types.includes("Files")) {
+    if (![...event.dataTransfer.types].includes("Files")) {
       return
     }
     event.preventDefault()
@@ -262,7 +281,7 @@ export function ChatComposer({
   }
 
   function handleDragLeave(event: DragEvent<HTMLFormElement>) {
-    if (!event.dataTransfer.types.includes("Files")) {
+    if (![...event.dataTransfer.types].includes("Files")) {
       return
     }
     const nextTarget = event.relatedTarget
@@ -273,7 +292,7 @@ export function ChatComposer({
   }
 
   function handleDrop(event: DragEvent<HTMLFormElement>) {
-    if (!event.dataTransfer.types.includes("Files")) {
+    if (![...event.dataTransfer.types].includes("Files")) {
       return
     }
     event.preventDefault()
@@ -391,7 +410,9 @@ export function ChatComposer({
               variant="ghost"
               size="icon-sm"
               aria-label="Attach images"
-              disabled={images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS}
+              disabled={
+                isSubmitting || images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+              }
               onClick={() => {
                 fileInputRef.current?.click()
               }}

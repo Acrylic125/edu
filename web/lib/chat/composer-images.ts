@@ -7,11 +7,7 @@ export const SUPPORTED_IMAGE_MIME_TYPES = [
   "image/webp",
 ] as const
 
-export type ComposerImageStatus =
-  | "processing"
-  | "uploading"
-  | "ready"
-  | "error"
+export type ComposerImageStatus = "ready" | "uploading" | "error"
 
 export type ComposerImageAttachment = {
   id: string
@@ -44,8 +40,9 @@ export function createComposerImageAttachment(file: File): ComposerImageAttachme
     sizeBytes: file.size,
     previewUrl: URL.createObjectURL(file),
     file,
-    status: "processing",
-    progress: 0,
+    // Local preview only. Bytes go to the API on send (t3code pattern).
+    status: "ready",
+    progress: 1,
     error: null,
   }
 }
@@ -53,7 +50,11 @@ export function createComposerImageAttachment(file: File): ComposerImageAttachme
 export function ingestComposerImageFiles(
   files: File[],
   current: ReadonlyArray<ComposerImageAttachment>
-): { nextImages: ComposerImageAttachment[]; added: ComposerImageAttachment[]; error: string | null } {
+): {
+  nextImages: ComposerImageAttachment[]
+  added: ComposerImageAttachment[]
+  error: string | null
+} {
   const nextImages = [...current]
   const added: ComposerImageAttachment[] = []
   let error: string | null = null
@@ -91,5 +92,5 @@ export function composerImagesReady(
   if (images.length === 0) {
     return true
   }
-  return images.every((image) => image.status === "ready" && image.assetId !== null)
+  return images.every((image) => image.status === "ready")
 }

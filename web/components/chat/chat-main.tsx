@@ -1,11 +1,8 @@
 "use client"
 
-import Link from "next/link"
-import { Settings } from "lucide-react"
-
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { MessageList } from "@/components/chat/message-list"
-import { Button } from "@/components/ui/button"
+import { AccountMenu } from "@/components/ui/account-menu"
 import type {
   Chat,
   ChatActivity,
@@ -63,15 +60,7 @@ export function ChatMain({
         <p className={cn("shrink-0 text-xs", statusClassName)}>
           {connectionLabel(connection, activity)}
         </p>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Settings"
-          nativeButton={false}
-          render={<Link href="/settings" />}
-        >
-          <Settings />
-        </Button>
+        <AccountMenu />
       </header>
 
       {chat === null ? (
@@ -118,7 +107,6 @@ export function ChatMain({
 
             <div className="pointer-events-auto w-full max-w-3xl">
               <ChatComposer
-                key={chat.id}
                 onSend={onSend}
                 onStop={onStop}
                 connection={connection}

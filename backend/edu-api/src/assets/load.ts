@@ -1,8 +1,8 @@
+import { resolveAssetReadUrl } from "./access";
 import { MAX_ASSET_BYTES } from "./limits";
 import { attachmentRefs, listOwnedAssetsByIds } from "./repository";
 import type { Db } from "../../db/client";
 import type { MessagePart } from "../messages/schema";
-import { presignGetUrl } from "./r2";
 
 export type AgentImage = {
 	dataUrl: string;
@@ -64,6 +64,7 @@ export async function hydrateAttachmentParts(
 	db: Db,
 	userId: string,
 	parts: MessagePart[],
+	origin: string,
 ) {
 	const refs = attachmentRefs(parts);
 	if (refs.length === 0) {
@@ -76,7 +77,15 @@ export async function hydrateAttachmentParts(
 
 	for (const row of rows) {
 		try {
-			urls.set(row.id, await presignGetUrl(env, row.storageKey));
+			urls.set(
+				row.id,
+				await resolveAssetReadUrl({
+					env,
+					origin,
+					assetId: row.id,
+					storageKey: row.storageKey,
+				}),
+			);
 		} catch {
 			continue;
 		}

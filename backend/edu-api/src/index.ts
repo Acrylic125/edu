@@ -158,6 +158,7 @@ export default {
 					db,
 					authResult.userId,
 					message.parts,
+					url.origin,
 				);
 				hydrated.push(
 					toResponseMessage({

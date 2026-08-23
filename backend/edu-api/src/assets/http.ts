@@ -2,9 +2,17 @@ import { z } from "zod";
 
 import { createDb } from "../../db/client";
 import { requireUser } from "../lib/auth-middleware";
+import {
+	resolveAssetReadUrl,
+	verifyAssetContentAccess,
+} from "./access";
 import { ALLOWED_ASSET_MIME_TYPES, MAX_ASSET_BYTES } from "./limits";
-import { getOwnedAsset, insertAsset, updateAssetSize } from "./repository";
-import { presignGetUrl, presignPutUrl } from "./r2";
+import {
+	getAssetById,
+	getOwnedAsset,
+	insertAsset,
+	updateAssetSize,
+} from "./repository";
 
 const UploadUrlRequestSchema = z.object({
 	filename: z.string().min(1).max(255),
@@ -39,16 +47,12 @@ export async function handleAssetRequest(
 	url: URL,
 ) {
 	const uploadMatch = url.pathname === "/assets/upload-url";
+	const contentMatch = url.pathname.match(/^\/assets\/([^/]+)\/content\/?$/);
 	const completeMatch = url.pathname.match(/^\/assets\/([^/]+)\/complete\/?$/);
 	const getUrlMatch = url.pathname.match(/^\/assets\/([^/]+)\/url\/?$/);
 
-	if (!uploadMatch && !completeMatch && !getUrlMatch) {
+	if (!uploadMatch && !contentMatch && !completeMatch && !getUrlMatch) {
 		return null;
-	}
-
-	const authResult = await requireUser(request, env);
-	if (authResult instanceof Response) {
-		return authResult;
 	}
 
 	const missingDb = requireDb(env);
@@ -62,6 +66,47 @@ export async function handleAssetRequest(
 	}
 
 	const db = createDb(env.DB);
+
+	// Signed read URLs for <img> — no Authorization header available.
+	if (contentMatch && request.method === "GET") {
+		const assetId = decodeURIComponent(contentMatch[1] ?? "");
+		const expiresRaw = url.searchParams.get("expires");
+		const signature = url.searchParams.get("sig");
+		if (!expiresRaw || !signature) {
+			return jsonResponse({ error: "Missing signature" }, 401);
+		}
+
+		const expiresAt = Number(expiresRaw);
+		const ok = await verifyAssetContentAccess({
+			secret: env.BETTER_AUTH_SECRET,
+			assetId,
+			expiresAt,
+			signature,
+		});
+		if (!ok) {
+			return jsonResponse({ error: "Invalid or expired signature" }, 401);
+		}
+
+		const row = await getAssetById(db, assetId);
+		if (!row) {
+			return jsonResponse({ error: "Not found" }, 404);
+		}
+
+		const object = await env.ASSETS.get(row.storageKey);
+		if (!object) {
+			return jsonResponse({ error: "Not found" }, 404);
+		}
+
+		const headers = new Headers();
+		headers.set("Content-Type", row.mimeType);
+		headers.set("Cache-Control", "private, max-age=3600");
+		return new Response(object.body, { status: 200, headers });
+	}
+
+	const authResult = await requireUser(request, env);
+	if (authResult instanceof Response) {
+		return authResult;
+	}
 
 	if (uploadMatch && request.method === "POST") {
 		let json: unknown;
@@ -83,21 +128,52 @@ export async function handleAssetRequest(
 			size: parsed.data.size,
 		});
 
-		try {
-			const signed = await presignPutUrl(env, {
-				key: created.storageKey,
-				mimeType: parsed.data.mimeType,
-			});
-			return jsonResponse({
-				assetId: created.id,
-				uploadUrl: signed.url,
-				headers: signed.headers,
-			});
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : "Could not create upload URL";
-			return jsonResponse({ error: message }, 500);
+		// PUT through the Worker so local Miniflare R2 and remote both use ASSETS.
+		const uploadUrl = new URL(
+			`/assets/${created.id}/content`,
+			url.origin,
+		).toString();
+
+		return jsonResponse({
+			assetId: created.id,
+			uploadUrl,
+			headers: {
+				"Content-Type": parsed.data.mimeType,
+			},
+		});
+	}
+
+	if (contentMatch && request.method === "PUT") {
+		const assetId = decodeURIComponent(contentMatch[1] ?? "");
+		const row = await getOwnedAsset(db, authResult.userId, assetId);
+		if (!row) {
+			return jsonResponse({ error: "Not found" }, 404);
 		}
+
+		const contentType = request.headers.get("Content-Type");
+		if (!contentType || contentType !== row.mimeType) {
+			return jsonResponse({ error: "Content-Type mismatch" }, 400);
+		}
+
+		const bytes = await request.arrayBuffer();
+		if (bytes.byteLength === 0) {
+			return jsonResponse({ error: "Empty body" }, 400);
+		}
+		if (bytes.byteLength > MAX_ASSET_BYTES) {
+			return jsonResponse(
+				{ error: `File exceeds ${MAX_ASSET_BYTES} bytes` },
+				400,
+			);
+		}
+
+		await env.ASSETS.put(row.storageKey, bytes, {
+			httpMetadata: { contentType: row.mimeType },
+		});
+
+		return jsonResponse({
+			assetId: row.id,
+			size: bytes.byteLength,
+		});
 	}
 
 	if (completeMatch && request.method === "POST") {
@@ -136,7 +212,12 @@ export async function handleAssetRequest(
 		}
 
 		try {
-			const urlValue = await presignGetUrl(env, row.storageKey);
+			const urlValue = await resolveAssetReadUrl({
+				env,
+				origin: url.origin,
+				assetId: row.id,
+				storageKey: row.storageKey,
+			});
 			return jsonResponse({
 				assetId: row.id,
 				url: urlValue,

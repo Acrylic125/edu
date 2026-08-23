@@ -96,6 +96,9 @@ export class ChatDurableObject extends DurableObject<Env> {
 		this.ctx.acceptWebSocket(server);
 		setWsAttachment(server, { userId });
 
+		// waitUntil work dies on DO restart; storage may still hold activeRun.
+		await this.recoverOrphanedRun();
+
 		const pending = await this.readPendingProposal();
 		let pendingProposalId: string | null = null;
 		if (pending) {
@@ -142,7 +145,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 			return;
 		}
 
-		const active = await this.readActiveRun();
+		let active = await this.readActiveRun();
 		const frame = envelope.data;
 
 		if (frame.type === "stop") {
@@ -150,7 +153,15 @@ export class ChatDurableObject extends DurableObject<Env> {
 				return;
 			}
 			this.abort?.abort();
+			// Release the lock immediately so the client isn't blocked if the
+			// LLM ignores AbortSignal (common with large image payloads).
+			await this.forceEndRun(active, "cancelled");
 			return;
+		}
+
+		if (active && !this.abort) {
+			await this.recoverOrphanedRun();
+			active = await this.readActiveRun();
 		}
 
 		if (active) {
@@ -164,16 +175,27 @@ export class ChatDurableObject extends DurableObject<Env> {
 			return;
 		}
 
-		if (frame.type === "message") {
-			await this.submitMessage(attachment.userId, frame.message, frame.parts);
-			return;
-		}
+		try {
+			if (frame.type === "message") {
+				await this.submitMessage(
+					attachment.userId,
+					frame.message,
+					frame.parts,
+				);
+				return;
+			}
 
-		await this.submitDecision(
-			attachment.userId,
-			frame.proposalId,
-			frame.decision,
-		);
+			await this.submitDecision(
+				attachment.userId,
+				frame.proposalId,
+				frame.decision,
+			);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Failed to handle message.";
+			this.sendJson(ws, { type: "error", message });
+			await this.clearActiveRun();
+		}
 	}
 
 	private async submitMessage(
@@ -502,40 +524,85 @@ export class ChatDurableObject extends DurableObject<Env> {
 		status: "completed" | "cancelled" | "failed";
 		pendingProposal: StoredProposal | null;
 	}) {
-		if (params.topicId && params.parts.length > 0) {
-			await createTopicMessage(params.db, {
-				id: params.messageId,
-				topicId: params.topicId,
-				role: "agent",
-				parts: params.parts,
-			});
-		}
+		try {
+			if (params.topicId && params.parts.length > 0) {
+				await createTopicMessage(params.db, {
+					id: params.messageId,
+					topicId: params.topicId,
+					role: "agent",
+					parts: params.parts,
+				});
+			}
 
-		if (params.pendingProposal) {
-			await this.ctx.storage.put(PENDING_PROPOSAL_KEY, params.pendingProposal);
-		} else {
-			await this.ctx.storage.delete(PENDING_PROPOSAL_KEY);
+			if (params.pendingProposal) {
+				await this.ctx.storage.put(PENDING_PROPOSAL_KEY, params.pendingProposal);
+			} else {
+				await this.ctx.storage.delete(PENDING_PROPOSAL_KEY);
+			}
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Failed to persist run result.";
+			this.broadcast({
+				type: "error",
+				message,
+				runId: params.runId,
+			});
+		} finally {
+			const active = await this.readActiveRun();
+			if (!active || active.runId !== params.runId) {
+				// Stop already released this run; avoid a duplicate run.ended.
+				return;
+			}
+			// Always unblock the client, even if persistence failed.
+			if (params.topicId) {
+				this.broadcast({
+					type: "run.ended",
+					runId: params.runId,
+					messageId: params.messageId,
+					parts: params.parts,
+					status: params.status,
+					topicId: params.topicId,
+				});
+			} else {
+				this.broadcast({
+					type: "run.ended",
+					runId: params.runId,
+					messageId: params.messageId,
+					parts: params.parts,
+					status: params.status,
+				});
+			}
+			await this.clearActiveRun();
 		}
+	}
 
-		if (params.topicId) {
-			this.broadcast({
-				type: "run.ended",
-				runId: params.runId,
-				messageId: params.messageId,
-				parts: params.parts,
-				status: params.status,
-				topicId: params.topicId,
-			});
-		} else {
-			this.broadcast({
-				type: "run.ended",
-				runId: params.runId,
-				messageId: params.messageId,
-				parts: params.parts,
-				status: params.status,
-			});
+	private async forceEndRun(
+		active: { runId: string; messageId: string },
+		status: "cancelled" | "failed",
+	) {
+		const current = await this.readActiveRun();
+		if (!current || current.runId !== active.runId) {
+			return;
 		}
+		this.broadcast({
+			type: "run.ended",
+			runId: active.runId,
+			messageId: active.messageId,
+			parts: [],
+			status,
+		});
 		await this.clearActiveRun();
+	}
+
+	private async recoverOrphanedRun() {
+		if (this.abort) {
+			return;
+		}
+		const active = await this.readActiveRun();
+		if (!active) {
+			return;
+		}
+		await this.forceEndRun(active, "failed");
 	}
 
 	private async clearActiveRun() {

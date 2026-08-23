@@ -37,8 +37,7 @@ export function ComposerImageStrip({
   return (
     <div className={cn("flex flex-wrap gap-2", className)}>
       {images.map((image) => {
-        const showOverlay =
-          image.status === "processing" || image.status === "uploading"
+        const showOverlay = image.status === "uploading"
         return (
           <div
             key={image.id}

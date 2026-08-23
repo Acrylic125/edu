@@ -2,11 +2,16 @@ import { Suspense } from "react"
 
 import { ChatWorkspace } from "@/components/chat/chat-workspace"
 import { loadCurrentChatSnapshot } from "@/lib/chat/load-topic-snapshot"
-import { initialChatUiState } from "@/lib/chat/seed"
 
 export default function Home() {
   return (
-    <Suspense fallback={<ChatWorkspace initial={initialChatUiState} />}>
+    <Suspense
+      fallback={
+        <div className="flex h-dvh items-center justify-center text-sm text-muted-foreground">
+          Loading chat…
+        </div>
+      }
+    >
       <CurrentTopicChat />
     </Suspense>
   )

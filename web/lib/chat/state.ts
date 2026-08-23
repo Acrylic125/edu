@@ -178,6 +178,8 @@ function applyServerMessage(
       return {
         ...state,
         connection: { status: "ready", userId: message.userId },
+        // Reconnect mid-run: don't keep a stale Working… spinner.
+        activity: { status: "idle" },
       }
     case "error": {
       if (message.runId) {
