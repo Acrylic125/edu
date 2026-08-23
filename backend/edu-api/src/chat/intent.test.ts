@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	deduceObviousIntent,
+	looksLikeNextWithinTopic,
 	lastPracticeQuestion,
 	looksLikeStudentWork,
 	parseExplicitCommand,
@@ -143,5 +144,28 @@ describe("lastPracticeQuestion", () => {
 			]),
 		];
 		expect(lastPracticeQuestion(messages)).toContain("Compute 2u");
+	});
+});
+
+
+describe("looksLikeNextWithinTopic", () => {
+	it("matches next-topic phrasing", () => {
+		expect(looksLikeNextWithinTopic("whats the next topic?")).toBe(true);
+		expect(looksLikeNextWithinTopic("What is the next section")).toBe(true);
+		expect(looksLikeNextWithinTopic("explain eigenvectors")).toBe(false);
+	});
+});
+
+describe("deduceObviousIntent next within topic", () => {
+	it("does not treat next topic as an auto-apply command", () => {
+		expect(deduceObviousIntent("whats the next topic?", contextWith([]))).toBeNull();
+	});
+
+	it("does not force update-topic when there is no active topic", () => {
+		const empty = {
+			...contextWith([]),
+			topic: null,
+		};
+		expect(deduceObviousIntent("whats the next topic?", empty)).toBeNull();
 	});
 });

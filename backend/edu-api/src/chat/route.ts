@@ -20,6 +20,7 @@ import {
 import {
 	deduceObviousIntent,
 	inferFromRaw,
+	looksLikeNextWithinTopic,
 	lastPracticeQuestion,
 	parseExplicitCommand,
 	type DeducedIntent,
@@ -235,7 +236,16 @@ export async function routeMessage(
 	}
 
 	if (!context.topic) {
-		const proposal = await proposeCreateTopic(runner, messageText);
+		// Vague "what's next?" with no active topic → chat, don't invent a subject.
+		if (looksLikeNextWithinTopic(messageText)) {
+			await runner.recordRoutingStep(
+				"route",
+				{ message: messageText },
+				{ type: "reply" },
+			);
+			return { type: "reply", message: messageText } satisfies Route;
+		}
+		const proposal = await proposeCreateTopic(runner, messageText, context);
 		if (!proposal) {
 			await runner.recordRoutingStep(
 				"route",
@@ -262,7 +272,19 @@ export async function routeMessage(
 		return { type: "command", intent: obvious } satisfies Route;
 	}
 
-	const inferred = await inferFromRaw(messageText, context, runner);
+	// Natural-language "what's next?" → propose advancing within the current plan.
+	// Do not auto-apply (that only happens for explicit /update).
+	if (looksLikeNextWithinTopic(messageText)) {
+		return proposeTopicUpdate(runner, messageText, context);
+	}
+
+	let inferred = await inferFromRaw(messageText, context, runner);
+
+	// With an active topic, never invent a brand-new subject from chat.
+	// Explicit /new is handled earlier via parseExplicitCommand.
+	if (inferred.type === "new-topic" && context.topic) {
+		inferred = { type: "update-topic", message: messageText };
+	}
 
 	if (inferred.type === "chat") {
 		await runner.recordRoutingStep(
@@ -273,48 +295,8 @@ export async function routeMessage(
 		return { type: "reply", message: messageText } satisfies Route;
 	}
 
-	if (inferred.type === "new-topic") {
-		const proposal = await proposeCreateTopic(runner, messageText);
-		if (!proposal) {
-			return { type: "reply", message: messageText } satisfies Route;
-		}
-		await runner.recordRoutingStep(
-			"route",
-			{ message: messageText },
-			{ type: "proposal", kind: "create-topic" },
-		);
-		return proposal;
-	}
-
 	if (inferred.type === "update-topic") {
-		const generated = await runner.llmCall({
-			name: "propose_update",
-			instructions: [
-				buildUpdateInstructions(context),
-				"",
-				"The user may want to change their learning plan.",
-				`Respond in JSON: {"shouldUpdate": boolean, "title": string, "summary": string, "part": string, "explanation": string}. ${TOPIC_PART_RULE}`,
-				"If shouldUpdate is false, explain why no update is needed.",
-			].join("\n"),
-			input: messageText,
-		});
-		const parsed = parseJsonFromLlm(ProposedUpdateSchema, generated);
-		if (!parsed || !parsed.shouldUpdate) {
-			return { type: "reply", message: messageText } satisfies Route;
-		}
-		const prompt =
-			parsed.explanation ?? "Update your learning plan as follows?";
-		return {
-			type: "proposal",
-			prompt,
-			proposal: {
-				kind: "update-topic",
-				title: parsed.title,
-				summary: parsed.summary,
-				part: parsed.part,
-				explanation: parsed.explanation,
-			},
-		} satisfies Route;
+		return proposeTopicUpdate(runner, messageText, context);
 	}
 
 	if (inferred.type === "new-question") {
@@ -363,7 +345,14 @@ export async function routeMessage(
 async function proposeCreateTopic(
 	runner: Awaited<ReturnType<typeof createAgentRun>>,
 	messageText: string,
+	context: AgentContext,
 ) {
+	// Soft chat must never spawn a new subject while one is active.
+	// Explicit /new goes through the command path, not this helper.
+	if (context.topic) {
+		return null;
+	}
+
 	const generated = await runner.llmCall({
 		name: "generate_topic",
 		instructions: [
@@ -396,9 +385,60 @@ function buildUpdateInstructions(context: AgentContext) {
 		`Topic: ${context.topic.title}`,
 		`Summary: ${context.topic.summary}`,
 		context.topic.part ? `Current focus: ${context.topic.part}` : "",
+		"When the user asks what is next, advance part to the next item in the summary outline and keep the same title/summary.",
 	]
 		.filter((line) => line.length > 0)
 		.join("\n");
+}
+
+async function proposeTopicUpdate(
+	runner: Awaited<ReturnType<typeof createAgentRun>>,
+	messageText: string,
+	context: AgentContext,
+) {
+	const generated = await runner.llmCall({
+		name: "propose_update",
+		instructions: [
+			buildUpdateInstructions(context),
+			"",
+			"The user may want to change their learning plan or advance to the next section.",
+			"If they ask what is next, set shouldUpdate true, keep the same title and summary, and set part to the next section in the summary outline after the current focus.",
+			"Do not invent a different subject.",
+			`Respond in JSON: {"shouldUpdate": boolean, "title": string, "summary": string, "part": string, "explanation": string}. ${TOPIC_PART_RULE}`,
+			"If shouldUpdate is false, explain why no update is needed.",
+		].join("\n"),
+		input: messageText,
+	});
+	const parsed = parseJsonFromLlm(ProposedUpdateSchema, generated);
+	if (!parsed || !parsed.shouldUpdate) {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "reply" },
+		);
+		return { type: "reply", message: messageText } satisfies Route;
+	}
+	// Never let an "update" swap the whole subject under you.
+	const title = context.topic?.title ?? parsed.title;
+	const summary = context.topic?.summary ?? parsed.summary;
+	const prompt =
+		parsed.explanation ?? `Focus next on ${shortFocus(parsed.part)}?`;
+	await runner.recordRoutingStep(
+		"route",
+		{ message: messageText },
+		{ type: "proposal", kind: "update-topic" },
+	);
+	return {
+		type: "proposal",
+		prompt,
+		proposal: {
+			kind: "update-topic" as const,
+			title,
+			summary,
+			part: shortFocus(parsed.part),
+			explanation: parsed.explanation,
+		},
+	} satisfies Route;
 }
 
 async function fulfillRoute(

@@ -55,6 +55,9 @@ export function parseExplicitCommand(message: string): DeducedIntent | null {
 const NEW_QUESTION_RE =
 	/\b(new\s*qns?|new\s*qn|new\s*questions?|another\s+question|similar\s+question|try\s+(a\s+)?similar|quiz\s+me|test\s+me)\b/i;
 
+const NEXT_WITHIN_TOPIC_RE =
+	/\b((what'?s|what is|whats)\s+(the\s+)?next\s+(topic|section|unit|part|chapter|lesson|focus)|next\s+(topic|section|unit|part|chapter|lesson|focus)|(move on|continue)\s+(to\s+)?(the\s+)?next)\b/i;
+
 export function lastPracticeQuestion(
 	messages: PersistedTopicMessage[],
 ): string | null {
@@ -116,6 +119,10 @@ export function looksLikeStudentWork(text: string) {
 	return false;
 }
 
+export function looksLikeNextWithinTopic(message: string) {
+	return NEXT_WITHIN_TOPIC_RE.test(message.trim());
+}
+
 export function deduceObviousIntent(
 	message: string,
 	context: AgentContext,
@@ -128,6 +135,8 @@ export function deduceObviousIntent(
 	if (lastQuestion && looksLikeStudentWork(trimmed)) {
 		return { type: "answer", message };
 	}
+	// "What's next?" is not an obvious command — slash /update applies immediately;
+	// natural language should propose or chat, not mutate the plan.
 	return null;
 }
 
@@ -140,8 +149,8 @@ export async function inferFromRaw(
 		"Classify the user's intent into exactly one of: new-topic, update-topic, answer, new-question, chat.",
 		"",
 		"Definitions:",
-		"- new-topic: user wants to start learning a new subject",
-		"- update-topic: user wants to change their learning plan or topic focus",
+		"- new-topic: user wants to abandon the current subject and start a different subject (e.g. switch from Linear Algebra to Chemistry)",
+		"- update-topic: user wants to change focus within the current subject, advance to the next section/unit, or revise the learning plan",
 		"- answer: user is submitting a solution to be graded",
 		"- new-question: user wants a practice question or quiz",
 		"- chat: user wants an explanation or discussion, not grading",
@@ -149,10 +158,12 @@ export async function inferFromRaw(
 		"Execute when the intent is clear. Use chat only when the message is discussion or truly ambiguous.",
 		"If they ask for a new, similar, or another question, classify new-question.",
 		"If the last assistant message was a practice question and they sent numbers, a matrix, or working, classify answer.",
+		'If they ask "what\'s next", "next topic", "next section", or similar while a topic is active, classify update-topic — not new-topic.',
 		"",
 	];
 	if (context.topic) {
 		parts.push(`Topic: ${context.topic.title}`);
+		parts.push(`Summary: ${context.topic.summary}`);
 	}
 	if (context.topic?.part) {
 		parts.push(`Current focus: ${context.topic.part}`);
@@ -173,6 +184,9 @@ export async function inferFromRaw(
 	const normalized = response.trim().toLowerCase();
 
 	if (normalized.includes("new-topic") || normalized.includes("new_topic")) {
+		if (context.topic) {
+			return { type: "update-topic" as const, message };
+		}
 		return { type: "new-topic" as const, message };
 	}
 	if (
