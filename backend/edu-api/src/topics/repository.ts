@@ -1,0 +1,169 @@
+import { and, eq } from "drizzle-orm";
+
+import type { Db } from "../../db/client";
+import { topic, userCurrentTopic } from "../../db/schema";
+import { nanoid } from "nanoid";
+
+export type TopicRecord = {
+	id: string;
+	userId: string;
+	title: string;
+	summary: string;
+	createdAt: Date;
+	updatedAt: Date;
+};
+
+export type CurrentTopicContext = {
+	topic: TopicRecord;
+	part: string | null;
+};
+
+export async function getCurrentTopic(
+	db: Db,
+	userId: string,
+): Promise<CurrentTopicContext | null> {
+	const rows = await db
+		.select({
+			id: topic.id,
+			userId: topic.userId,
+			title: topic.title,
+			summary: topic.summary,
+			createdAt: topic.createdAt,
+			updatedAt: topic.updatedAt,
+			part: userCurrentTopic.part,
+		})
+		.from(userCurrentTopic)
+		.innerJoin(topic, eq(userCurrentTopic.topicId, topic.id))
+		.where(eq(userCurrentTopic.userId, userId))
+		.limit(1);
+
+	const row = rows[0];
+	if (!row) {
+		return null;
+	}
+
+	return {
+		topic: {
+			id: row.id,
+			userId: row.userId,
+			title: row.title,
+			summary: row.summary,
+			createdAt: row.createdAt,
+			updatedAt: row.updatedAt,
+		},
+		part: row.part,
+	};
+}
+
+export async function getTopicForUser(
+	db: Db,
+	topicId: string,
+	userId: string,
+): Promise<TopicRecord | null> {
+	const rows = await db
+		.select()
+		.from(topic)
+		.where(and(eq(topic.id, topicId), eq(topic.userId, userId)))
+		.limit(1);
+
+	const row = rows[0];
+	if (!row) {
+		return null;
+	}
+
+	return row;
+}
+
+export async function createTopic(
+	db: Db,
+	params: {
+		userId: string;
+		title: string;
+		summary: string;
+		part: string;
+	},
+): Promise<TopicRecord> {
+	const id = `topic_${nanoid()}`;
+	const now = new Date();
+
+	await db.insert(topic).values({
+		id,
+		userId: params.userId,
+		title: params.title,
+		summary: params.summary,
+		createdAt: now,
+		updatedAt: now,
+	});
+
+	return {
+		id,
+		userId: params.userId,
+		title: params.title,
+		summary: params.summary,
+		createdAt: now,
+		updatedAt: now,
+	};
+}
+
+export async function updateTopicState(
+	db: Db,
+	topicId: string,
+	updates: {
+		title?: string;
+		summary?: string;
+	},
+): Promise<void> {
+	const now = new Date();
+	await db
+		.update(topic)
+		.set({ ...updates, updatedAt: now })
+		.where(eq(topic.id, topicId));
+}
+
+export async function setCurrentTopic(
+	db: Db,
+	userId: string,
+	topicId: string,
+	part: string | null,
+): Promise<void> {
+	const now = new Date();
+
+	const existing = await db
+		.select({ userId: userCurrentTopic.userId })
+		.from(userCurrentTopic)
+		.where(eq(userCurrentTopic.userId, userId))
+		.limit(1);
+
+	if (existing[0]) {
+		await db
+			.update(userCurrentTopic)
+			.set({ topicId, part, updatedAt: now })
+			.where(eq(userCurrentTopic.userId, userId));
+	} else {
+		await db.insert(userCurrentTopic).values({
+			userId,
+			topicId,
+			part,
+			updatedAt: now,
+		});
+	}
+}
+
+export async function updateCurrentPart(
+	db: Db,
+	userId: string,
+	part: string,
+): Promise<void> {
+	const now = new Date();
+	await db
+		.update(userCurrentTopic)
+		.set({ part, updatedAt: now })
+		.where(eq(userCurrentTopic.userId, userId));
+}
+
+export async function listUserTopics(
+	db: Db,
+	userId: string,
+): Promise<TopicRecord[]> {
+	return db.select().from(topic).where(eq(topic.userId, userId));
+}

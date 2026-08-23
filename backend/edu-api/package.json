@@ -3,14 +3,29 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy": "wrangler deploy",
+		"deploy": "wrangler deploy --env production",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:local": "wrangler d1 migrations apply edu-api --local",
+		"db:migrate:remote": "wrangler d1 migrations apply edu-api --remote --env production",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@langchain/core": "^0.3.80",
+		"@langchain/openai": "^0.6.17",
+		"better-auth": "^1.6.18",
+		"drizzle-orm": "1.0.0-beta.22",
+		"nanoid": "^6.0.1",
+		"zod": "^3.24.2"
 	},
 	"devDependencies": {
 		"@types/node": "^26.2.0",
+		"drizzle-kit": "1.0.0-beta.23",
 		"typescript": "^5.5.2",
+		"vitest": "^3.0.9",
 		"wrangler": "^4.125.0"
 	}
 }

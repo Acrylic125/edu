@@ -1,45 +1,67 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { runLunaAgent } from "../agent/luna-agent";
+import { createDb } from "../../db/client";
+import { handleChat } from "../chat/route";
 import {
-	getWsAttachment,
-	parseClientMessage,
-	setWsAttachment,
-	type ChatTurn,
-	type ServerMessage,
-} from "../types/messages";
+	WsChatClientMessageSchema,
+	type WsServerMessage,
+} from "../messages/schema";
 
-const HISTORY_KEY = "history";
+export const EDU_USER_ID_HEADER = "X-Edu-User-Id";
+
+type WsAttachment = {
+	userId: string;
+	agentRunning: boolean;
+};
+
+function getWsAttachment(ws: WebSocket) {
+	const attachment = ws.deserializeAttachment();
+	const parsed = attachment as WsAttachment | null;
+
+	if (
+		typeof parsed !== "object" ||
+		parsed === null ||
+		typeof parsed.userId !== "string" ||
+		typeof parsed.agentRunning !== "boolean"
+	) {
+		return null;
+	}
+
+	return parsed;
+}
+
+function setWsAttachment(ws: WebSocket, attachment: WsAttachment) {
+	ws.serializeAttachment(attachment);
+}
 
 export class ChatDurableObject extends DurableObject<Env> {
-	private sendJson(ws: WebSocket, message: ServerMessage) {
+	private sendJson(ws: WebSocket, message: WsServerMessage) {
 		ws.send(JSON.stringify(message));
 	}
 
-	private async getHistory(): Promise<ChatTurn[]> {
-		return (await this.ctx.storage.get<ChatTurn[]>(HISTORY_KEY)) ?? [];
-	}
-
-	private async appendTurn(turn: ChatTurn) {
-		const history = await this.getHistory();
-		history.push(turn);
-		await this.ctx.storage.put(HISTORY_KEY, history);
-	}
-
-	async fetch(request: Request): Promise<Response> {
+	async fetch(request: Request) {
 		const upgradeHeader = request.headers.get("Upgrade");
 		if (upgradeHeader?.toLowerCase() !== "websocket") {
 			return new Response("Expected WebSocket upgrade.", { status: 426 });
+		}
+
+		const userId = request.headers.get(EDU_USER_ID_HEADER)?.trim();
+		if (!userId) {
+			return new Response("Missing user.", { status: 401 });
+		}
+
+		if (!this.env.OPENROUTER_API_KEY) {
+			return new Response("OPENROUTER_API_KEY is not configured", {
+				status: 500,
+			});
 		}
 
 		const webSocketPair = new WebSocketPair();
 		const [client, server] = Object.values(webSocketPair);
 
 		this.ctx.acceptWebSocket(server);
-
-		const sessionId = this.ctx.id.toString();
-		setWsAttachment(server, { sessionId, agentRunning: false });
-		this.sendJson(server, { type: "ready", sessionId });
+		setWsAttachment(server, { userId, agentRunning: false });
+		this.sendJson(server, { type: "ready", userId });
 
 		return new Response(null, {
 			status: 101,
@@ -49,7 +71,10 @@ export class ChatDurableObject extends DurableObject<Env> {
 
 	async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
 		if (typeof message !== "string") {
-			this.sendJson(ws, { type: "error", message: "Expected a text message." });
+			this.sendJson(ws, {
+				type: "error",
+				message: "Expected a text message.",
+			});
 			return;
 		}
 
@@ -67,8 +92,16 @@ export class ChatDurableObject extends DurableObject<Env> {
 			return;
 		}
 
-		const clientMessage = parseClientMessage(message);
-		if (!clientMessage) {
+		let parsedMessage: unknown;
+		try {
+			parsedMessage = JSON.parse(message);
+		} catch {
+			this.sendJson(ws, { type: "error", message: "Invalid message." });
+			return;
+		}
+
+		const clientMessage = WsChatClientMessageSchema.safeParse(parsedMessage);
+		if (!clientMessage.success) {
 			this.sendJson(ws, { type: "error", message: "Invalid message." });
 			return;
 		}
@@ -76,16 +109,32 @@ export class ChatDurableObject extends DurableObject<Env> {
 		setWsAttachment(ws, { ...attachment, agentRunning: true });
 
 		try {
-			const history = await this.getHistory();
-			const reply = await runLunaAgent(
-				this.env.AI,
-				history,
-				clientMessage.content,
+			if (!this.env.DB) {
+				this.sendJson(ws, {
+					type: "error",
+					message: "Database is not configured.",
+				});
+				return;
+			}
+
+			const db = createDb(this.env.DB);
+			const result = await handleChat(
+				db,
+				{
+					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
+					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
+				},
+				attachment.userId,
+				{
+					message: clientMessage.data.message,
+					parts: clientMessage.data.parts,
+				},
 			);
 
-			await this.appendTurn({ role: "user", content: clientMessage.content });
-			await this.appendTurn({ role: "assistant", content: reply });
-			this.sendJson(ws, { type: "done", content: reply });
+			this.sendJson(ws, {
+				type: "response",
+				...result,
+			});
 		} catch (error) {
 			const errorMessage =
 				error instanceof Error ? error.message : "An unknown error occurred";
@@ -95,7 +144,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 		}
 	}
 
-	async webSocketError(ws: WebSocket, error: unknown) {
+	async webSocketError(ws: WebSocket, error: Error | string) {
 		console.error("Chat durable object websocket error:", error);
 		ws.close(1011, "WebSocket error.");
 	}

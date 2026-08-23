@@ -38,6 +38,7 @@
 		"skipLibCheck": true,
 		"types": [
 			"./worker-configuration.d.ts",
+			"./src/env.d.ts",
 			"node"
 		]
 	}
