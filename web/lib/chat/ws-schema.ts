@@ -8,6 +8,9 @@ export const TextPartSchema = z.object({
 export const AttachmentPartSchema = z.object({
   type: z.literal("attachment"),
   ref: z.string(),
+  url: z.string().optional(),
+  filename: z.string().optional(),
+  mimeType: z.string().optional(),
 })
 
 export const OptionItemSchema = z.object({

@@ -2,9 +2,14 @@
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  *
- * Secrets (BETTER_AUTH_SECRET, OPENROUTER_API_KEY):
- *   local → .dev.vars
- *   prod  → `wrangler secret put <NAME>`
+ * EnvConfig registry (Design A):
+ * - Top-level = local Dev (`wrangler dev`, no --env)
+ * - env.production-ben = remote Production (`wrangler deploy --env production-ben`)
+ * Non-inheritable bindings (vars, durable_objects, d1_databases, r2_buckets, routes)
+ * must be declared per environment. Secrets live in .dev.vars / `wrangler secret put`.
+ *
+ * R2 CORS for shared bucket `edu-assets`: see README.md
+ * (origins localhost:3000 + https://benapps.dev; GET/PUT/HEAD; Content-Type; maxAge 3600).
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -15,37 +20,79 @@
 	"migrations": [
 		{
 			"new_sqlite_classes": ["ChatDurableObject"],
-			"tag": "v1"
-		}
+			"tag": "v1",
+		},
 	],
+	"vars": {
+		"WEB_ORIGIN": "http://localhost:3000",
+		"R2_ACCOUNT_ID": "cea74c56c18a082fab52ca288c594c10",
+		"R2_BUCKET_NAME": "edu-assets",
+	},
 	"durable_objects": {
 		"bindings": [
 			{
+				"name": "CHAT_DURABLE_OBJECT",
 				"class_name": "ChatDurableObject",
-				"name": "CHAT_DURABLE_OBJECT"
-			}
-		]
+			},
+		],
 	},
-	"vars": {
-		"WEB_ORIGIN": "http://localhost:3000"
-	},
-	"routes": [
-		{
-			"pattern": "edu-api.benapps.dev",
-			"custom_domain": true
-		}
-	],
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "edu-api",
 			"database_id": "16cc2e87-d2b9-4a65-bf36-c236864c91e6",
 			"migrations_dir": "migrations",
-			"migrations_pattern": "migrations/*/migration.sql"
-		}
+			"migrations_pattern": "migrations/*/migration.sql",
+		},
+	],
+	// R2 CORS: see README.md (shared bucket serves local + production-ben).
+	"r2_buckets": [
+		{
+			"binding": "ASSETS",
+			"bucket_name": "edu-assets",
+		},
 	],
 	"observability": {
-		"enabled": true
+		"enabled": true,
 	},
-	"upload_source_maps": true
+	"upload_source_maps": true,
+	"env": {
+		"production-ben": {
+			"routes": [
+				{
+					"pattern": "edu-api.benapps.dev",
+					"custom_domain": true,
+				},
+			],
+			"vars": {
+				// Production web origin (CORS / Better Auth baseURL).
+				"WEB_ORIGIN": "https://benapps.dev",
+				"R2_ACCOUNT_ID": "cea74c56c18a082fab52ca288c594c10",
+				"R2_BUCKET_NAME": "edu-assets",
+			},
+			"durable_objects": {
+				"bindings": [
+					{
+						"name": "CHAT_DURABLE_OBJECT",
+						"class_name": "ChatDurableObject",
+					},
+				],
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "edu-api",
+					"database_id": "16cc2e87-d2b9-4a65-bf36-c236864c91e6",
+					"migrations_dir": "migrations",
+					"migrations_pattern": "migrations/*/migration.sql",
+				},
+			],
+			"r2_buckets": [
+				{
+					"binding": "ASSETS",
+					"bucket_name": "edu-assets",
+				},
+			],
+		},
+	},
 }

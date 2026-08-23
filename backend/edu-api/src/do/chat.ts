@@ -3,9 +3,12 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 
 import { createDb } from "../../db/client";
+import { loadAttachedImages } from "../assets/load";
+import { MAX_MESSAGE_ASSETS } from "../assets/limits";
+import { attachmentRefs, linkAssetsToMessage } from "../assets/repository";
 import { handleChat, handleDecision, type StoredProposal } from "../chat/route";
 import { createTopicMessage } from "../messages/persistence";
-import { textPart } from "../messages/parts";
+import { persistableParts, textPart } from "../messages/parts";
 import {
 	ProposalSchema,
 	WsClientEnvelopeSchema,
@@ -188,12 +191,27 @@ export class ChatDurableObject extends DurableObject<Env> {
 
 		const db = createDb(this.env.DB);
 		const current = await getCurrentTopic(db, userId);
+		const persistedParts = persistableParts(parts);
+		const refs = attachmentRefs(persistedParts);
+		if (refs.length > MAX_MESSAGE_ASSETS) {
+			this.broadcast({
+				type: "error",
+				message: `You can attach up to ${MAX_MESSAGE_ASSETS} images per message.`,
+			});
+			return;
+		}
+
 		if (current) {
 			await createTopicMessage(db, {
 				id: userMessageId,
 				topicId: current.topic.id,
 				role: "user",
-				parts,
+				parts: persistedParts,
+			});
+			await linkAssetsToMessage(db, {
+				userId,
+				messageId: userMessageId,
+				parts: persistedParts,
 			});
 		}
 
@@ -227,7 +245,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 				userMessageId,
 				assistantMessageId,
 				runId,
-				parts,
+				parts: persistedParts,
 				signal: abort.signal,
 			}),
 		);
@@ -322,6 +340,12 @@ export class ChatDurableObject extends DurableObject<Env> {
 					runId: params.runId,
 					assistantMessageId: params.assistantMessageId,
 					userMessageId: params.userMessageId,
+					images: await loadAttachedImages(
+						this.env,
+						db,
+						params.userId,
+						params.parts,
+					),
 					onDelta: (partIndex, text) => {
 						accumulated += text;
 						this.broadcast({

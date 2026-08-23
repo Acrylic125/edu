@@ -20,9 +20,25 @@ describe("MessagePartSchema", () => {
 		expect(
 			MessagePartSchema.parse({
 				type: "attachment",
-				ref: "r2://bucket/key",
+				ref: "ast_123",
 			}),
-		).toEqual({ type: "attachment", ref: "r2://bucket/key" });
+		).toEqual({ type: "attachment", ref: "ast_123" });
+	});
+
+	it("accepts hydrated attachment parts", () => {
+		expect(
+			MessagePartSchema.parse({
+				type: "attachment",
+				ref: "ast_123",
+				url: "https://example.com/file.jpg",
+				filename: "photo.jpg",
+				mimeType: "image/jpeg",
+			}),
+		).toMatchObject({
+			type: "attachment",
+			ref: "ast_123",
+			url: "https://example.com/file.jpg",
+		});
 	});
 
 	it("accepts options parts", () => {

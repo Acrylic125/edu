@@ -12,6 +12,7 @@ export type LlmEnv = {
 export type LlmCallParams = {
 	instructions: string;
 	input: string;
+	images?: Array<{ dataUrl: string }>;
 	maxTokens?: number;
 	signal?: AbortSignal;
 };
@@ -19,6 +20,22 @@ export type LlmCallParams = {
 export type StreamLlmParams = LlmCallParams & {
 	onDelta: (delta: string) => void | Promise<void>;
 };
+
+function humanMessage(input: string, images: Array<{ dataUrl: string }> | undefined) {
+	if (!images || images.length === 0) {
+		return new HumanMessage(input);
+	}
+
+	return new HumanMessage({
+		content: [
+			{ type: "text" as const, text: input },
+			...images.map((image) => ({
+				type: "image_url" as const,
+				image_url: { url: image.dataUrl },
+			})),
+		],
+	});
+}
 
 function estimateTokens(text: string) {
 	return Math.ceil(text.length / 4);
@@ -121,7 +138,7 @@ export async function callLlm(env: LlmEnv, params: LlmCallParams) {
 	const invokeOptions = params.signal ? { signal: params.signal } : undefined;
 
 	const response = await chat.invoke(
-		[new SystemMessage(params.instructions), new HumanMessage(params.input)],
+		[new SystemMessage(params.instructions), humanMessage(params.input, params.images)],
 		invokeOptions,
 	);
 
@@ -143,7 +160,7 @@ export async function streamLlm(env: LlmEnv, params: StreamLlmParams) {
 	const streamOptions = params.signal ? { signal: params.signal } : undefined;
 
 	const stream = await chat.stream(
-		[new SystemMessage(params.instructions), new HumanMessage(params.input)],
+		[new SystemMessage(params.instructions), humanMessage(params.input, params.images)],
 		streamOptions,
 	);
 

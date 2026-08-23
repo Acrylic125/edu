@@ -1,6 +1,8 @@
 import { nanoid } from "nanoid";
 
 import type { Db } from "../../db/client";
+import type { AgentImage } from "../assets/load";
+import { linkAssetsToMessage } from "../assets/repository";
 import { createAgentRun } from "../agents/runner";
 import type { LlmEnv } from "../agents/llm";
 import {
@@ -48,6 +50,7 @@ export type ChatRunIo = {
 	userMessageId: string;
 	onDelta: (partIndex: number, text: string) => void;
 	onProgress: (label: string) => void;
+	images?: AgentImage[];
 };
 
 export type StoredProposal = {
@@ -86,7 +89,14 @@ export async function handleChat(
 	io: ChatRunIo,
 ) {
 	const parsed = ChatRequestSchema.parse(body);
-	const messageText = partsToText(parsed.parts);
+	let messageText = partsToText(parsed.parts);
+	if (io.images && io.images.length > 0) {
+		if (messageText === "") {
+			messageText = "The user sent image(s). Help with what they show.";
+		} else {
+			messageText = `${messageText}\n\nThe user also attached ${io.images.length} image(s).`;
+		}
+	}
 	const context = await loadChatContext(db, userId, messageText);
 
 	const runner = await createAgentRun(db, llmEnv, {
@@ -96,6 +106,7 @@ export async function handleChat(
 		intent: null,
 		signal: io.signal,
 		onProgress: io.onProgress,
+		images: io.images,
 	});
 
 	try {
@@ -604,6 +615,11 @@ async function executeCreateTopicCommand(
 			id: request.message,
 			topicId: topic.id,
 			role: "user",
+			parts: request.parts,
+		});
+		await linkAssetsToMessage(db, {
+			userId: context.userId,
+			messageId: request.message,
 			parts: request.parts,
 		});
 	}

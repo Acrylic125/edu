@@ -59,5 +59,24 @@ function toChatMessage(message: ResponseMessage) {
   if (mapped.role === "assistant") {
     mapped.status = "complete"
   }
+
+  const attachments: ChatMessage["attachments"] = []
+  for (const part of message.parts) {
+    if (part.type !== "attachment") {
+      continue
+    }
+    if (!part.url) {
+      continue
+    }
+    attachments.push({
+      id: part.ref,
+      name: part.filename ?? "image",
+      mimeType: part.mimeType ?? "image/jpeg",
+      previewUrl: part.url,
+    })
+  }
+  if (attachments.length > 0) {
+    mapped.attachments = attachments
+  }
   return mapped
 }

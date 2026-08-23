@@ -1,4 +1,4 @@
-export const MAX_COMPOSER_IMAGE_ATTACHMENTS = 4
+export const MAX_COMPOSER_IMAGE_ATTACHMENTS = 5
 
 export const SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
@@ -7,13 +7,23 @@ export const SUPPORTED_IMAGE_MIME_TYPES = [
   "image/webp",
 ] as const
 
+export type ComposerImageStatus =
+  | "processing"
+  | "uploading"
+  | "ready"
+  | "error"
+
 export type ComposerImageAttachment = {
   id: string
+  assetId: string | null
   name: string
   mimeType: string
   sizeBytes: number
   previewUrl: string
   file: File
+  status: ComposerImageStatus
+  progress: number
+  error: string | null
 }
 
 export function isSupportedImageFile(file: File): boolean {
@@ -28,19 +38,24 @@ export function isSupportedImageFile(file: File): boolean {
 export function createComposerImageAttachment(file: File): ComposerImageAttachment {
   return {
     id: crypto.randomUUID(),
+    assetId: null,
     name: file.name || "image",
     mimeType: file.type,
     sizeBytes: file.size,
     previewUrl: URL.createObjectURL(file),
     file,
+    status: "processing",
+    progress: 0,
+    error: null,
   }
 }
 
 export function ingestComposerImageFiles(
   files: File[],
   current: ReadonlyArray<ComposerImageAttachment>
-): { nextImages: ComposerImageAttachment[]; error: string | null } {
+): { nextImages: ComposerImageAttachment[]; added: ComposerImageAttachment[]; error: string | null } {
   const nextImages = [...current]
+  const added: ComposerImageAttachment[] = []
   let error: string | null = null
 
   for (const file of files) {
@@ -56,14 +71,25 @@ export function ingestComposerImageFiles(
       error = `You can attach up to ${MAX_COMPOSER_IMAGE_ATTACHMENTS} images per message.`
       break
     }
-    nextImages.push(createComposerImageAttachment(file))
+    const attachment = createComposerImageAttachment(file)
+    nextImages.push(attachment)
+    added.push(attachment)
   }
 
-  return { nextImages, error }
+  return { nextImages, added, error }
 }
 
 export function revokeComposerImageAttachment(
   attachment: ComposerImageAttachment
 ): void {
   URL.revokeObjectURL(attachment.previewUrl)
+}
+
+export function composerImagesReady(
+  images: ReadonlyArray<ComposerImageAttachment>
+) {
+  if (images.length === 0) {
+    return true
+  }
+  return images.every((image) => image.status === "ready" && image.assetId !== null)
 }

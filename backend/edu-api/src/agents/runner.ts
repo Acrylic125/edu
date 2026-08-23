@@ -5,6 +5,7 @@ import { agentRun, agentStep, modelUsage } from "../../db/schema";
 import { nanoid } from "nanoid";
 import { callLlm, streamLlm, type LlmEnv } from "./llm";
 import { drainWordChunks, flushWords } from "../chat/word-buffer";
+import type { AgentImage } from "../assets/load";
 
 const PROVIDER = "openrouter";
 
@@ -20,6 +21,7 @@ export class AgentRunner {
 	private sequence = 0;
 
 	private onProgress: ((label: string) => void) | undefined;
+	private images: AgentImage[];
 
 	constructor(options: {
 		db: Db;
@@ -28,6 +30,7 @@ export class AgentRunner {
 		topicId: string | null;
 		signal?: AbortSignal;
 		onProgress?: (label: string) => void;
+		images?: AgentImage[];
 	}) {
 		this.db = options.db;
 		this.llmEnv = options.llmEnv;
@@ -35,6 +38,7 @@ export class AgentRunner {
 		this.topicId = options.topicId;
 		this.signal = options.signal;
 		this.onProgress = options.onProgress;
+		this.images = options.images ?? [];
 	}
 
 	announce(label: string) {
@@ -98,6 +102,7 @@ export class AgentRunner {
 			const result = await callLlm(this.llmEnv, {
 				instructions: params.instructions,
 				input: params.input,
+				images: this.images,
 				signal: this.signal,
 			});
 
@@ -140,6 +145,7 @@ export class AgentRunner {
 			const result = await streamLlm(this.llmEnv, {
 				instructions: params.instructions,
 				input: params.input,
+				images: this.images,
 				signal: this.signal,
 				onDelta: async (delta) => {
 					pending = await drainWordChunks(
@@ -246,6 +252,7 @@ export async function createAgentRun(
 		intent: string | null;
 		signal?: AbortSignal;
 		onProgress?: (label: string) => void;
+		images?: AgentImage[];
 	},
 ) {
 	const runId = params.runId ?? `run_${nanoid()}`;
@@ -268,6 +275,7 @@ export async function createAgentRun(
 		topicId: params.topicId,
 		signal: params.signal,
 		onProgress: params.onProgress,
+		images: params.images,
 	});
 }
 

@@ -68,7 +68,8 @@ export function sendAffordance(
   connection: ChatUiState["connection"],
   activity: ChatUiState["activity"],
   draft: string,
-  hasAttachments: boolean
+  hasAttachments: boolean,
+  attachmentsReady = true
 ): SendAffordance {
   if (connection.status !== "ready") {
     return "disabled"
@@ -77,6 +78,9 @@ export function sendAffordance(
     return "stop"
   }
   if (draft.trim() === "" && !hasAttachments) {
+    return "disabled"
+  }
+  if (hasAttachments && !attachmentsReady) {
     return "disabled"
   }
   return "send"

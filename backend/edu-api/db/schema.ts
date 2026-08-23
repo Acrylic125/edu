@@ -1,77 +1,66 @@
-import {
-	index,
-	integer,
-	sqliteTable,
-	text,
-	uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // ─────────────────────────────────────────────
 // Better Auth
 // ─────────────────────────────────────────────
 
-export const user = sqliteTable("user", {
-	id: text("id").primaryKey(),
-	name: text("name").notNull(),
-	email: text("email").notNull().unique(),
-	emailVerified: integer("email_verified", { mode: "boolean" }).notNull(),
-	image: text("image"),
-	createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-	updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+export const user = sqliteTable('user', {
+	id: text('id').primaryKey(),
+	name: text('name').notNull(),
+	email: text('email').notNull().unique(),
+	emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
+	image: text('image'),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
-export const session = sqliteTable("session", {
-	id: text("id").primaryKey(),
-	expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-	token: text("token").notNull().unique(),
-	createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-	updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-	ipAddress: text("ip_address"),
-	userAgent: text("user_agent"),
-	userId: text("user_id")
+export const session = sqliteTable('session', {
+	id: text('id').primaryKey(),
+	expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+	token: text('token').notNull().unique(),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+	ipAddress: text('ip_address'),
+	userAgent: text('user_agent'),
+	userId: text('user_id')
 		.notNull()
-		.references(() => user.id, { onDelete: "cascade" }),
+		.references(() => user.id, { onDelete: 'cascade' }),
 });
 
 export const account = sqliteTable(
-	"account",
+	'account',
 	{
-		id: text("id").primaryKey(),
-		accountId: text("account_id").notNull(),
-		providerId: text("provider_id").notNull(),
-		issuer: text("issuer").notNull(),
-		userId: text("user_id")
+		id: text('id').primaryKey(),
+		accountId: text('account_id').notNull(),
+		providerId: text('provider_id').notNull(),
+		issuer: text('issuer').notNull(),
+		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: "cascade" }),
-		accessToken: text("access_token"),
-		refreshToken: text("refresh_token"),
-		idToken: text("id_token"),
-		accessTokenExpiresAt: integer("access_token_expires_at", {
-			mode: "timestamp_ms",
+			.references(() => user.id, { onDelete: 'cascade' }),
+		accessToken: text('access_token'),
+		refreshToken: text('refresh_token'),
+		idToken: text('id_token'),
+		accessTokenExpiresAt: integer('access_token_expires_at', {
+			mode: 'timestamp_ms',
 		}),
-		refreshTokenExpiresAt: integer("refresh_token_expires_at", {
-			mode: "timestamp_ms",
+		refreshTokenExpiresAt: integer('refresh_token_expires_at', {
+			mode: 'timestamp_ms',
 		}),
-		scope: text("scope"),
-		password: text("password"),
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-		updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+		scope: text('scope'),
+		password: text('password'),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [
-		uniqueIndex("account_issuer_account_id_uidx").on(
-			table.issuer,
-			table.accountId,
-		),
-	],
+	(table) => [uniqueIndex('account_issuer_account_id_uidx').on(table.issuer, table.accountId)],
 );
 
-export const verification = sqliteTable("verification", {
-	id: text("id").primaryKey(),
-	identifier: text("identifier").notNull(),
-	value: text("value").notNull(),
-	expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-	createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-	updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+export const verification = sqliteTable('verification', {
+	id: text('id').primaryKey(),
+	identifier: text('identifier').notNull(),
+	value: text('value').notNull(),
+	expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+	createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
 // ─────────────────────────────────────────────
@@ -79,37 +68,37 @@ export const verification = sqliteTable("verification", {
 // ─────────────────────────────────────────────
 
 export const topic = sqliteTable(
-	"topic",
+	'topic',
 	{
-		id: text("id").primaryKey(),
+		id: text('id').primaryKey(),
 
-		userId: text("user_id")
+		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: "cascade" }),
+			.references(() => user.id, { onDelete: 'cascade' }),
 
-		title: text("title").notNull(),
+		title: text('title').notNull(),
 
-		summary: text("summary").notNull(),
+		summary: text('summary').notNull(),
 
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 
-		updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [index("topic_user_idx").on(table.userId)],
+	(table) => [index('topic_user_idx').on(table.userId)],
 );
 
-export const userCurrentTopic = sqliteTable("user_current_topic", {
-	userId: text("user_id")
+export const userCurrentTopic = sqliteTable('user_current_topic', {
+	userId: text('user_id')
 		.primaryKey()
-		.references(() => user.id, { onDelete: "cascade" }),
+		.references(() => user.id, { onDelete: 'cascade' }),
 
-	topicId: text("topic_id")
+	topicId: text('topic_id')
 		.notNull()
-		.references(() => topic.id, { onDelete: "cascade" }),
+		.references(() => topic.id, { onDelete: 'cascade' }),
 
-	part: text("part"),
+	part: text('part'),
 
-	updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
 // ─────────────────────────────────────────────
@@ -117,23 +106,21 @@ export const userCurrentTopic = sqliteTable("user_current_topic", {
 // ─────────────────────────────────────────────
 
 export const topicMessage = sqliteTable(
-	"topic_message",
+	'topic_message',
 	{
-		id: text("id").primaryKey(),
+		id: text('id').primaryKey(),
 
-		topicId: text("topic_id")
+		topicId: text('topic_id')
 			.notNull()
-			.references(() => topic.id, { onDelete: "cascade" }),
+			.references(() => topic.id, { onDelete: 'cascade' }),
 
-		role: text("role", { enum: ["user", "agent"] }).notNull(),
+		role: text('role', { enum: ['user', 'agent'] }).notNull(),
 
-		parts: text("parts", { mode: "json" }).notNull(),
+		parts: text('parts', { mode: 'json' }).notNull(),
 
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [
-		index("topic_message_topic_idx").on(table.topicId, table.createdAt),
-	],
+	(table) => [index('topic_message_topic_idx').on(table.topicId, table.createdAt)],
 );
 
 // ─────────────────────────────────────────────
@@ -141,27 +128,27 @@ export const topicMessage = sqliteTable(
 // ─────────────────────────────────────────────
 
 export const agentRun = sqliteTable(
-	"agent_run",
+	'agent_run',
 	{
-		id: text("id").primaryKey(),
+		id: text('id').primaryKey(),
 
-		topicId: text("topic_id")
+		topicId: text('topic_id')
 			.notNull()
-			.references(() => topic.id, { onDelete: "cascade" }),
+			.references(() => topic.id, { onDelete: 'cascade' }),
 
-		userMessageId: text("user_message_id")
+		userMessageId: text('user_message_id')
 			.notNull()
 			.references(() => topicMessage.id),
 
-		intent: text("intent"),
+		intent: text('intent'),
 
-		status: text("status").notNull(),
+		status: text('status').notNull(),
 
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 
-		completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+		completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
 	},
-	(table) => [index("agent_run_topic_idx").on(table.topicId)],
+	(table) => [index('agent_run_topic_idx').on(table.topicId)],
 );
 
 // ─────────────────────────────────────────────
@@ -169,29 +156,29 @@ export const agentRun = sqliteTable(
 // ─────────────────────────────────────────────
 
 export const agentStep = sqliteTable(
-	"agent_step",
+	'agent_step',
 	{
-		id: text("id").primaryKey(),
+		id: text('id').primaryKey(),
 
-		runId: text("run_id")
+		runId: text('run_id')
 			.notNull()
-			.references(() => agentRun.id, { onDelete: "cascade" }),
+			.references(() => agentRun.id, { onDelete: 'cascade' }),
 
-		sequence: integer("sequence").notNull(),
+		sequence: integer('sequence').notNull(),
 
-		type: text("type").notNull(),
+		type: text('type').notNull(),
 
-		name: text("name").notNull(),
+		name: text('name').notNull(),
 
-		input: text("input", { mode: "json" }),
+		input: text('input', { mode: 'json' }),
 
-		output: text("output", { mode: "json" }),
+		output: text('output', { mode: 'json' }),
 
-		error: text("error"),
+		error: text('error'),
 
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [index("agent_step_run_idx").on(table.runId, table.sequence)],
+	(table) => [index('agent_step_run_idx').on(table.runId, table.sequence)],
 );
 
 // ─────────────────────────────────────────────
@@ -199,39 +186,39 @@ export const agentStep = sqliteTable(
 // ─────────────────────────────────────────────
 
 export const modelUsage = sqliteTable(
-	"model_usage",
+	'model_usage',
 	{
-		id: text("id").primaryKey(),
+		id: text('id').primaryKey(),
 
-		runId: text("run_id")
+		runId: text('run_id')
 			.notNull()
-			.references(() => agentRun.id, { onDelete: "cascade" }),
+			.references(() => agentRun.id, { onDelete: 'cascade' }),
 
-		stepId: text("step_id")
+		stepId: text('step_id')
 			.notNull()
-			.references(() => agentStep.id, { onDelete: "cascade" }),
+			.references(() => agentStep.id, { onDelete: 'cascade' }),
 
-		provider: text("provider").notNull(),
+		provider: text('provider').notNull(),
 
-		model: text("model").notNull(),
+		model: text('model').notNull(),
 
-		inputTokens: integer("input_tokens").notNull().default(0),
+		inputTokens: integer('input_tokens').notNull().default(0),
 
-		outputTokens: integer("output_tokens").notNull().default(0),
+		outputTokens: integer('output_tokens').notNull().default(0),
 
-		cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+		cachedInputTokens: integer('cached_input_tokens').notNull().default(0),
 
-		reasoningTokens: integer("reasoning_tokens").notNull().default(0),
+		reasoningTokens: integer('reasoning_tokens').notNull().default(0),
 
-		inputPriceMicros: integer("input_price_micros"),
+		inputPriceMicros: integer('input_price_micros'),
 
-		outputPriceMicros: integer("output_price_micros"),
+		outputPriceMicros: integer('output_price_micros'),
 
-		costMicros: integer("cost_micros").notNull().default(0),
+		costMicros: integer('cost_micros').notNull().default(0),
 
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [index("model_usage_run_idx").on(table.runId)],
+	(table) => [index('model_usage_run_idx').on(table.runId)],
 );
 
 // ─────────────────────────────────────────────
@@ -239,25 +226,25 @@ export const modelUsage = sqliteTable(
 // ─────────────────────────────────────────────
 
 export const asset = sqliteTable(
-	"asset",
+	'asset',
 	{
-		id: text("id").primaryKey(),
-
-		userId: text("user_id")
+		id: text('id').primaryKey(),
+		userId: text('user_id')
 			.notNull()
-			.references(() => user.id, { onDelete: "cascade" }),
-
-		storageKey: text("storage_key").notNull(),
-
-		filename: text("filename"),
-
-		mimeType: text("mime_type").notNull(),
-
-		size: integer("size"),
-
-		metadata: text("metadata", { mode: "json" }),
-
-		createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+			.references(() => user.id, { onDelete: 'cascade' }),
+		topicMessageId: text('topic_message_id').references(() => topicMessage.id, {
+			onDelete: 'cascade',
+		}),
+		orderIndex: integer('order_index').notNull().default(0),
+		storageKey: text('storage_key').notNull(),
+		filename: text('filename'),
+		mimeType: text('mime_type').notNull(),
+		size: integer('size'),
+		metadata: text('metadata', { mode: 'json' }),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [index("asset_user_idx").on(table.userId)],
+	(table) => [
+		index('asset_user_idx').on(table.userId),
+		index('asset_topic_message_idx').on(table.topicMessageId, table.orderIndex),
+	],
 );

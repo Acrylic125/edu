@@ -1,3 +1,9 @@
-# Copy to .dev.vars (gitignored). Secrets only.
-BETTER_AUTH_SECRET=replace-with-a-long-random-secret
-OPENROUTER_API_KEY=replace-with-your-openrouter-api-key
+# Copy to `.dev.vars` (gitignored). Secrets only.
+# See README.md for production secrets / deploy / CORS.
+
+BETTER_AUTH_SECRET=
+OPENROUTER_API_KEY=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+# Optional:
+# OPENROUTER_MODEL=

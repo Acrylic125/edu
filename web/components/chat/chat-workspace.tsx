@@ -13,6 +13,7 @@ import {
   WsChatClientMessageSchema,
   WsChatClientStopSchema,
   WsServerMessageSchema,
+  type MessagePart,
 } from "@/lib/chat/ws-schema"
 
 export function ChatWorkspace({ initial }: { initial?: ChatUiState }) {
@@ -99,14 +100,18 @@ export function ChatWorkspace({ initial }: { initial?: ChatUiState }) {
               attachments,
             })
           )
-          if (text === "") {
-            return
+          const parts: MessagePart[] = []
+          if (text.length > 0) {
+            parts.push({ type: "text", content: text })
+          }
+          for (const attachment of attachments) {
+            parts.push({ type: "attachment", ref: attachment.id })
           }
           sendJsonMessage(
             WsChatClientMessageSchema.parse({
               type: "message",
               message: messageId,
-              parts: [{ type: "text", content: text }],
+              parts,
             })
           )
         }}

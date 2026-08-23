@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from "react"
 import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
 
+import { useSession } from "@/lib/auth-client"
 import {
   ComposerImageStrip,
   ImagePreviewDialog,
@@ -11,12 +12,20 @@ import { ComposerHighlightText } from "@/components/chat/composer-highlight-text
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { compressImageForUpload, jpegFilename } from "@/lib/chat/compress-image"
 import {
+  composerImagesReady,
   ingestComposerImageFiles,
+  MAX_COMPOSER_IMAGE_ATTACHMENTS,
   revokeComposerImageAttachment,
   type ComposerImageAttachment,
 } from "@/lib/chat/composer-images"
 import { sendAffordance as composerSendAffordance } from "@/lib/chat/state"
+import {
+  completeAssetUpload,
+  putBlobWithProgress,
+  requestAssetUploadUrl,
+} from "@/lib/chat/upload-asset"
 import type {
   ChatActivity,
   ChatConnection,
@@ -46,6 +55,7 @@ export function ChatComposer({
   activity,
   className,
 }: ChatComposerProps) {
+  const session = useSession()
   const [draft, setDraft] = useState("")
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -55,12 +65,14 @@ export function ChatComposer({
   const mirrorRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef(images)
   imagesRef.current = images
+  const uploadsRef = useRef(new Map<string, AbortController>())
 
   const sendAffordance = composerSendAffordance(
     connection,
     activity,
     draft,
-    images.length > 0
+    images.length > 0,
+    composerImagesReady(images)
   )
 
   const canSend = sendAffordance === "send"
@@ -70,8 +82,98 @@ export function ChatComposer({
       for (const image of imagesRef.current) {
         revokeComposerImageAttachment(image)
       }
+      for (const controller of uploadsRef.current.values()) {
+        controller.abort()
+      }
     }
   }, [])
+
+  function patchImage(
+    imageId: string,
+    patch: Partial<ComposerImageAttachment>
+  ) {
+    setImages((current) =>
+      current.map((image) => {
+        if (image.id !== imageId) {
+          return image
+        }
+        return { ...image, ...patch }
+      })
+    )
+  }
+
+  async function startUpload(image: ComposerImageAttachment) {
+    const token = session.data?.session.token
+    if (!token) {
+      patchImage(image.id, {
+        status: "error",
+        error: "Sign in to upload images.",
+      })
+      return
+    }
+
+    const previous = uploadsRef.current.get(image.id)
+    previous?.abort()
+    const controller = new AbortController()
+    uploadsRef.current.set(image.id, controller)
+
+    try {
+      patchImage(image.id, { status: "processing", progress: 0, error: null })
+      const blob = await compressImageForUpload(image.file)
+      if (controller.signal.aborted) {
+        return
+      }
+
+      patchImage(image.id, { status: "uploading", progress: 0 })
+      const signed = await requestAssetUploadUrl({
+        token,
+        filename: jpegFilename(image.name),
+        mimeType: "image/jpeg",
+        size: blob.size,
+      })
+      if (controller.signal.aborted) {
+        return
+      }
+
+      await putBlobWithProgress({
+        url: signed.uploadUrl,
+        blob,
+        headers: signed.headers,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          patchImage(image.id, { status: "uploading", progress })
+        },
+      })
+      await completeAssetUpload({ token, assetId: signed.assetId })
+      if (controller.signal.aborted) {
+        return
+      }
+
+      patchImage(image.id, {
+        assetId: signed.assetId,
+        mimeType: "image/jpeg",
+        sizeBytes: blob.size,
+        status: "ready",
+        progress: 1,
+        error: null,
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
+      }
+      if (controller.signal.aborted) {
+        return
+      }
+      const message =
+        error instanceof Error ? error.message : "Could not upload image"
+      patchImage(image.id, { status: "error", error: message })
+      setAttachmentError(message)
+    } finally {
+      if (uploadsRef.current.get(image.id) === controller) {
+        uploadsRef.current.delete(image.id)
+      }
+    }
+  }
 
   function addImageFiles(files: File[]) {
     if (files.length === 0) {
@@ -79,15 +181,22 @@ export function ChatComposer({
     }
 
     let error: string | null = null
+    let added: ComposerImageAttachment[] = []
     setImages((current) => {
       const result = ingestComposerImageFiles(files, current)
       error = result.error
+      added = result.added
       return result.nextImages
     })
     setAttachmentError(error)
+    for (const image of added) {
+      void startUpload(image)
+    }
   }
 
   function removeImage(imageId: string) {
+    uploadsRef.current.get(imageId)?.abort()
+    uploadsRef.current.delete(imageId)
     setImages((current) => {
       const removed = current.find((image) => image.id === imageId)
       if (removed) {
@@ -102,12 +211,18 @@ export function ChatComposer({
       return
     }
 
-    const attachments: ChatMessageAttachment[] = images.map((image) => ({
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      previewUrl: image.previewUrl,
-    }))
+    const attachments: ChatMessageAttachment[] = []
+    for (const image of images) {
+      if (!image.assetId) {
+        return
+      }
+      attachments.push({
+        id: image.assetId,
+        name: image.name,
+        mimeType: image.mimeType,
+        previewUrl: image.previewUrl,
+      })
+    }
 
     onSend(draft.trim(), attachments)
     setDraft("")
@@ -276,6 +391,7 @@ export function ChatComposer({
               variant="ghost"
               size="icon-sm"
               aria-label="Attach images"
+              disabled={images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS}
               onClick={() => {
                 fileInputRef.current?.click()
               }}

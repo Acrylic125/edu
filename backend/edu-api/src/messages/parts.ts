@@ -22,6 +22,15 @@ export function attachmentPart(ref: string) {
 	return AttachmentPartSchema.parse({ type: "attachment", ref });
 }
 
+export function persistableParts(parts: MessagePart[]) {
+	return parts.map((part) => {
+		if (part.type !== "attachment") {
+			return part;
+		}
+		return attachmentPart(part.ref);
+	});
+}
+
 export function proposalPart(
 	proposalId: string,
 	prompt: string,

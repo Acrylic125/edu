@@ -1,5 +1,7 @@
 import { ChatDurableObject, EDU_USER_ID_HEADER } from "./do/chat";
 import { createDb } from "../db/client";
+import { handleAssetRequest } from "./assets/http";
+import { hydrateAttachmentParts } from "./assets/load";
 import { selectTopic } from "./chat/select-topic";
 import { requireUser } from "./lib/auth-middleware";
 import { loadAllMessages, toResponseMessage } from "./messages/persistence";
@@ -46,6 +48,11 @@ export default {
 
 		if (request.method === "OPTIONS") {
 			return withCors(env, request, new Response(null, { status: 204 }));
+		}
+
+		const assetResponse = await handleAssetRequest(request, env, url);
+		if (assetResponse) {
+			return withCors(env, request, assetResponse);
 		}
 
 		if (url.pathname === "/chat") {
@@ -144,6 +151,21 @@ export default {
 			}
 
 			const messages = await loadAllMessages(db, current.topic.id);
+			const hydrated = [];
+			for (const message of messages) {
+				const parts = await hydrateAttachmentParts(
+					env,
+					db,
+					authResult.userId,
+					message.parts,
+				);
+				hydrated.push(
+					toResponseMessage({
+						...message,
+						parts,
+					}),
+				);
+			}
 			return withCors(
 				env,
 				request,
@@ -152,7 +174,7 @@ export default {
 						id: current.topic.id,
 						title: current.topic.title,
 					},
-					messages: messages.map(toResponseMessage),
+					messages: hydrated,
 				}),
 			);
 		}

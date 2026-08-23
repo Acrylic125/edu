@@ -1,6 +1,6 @@
 "use client"
 
-import { XIcon } from "lucide-react"
+import { Loader2Icon, XIcon } from "lucide-react"
 
 import {
   Dialog,
@@ -36,39 +36,56 @@ export function ComposerImageStrip({
 
   return (
     <div className={cn("flex flex-wrap gap-2", className)}>
-      {images.map((image) => (
-        <div
-          key={image.id}
-          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-        >
-          <button
-            type="button"
-            className="h-full w-full cursor-zoom-in"
-            aria-label={`Preview ${image.name}`}
-            onClick={() => {
-              onExpand?.(image)
-            }}
+      {images.map((image) => {
+        const showOverlay =
+          image.status === "processing" || image.status === "uploading"
+        return (
+          <div
+            key={image.id}
+            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
           >
-            <img
-              src={image.previewUrl}
-              alt={image.name}
-              className="h-full w-full object-cover"
-            />
-          </button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-            onClick={() => {
-              onRemove(image.id)
-            }}
-            aria-label={`Remove ${image.name}`}
-          >
-            <XIcon />
-          </Button>
-        </div>
-      ))}
+            <button
+              type="button"
+              className="h-full w-full cursor-zoom-in"
+              aria-label={`Preview ${image.name}`}
+              onClick={() => {
+                onExpand?.(image)
+              }}
+            >
+              <img
+                src={image.previewUrl}
+                alt={image.name}
+                className="h-full w-full object-cover"
+              />
+            </button>
+            {showOverlay ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50">
+                <Loader2Icon
+                  className="size-5 animate-spin text-white"
+                  aria-hidden
+                />
+              </div>
+            ) : null}
+            {image.status === "error" ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 px-1 text-center text-[10px] leading-tight text-white">
+                {image.error ?? "Failed"}
+              </div>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="absolute right-1 top-1 z-10 bg-background/80 hover:bg-background/90"
+              onClick={() => {
+                onRemove(image.id)
+              }}
+              aria-label={`Remove ${image.name}`}
+            >
+              <XIcon />
+            </Button>
+          </div>
+        )
+      })}
     </div>
   )
 }

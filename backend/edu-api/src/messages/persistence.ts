@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import type { Db } from "../../db/client";
 import { topicMessage } from "../../db/schema";
-import { partsToText } from "./parts";
+import { partsToText, persistableParts } from "./parts";
 import {
 	CreateTopicMessageSchema,
 	MessagePartsSchema,
@@ -23,12 +23,13 @@ export async function createTopicMessage(
 	const input = CreateTopicMessageSchema.parse(params);
 	const id = input.id ?? `msg_${nanoid()}`;
 	const now = new Date();
+	const parts = persistableParts(input.parts);
 
 	await db.insert(topicMessage).values({
 		id,
 		topicId: input.topicId,
 		role: input.role,
-		parts: input.parts,
+		parts,
 		createdAt: now,
 	});
 
@@ -36,7 +37,7 @@ export async function createTopicMessage(
 		id,
 		topicId: input.topicId,
 		role: input.role,
-		parts: input.parts,
+		parts,
 		createdAt: now,
 	});
 }
