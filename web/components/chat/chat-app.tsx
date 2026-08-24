@@ -8,8 +8,8 @@ import {
 } from "@/components/chat/chat-socket-island"
 import { ChatThreadIsland } from "@/components/chat/chat-thread-island"
 import { MessageSkeletons } from "@/components/chat/message-skeletons"
-import { PreviousTopicBar } from "@/components/chat/previous-topic-bar"
 import { clientMessageId } from "@/lib/chat/ids"
+import { activeTopicIdForSend } from "@/lib/chat/active-topic"
 import {
   ChatStoreProvider,
   headerStatusSelector,
@@ -46,7 +46,6 @@ function ChatAppShell() {
   }
 
   const isEmptyThread = phase.show === "thread" && phase.empty
-  const hasMessages = phase.show === "thread" && !phase.empty
   const showComposer = phase.show !== "error"
 
   function sendUserText(content: string) {
@@ -60,11 +59,13 @@ function ChatAppShell() {
     }
     const messageId = clientMessageId()
     state.stageUserMessage(messageId, text, [])
+    const topicId = activeTopicIdForSend(state.session)
     sendJsonMessage(
       WsChatClientMessageSchema.parse({
         type: "message",
         message: messageId,
         parts: [{ type: "text", content: text }],
+        ...(topicId ? { topicId } : {}),
       })
     )
   }
@@ -80,38 +81,29 @@ function ChatAppShell() {
     )
   } else {
     body = (
-      <>
-        <PreviousTopicBar />
-        <div
-          className={cn(
-            "absolute inset-0 min-h-0 overflow-hidden transition-opacity duration-500 ease-out",
-            hasMessages ? "opacity-100" : "pointer-events-none opacity-0"
-          )}
-          aria-hidden={!hasMessages}
-        >
-          <ChatThreadIsland
-            onOption={(label) => {
-              sendUserText(label)
-            }}
-            onDecision={(proposalId, decision) => {
-              const state = store.getState()
-              if (state.socket.status !== "ready") {
-                return
-              }
-              if (state.run.status === "running") {
-                return
-              }
-              sendJsonMessage(
-                WsChatClientDecisionSchema.parse({
-                  type: "decision",
-                  proposalId,
-                  decision,
-                })
-              )
-            }}
-          />
-        </div>
-      </>
+      <div className="absolute inset-0 min-h-0 overflow-hidden">
+        <ChatThreadIsland
+          onOption={(label) => {
+            sendUserText(label)
+          }}
+          onDecision={(proposalId, decision) => {
+            const state = store.getState()
+            if (state.socket.status !== "ready") {
+              return
+            }
+            if (state.run.status === "running") {
+              return
+            }
+            sendJsonMessage(
+              WsChatClientDecisionSchema.parse({
+                type: "decision",
+                proposalId,
+                decision,
+              })
+            )
+          }}
+        />
+      </div>
     )
   }
 

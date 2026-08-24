@@ -3,6 +3,7 @@
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { TopicMenu } from "@/components/chat/topic-menu"
 import { useChatSend } from "@/components/chat/chat-socket-island"
+import { activeTopicIdForSend } from "@/lib/chat/active-topic"
 import { clientMessageId } from "@/lib/chat/ids"
 import { useChatStore, useChatStoreApi } from "@/lib/chat/store"
 import type { ChatMessageAttachment } from "@/lib/chat/types"
@@ -49,11 +50,13 @@ export function ChatComposerIsland({ className }: { className?: string }) {
           parts.push({ type: "attachment", ref: attachment.id })
         }
         try {
+          const topicId = activeTopicIdForSend(state.session)
           sendJsonMessage(
             WsChatClientMessageSchema.parse({
               type: "message",
               message: messageId,
               parts,
+              ...(topicId ? { topicId } : {}),
             })
           )
         } catch {

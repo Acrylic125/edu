@@ -98,6 +98,8 @@ export const CreateTopicMessageSchema = z.object({
 export const ChatRequestSchema = z.object({
   message: z.string().min(1),
   parts: MessagePartsSchema.min(1),
+  // Active topic on the client — server syncs before handling the turn.
+  topicId: z.string().optional(),
 })
 
 export const ChatResponseSchema = z.object({

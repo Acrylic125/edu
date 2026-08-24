@@ -29,7 +29,7 @@ import { executeNewQuestion } from "./new-question";
 import { executeNewTopicContinuation } from "./new-topic";
 import { shortFocus, TOPIC_PART_RULE } from "./option-label";
 import { applyTopicUpdate, generateTopicUpdate } from "./update-topic";
-import { createTopicMessage } from "../messages/persistence";
+import { createTopicMessage, reassignTopicMessage } from "../messages/persistence";
 import {
 	partsToText,
 	proposalPart,
@@ -650,7 +650,10 @@ async function executeCreateTopicCommand(
 	});
 	await setCurrentTopic(db, context.userId, topic.id, part);
 
-	if (!context.topic) {
+	// /new must own the triggering user turn on the new topic, not the old one.
+	if (context.topic) {
+		await reassignTopicMessage(db, request.message, topic.id);
+	} else {
 		await createTopicMessage(db, {
 			id: request.message,
 			topicId: topic.id,
@@ -672,8 +675,9 @@ async function executeCreateTopicCommand(
 			summary: topicMeta.summary,
 			part,
 		},
+		recentMessages: [],
 	};
-	runner.announce("Writing an introduction");
+	runner.announce("Drafting a plan");
 	const { parts } = await executeNewTopicContinuation(
 		runner,
 		nextContext,
@@ -727,15 +731,16 @@ async function acceptProposal(
 					summary: proposal.summary,
 					part,
 				},
+				recentMessages: [],
 			};
-			runner.announce("Writing an introduction");
+			runner.announce("Drafting a plan");
 			const { parts } = await executeNewTopicContinuation(
 				runner,
 				nextContext,
 				proposal,
 				(text) => {
-				io.onDelta(0, text);
-			},
+					io.onDelta(0, text);
+				},
 			);
 			return {
 				parts,

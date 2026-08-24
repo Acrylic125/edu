@@ -6,7 +6,9 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { createStore, useStore, type StoreApi } from "zustand"
+import { createStore, type StoreApi } from "zustand"
+import { useStoreWithEqualityFn } from "zustand/traditional"
+import { shallow } from "zustand/shallow"
 
 import { upsertListing as upsertListingInCatalog } from "./catalog"
 import { sendGate as computeSendGate } from "./gate"
@@ -312,7 +314,9 @@ export function useChatStore<T>(selector: (state: ChatStorePrivate) => T) {
   if (!store) {
     throw new Error("useChatStore must be used within ChatStoreProvider")
   }
-  return useStore(store, selector)
+  // Selectors like selectShellPhase return fresh objects; Object.is would
+  // trip React's getServerSnapshot cache check during SSR.
+  return useStoreWithEqualityFn(store, selector, shallow)
 }
 
 export function useChatStoreApi() {

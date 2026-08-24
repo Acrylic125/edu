@@ -4,6 +4,7 @@ import { normalizeAssistantMath } from "@/lib/chat/normalize-math"
 import Markdown from "react-markdown"
 import type { Components } from "react-markdown"
 import rehypeKatex from "rehype-katex"
+import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 
 import "katex/dist/katex.min.css"
@@ -56,6 +57,26 @@ const assistantMarkdownComponents: Components = {
       {children}
     </blockquote>
   ),
+  table: ({ children }) => (
+    <div className="mb-2 overflow-x-auto last:mb-0">
+      <table className="w-full border-collapse text-left text-sm">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="border-b border-border">{children}</thead>
+  ),
+  tbody: ({ children }) => <tbody>{children}</tbody>,
+  tr: ({ children }) => (
+    <tr className="border-b border-border/60 last:border-b-0">{children}</tr>
+  ),
+  th: ({ children }) => (
+    <th className="px-2 py-1.5 font-semibold align-top">{children}</th>
+  ),
+  td: ({ children }) => (
+    <td className="px-2 py-1.5 align-top">{children}</td>
+  ),
 }
 
 export function AssistantMarkdown({
@@ -68,7 +89,7 @@ export function AssistantMarkdown({
   if (enableMath) {
     return (
       <Markdown
-        remarkPlugins={[remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[
           [rehypeKatex, { throwOnError: false, output: "html" }],
         ]}
@@ -80,6 +101,11 @@ export function AssistantMarkdown({
   }
 
   return (
-    <Markdown components={assistantMarkdownComponents}>{text}</Markdown>
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={assistantMarkdownComponents}
+    >
+      {text}
+    </Markdown>
   )
 }

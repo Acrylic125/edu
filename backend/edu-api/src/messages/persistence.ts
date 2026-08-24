@@ -42,6 +42,17 @@ export async function createTopicMessage(
 	});
 }
 
+export async function reassignTopicMessage(
+	db: Db,
+	messageId: string,
+	topicId: string,
+) {
+	await db
+		.update(topicMessage)
+		.set({ topicId })
+		.where(eq(topicMessage.id, messageId));
+}
+
 export async function loadAllMessages(db: Db, topicId: string) {
 	const rows = await db
 		.select()

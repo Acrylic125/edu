@@ -84,7 +84,10 @@ export const topic = sqliteTable(
 
 		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [index('topic_user_idx').on(table.userId)],
+	(table) => [
+		index('topic_user_idx').on(table.userId),
+		index('topic_user_created_idx').on(table.userId, table.createdAt),
+	],
 );
 
 export const userCurrentTopic = sqliteTable('user_current_topic', {

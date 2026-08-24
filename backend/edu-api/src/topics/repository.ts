@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 import type { Db } from '../../db/client';
 import { topic, userCurrentTopic } from '../../db/schema';
@@ -140,5 +140,9 @@ export async function updateCurrentPart(db: Db, userId: string, part: string): P
 }
 
 export async function listUserTopics(db: Db, userId: string): Promise<TopicRecord[]> {
-	return db.select().from(topic).where(eq(topic.userId, userId));
+	return db
+		.select()
+		.from(topic)
+		.where(eq(topic.userId, userId))
+		.orderBy(asc(topic.createdAt));
 }

@@ -31,6 +31,9 @@ export function useSwitchTopic() {
         fetchCurrentMessages(token),
         fetchTopics(token),
       ])
+      if (current.topic?.id !== topicId) {
+        throw new Error("Topic switch did not stick")
+      }
       store.getState().commitSwitch(current)
       store.getState().replaceCatalog(catalog)
     } catch {
