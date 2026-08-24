@@ -189,6 +189,18 @@ export const CurrentTopicMessagesSchema = z.object({
   messages: z.array(ResponseMessageSchema),
 })
 
+export const TopicListingSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+export const TopicsListSchema = z.object({
+  topics: z.array(TopicListingSchema),
+})
+
 export type MessagePart = z.infer<typeof MessagePartSchema>
 export type MessageRole = z.infer<typeof MessageRoleSchema>
 export type TopicMessage = z.infer<typeof TopicMessageSchema>
@@ -202,6 +214,7 @@ export type WsClientEnvelope = z.infer<typeof WsClientEnvelopeSchema>
 export type WsServerMessage = z.infer<typeof WsServerMessageSchema>
 export type CreateTopicMessageInput = z.input<typeof CreateTopicMessageSchema>
 export type CurrentTopicMessages = z.infer<typeof CurrentTopicMessagesSchema>
+export type TopicsList = z.infer<typeof TopicsListSchema>
 
 export function partsToText(parts: MessagePart[]) {
   const lines: string[] = []

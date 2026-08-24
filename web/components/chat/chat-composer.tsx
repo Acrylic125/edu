@@ -1,13 +1,13 @@
 "use client"
 
 import {
-  useEffect,
   useRef,
   useState,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
 
@@ -23,30 +23,31 @@ import { Textarea } from "@/components/ui/textarea"
 import { compressImageForUpload, jpegFilename } from "@/lib/chat/compress-image"
 import {
   composerImagesReady,
+  createComposerPreviewRegistry,
   ingestComposerImageFiles,
   MAX_COMPOSER_IMAGE_ATTACHMENTS,
-  revokeComposerImageAttachment,
   type ComposerImageAttachment,
 } from "@/lib/chat/composer-images"
-import { sendAffordance as composerSendAffordance } from "@/lib/chat/state"
+import { sendGate } from "@/lib/chat/gate"
 import {
   completeAssetUpload,
   putBlobWithProgress,
   requestAssetUploadUrl,
 } from "@/lib/chat/upload-asset"
 import type {
-  ChatActivity,
-  ChatConnection,
   ChatMessageAttachment,
-  SendAffordance,
+  Gate,
+  RunFact,
+  SocketFact,
 } from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
 type ChatComposerProps = {
   onSend: (content: string, attachments: ChatMessageAttachment[]) => void
   onStop: () => void
-  connection: ChatConnection
-  activity: ChatActivity
+  socket: SocketFact
+  run: RunFact
+  footerStart?: ReactNode
   className?: string
 }
 
@@ -59,8 +60,9 @@ const COMPOSER_MIRROR_CLASS =
 export function ChatComposer({
   onSend,
   onStop,
-  connection,
-  activity,
+  socket,
+  run,
+  footerStart,
   className,
 }: ChatComposerProps) {
   const session = useSession()
@@ -74,27 +76,17 @@ export function ChatComposer({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mirrorRef = useRef<HTMLDivElement>(null)
-  const imagesRef = useRef(images)
-  imagesRef.current = images
+  const previewsRef = useRef(createComposerPreviewRegistry())
   const submitAbortRef = useRef<AbortController | null>(null)
 
-  const sendAffordance = composerSendAffordance(
-    connection,
-    activity,
+  const gate = sendGate(
+    socket,
+    run,
     draft,
     images.length > 0,
     composerImagesReady(images) && !isSubmitting
   )
-  const canSend = sendAffordance === "send"
-
-  useEffect(() => {
-    return () => {
-      for (const image of imagesRef.current) {
-        revokeComposerImageAttachment(image)
-      }
-      submitAbortRef.current?.abort()
-    }
-  }, [])
+  const canSend = gate === "send"
 
   function patchImage(
     imageId: string,
@@ -119,6 +111,9 @@ export function ChatComposer({
     setImages((current) => {
       const result = ingestComposerImageFiles(files, current)
       error = result.error
+      for (const image of result.added) {
+        previewsRef.current.track(image)
+      }
       return result.nextImages
     })
     setAttachmentError(error)
@@ -131,7 +126,7 @@ export function ChatComposer({
     setImages((current) => {
       const removed = current.find((image) => image.id === imageId)
       if (removed) {
-        revokeComposerImageAttachment(removed)
+        previewsRef.current.release(removed)
       }
       return current.filter((image) => image.id !== imageId)
     })
@@ -193,18 +188,17 @@ export function ChatComposer({
   }
 
   async function submit() {
-    if (sendAffordance !== "send" || isSubmitting) {
+    if (gate !== "send" || isSubmitting) {
       return
     }
 
     const text = draft.trim()
-    const snapshot = imagesRef.current
-    if (text === "" && snapshot.length === 0) {
+    if (text === "" && images.length === 0) {
       return
     }
 
     const token = session.data?.session.token
-    if (snapshot.length > 0 && !token) {
+    if (images.length > 0 && !token) {
       setAttachmentError("Sign in to upload images.")
       return
     }
@@ -213,6 +207,7 @@ export function ChatComposer({
     setAttachmentError(null)
     const controller = new AbortController()
     submitAbortRef.current = controller
+    const snapshot = images
 
     try {
       const attachments: ChatMessageAttachment[] = []
@@ -224,7 +219,8 @@ export function ChatComposer({
 
       onSend(text, attachments)
       setDraft("")
-      // Keep preview URLs alive for the message bubble (t3code clearComposerContent).
+      // Message bubble keeps showing these object URLs — hand off ownership, don't revoke.
+      previewsRef.current.transferAll()
       setImages([])
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -392,7 +388,7 @@ export function ChatComposer({
         </div>
 
         <div className="flex items-center justify-between gap-2 px-3 pb-3">
-          <div className="flex items-center">
+          <div className="flex min-w-0 items-center gap-1">
             <input
               ref={fileInputRef}
               type="file"
@@ -419,13 +415,10 @@ export function ChatComposer({
             >
               <PaperclipIcon />
             </Button>
+            {footerStart}
           </div>
 
-          <ComposerActionButton
-            sendAffordance={sendAffordance}
-            canSend={canSend}
-            onStop={onStop}
-          />
+          <ComposerActionButton gate={gate} canSend={canSend} onStop={onStop} />
         </div>
       </form>
 
@@ -447,15 +440,15 @@ export function ChatComposer({
 }
 
 function ComposerActionButton({
-  sendAffordance,
+  gate,
   canSend,
   onStop,
 }: {
-  sendAffordance: SendAffordance
+  gate: Gate
   canSend: boolean
   onStop: () => void
 }) {
-  if (sendAffordance === "stop") {
+  if (gate === "stop") {
     return (
       <button
         type="button"

@@ -1,23 +1,27 @@
 import { Suspense } from "react"
 
-import { ChatWorkspace } from "@/components/chat/chat-workspace"
-import { loadCurrentChatSnapshot } from "@/lib/chat/load-topic-snapshot"
+import { ChatApp } from "@/components/chat/chat-app"
+import { ChatFrame } from "@/components/chat/chat-frame"
+import { MessageSkeletons } from "@/components/chat/message-skeletons"
+import { loadChatBootstrap } from "@/lib/chat/load-bootstrap"
 
 export default function Home() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-dvh items-center justify-center text-sm text-muted-foreground">
-          Loading chat…
-        </div>
+        <ChatFrame
+          title="Chat"
+          status="Connecting"
+          body={<MessageSkeletons />}
+        />
       }
     >
-      <CurrentTopicChat />
+      <BootedChat />
     </Suspense>
   )
 }
 
-async function CurrentTopicChat() {
-  const snapshot = await loadCurrentChatSnapshot()
-  return <ChatWorkspace initial={snapshot} />
+async function BootedChat() {
+  const bootstrap = await loadChatBootstrap()
+  return <ChatApp bootstrap={bootstrap} />
 }

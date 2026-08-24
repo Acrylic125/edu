@@ -86,6 +86,26 @@ export function revokeComposerImageAttachment(
   URL.revokeObjectURL(attachment.previewUrl)
 }
 
+/** Tracks blob URLs the composer still owns (vs handed off to a sent message). */
+export function createComposerPreviewRegistry() {
+  const urls = new Set<string>()
+
+  return {
+    track(attachment: ComposerImageAttachment) {
+      urls.add(attachment.previewUrl)
+    },
+    release(attachment: ComposerImageAttachment) {
+      if (urls.delete(attachment.previewUrl)) {
+        revokeComposerImageAttachment(attachment)
+      }
+    },
+    /** Message bubble keeps showing these previews — stop owning without revoking. */
+    transferAll() {
+      urls.clear()
+    },
+  }
+}
+
 export function composerImagesReady(
   images: ReadonlyArray<ComposerImageAttachment>
 ) {
