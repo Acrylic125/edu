@@ -6,6 +6,13 @@ export const TopicGenerationSchema = z.object({
 	part: z.string(),
 });
 
+export const TopicPlanChapterSchema = z.object({
+	chapter: z.string(),
+	whatIsCovered: z.string(),
+});
+
+export const TopicPlanChaptersSchema = z.array(TopicPlanChapterSchema).min(1);
+
 export const QuestionIdentificationSchema = z.object({
 	found: z.boolean(),
 	question: z.string().default(""),
@@ -35,23 +42,31 @@ export const TopicUpdateSchema = z.object({
 
 export type TopicUpdate = z.infer<typeof TopicUpdateSchema>;
 export type ProposedUpdate = z.infer<typeof ProposedUpdateSchema>;
+export type TopicPlanChapter = z.infer<typeof TopicPlanChapterSchema>;
 
 export function parseJsonFromLlm<T extends z.ZodType>(
 	schema: T,
 	response: string,
 ) {
-	const jsonMatch = response.match(/\{[\s\S]*\}/);
-	if (!jsonMatch) {
-		return null;
-	}
+	// Prefer array candidates first so chapter plans parse as a whole list,
+	// not as the first nested object inside that list.
+	const candidates = [
+		response.match(/\[[\s\S]*\]/)?.[0],
+		response.match(/\{[\s\S]*\}/)?.[0],
+	];
 
-	try {
-		const result = schema.safeParse(JSON.parse(jsonMatch[0]));
-		if (result.success) {
-			return result.data;
+	for (const candidate of candidates) {
+		if (!candidate) {
+			continue;
 		}
-	} catch {
-		return null;
+		try {
+			const result = schema.safeParse(JSON.parse(candidate));
+			if (result.success) {
+				return result.data;
+			}
+		} catch {
+			continue;
+		}
 	}
 
 	return null;

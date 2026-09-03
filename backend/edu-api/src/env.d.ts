@@ -1,5 +1,7 @@
 interface Env {
 	BETTER_AUTH_SECRET: string;
+	LANGTRACE_API_HOST?: string;
+	LANGTRACE_API_KEY?: string;
 	OPENROUTER_API_KEY: string;
 	OPENROUTER_MODEL?: string;
 	WEB_ORIGIN: string;

@@ -29,7 +29,7 @@ import { executeNewQuestion } from "./new-question";
 import { executeNewTopicContinuation } from "./new-topic";
 import { shortFocus, TOPIC_PART_RULE } from "./option-label";
 import { applyTopicUpdate, generateTopicUpdate } from "./update-topic";
-import { createTopicMessage } from "../messages/persistence";
+import { createTopicMessage, reassignTopicMessage } from "../messages/persistence";
 import {
 	partsToText,
 	proposalPart,
@@ -110,41 +110,43 @@ export async function handleChat(
 		images: io.images,
 	});
 
-	try {
-		runner.announce("Reading your message");
-		const route = await routeMessage(messageText, context, runner);
-		const result = await fulfillRoute(
-			db,
-			runner,
-			context,
-			io,
-			parsed,
-			route,
-		);
-		await runner.complete();
-		if (result.topicId) {
-			await maybeScheduleSummaryUpdate(
+	return runner.withTrace(async () => {
+		try {
+			runner.announce("Reading your message");
+			const route = await routeMessage(messageText, context, runner);
+			const result = await fulfillRoute(
 				db,
 				runner,
-				result.topicId,
-				userId,
+				context,
+				io,
+				parsed,
+				route,
 			);
+			await runner.complete();
+			if (result.topicId) {
+				await maybeScheduleSummaryUpdate(
+					db,
+					runner,
+					result.topicId,
+					userId,
+				);
+			}
+			return result;
+		} catch (error) {
+			if (io.signal.aborted) {
+				await runner.complete("cancelled");
+				throw error;
+			}
+			await runner.fail(error instanceof Error ? error : String(error));
+			return {
+				parts: [
+					textPart("I couldn't complete that request. Please try again."),
+				],
+				topicId: context.topic?.id,
+				pendingProposal: null,
+			};
 		}
-		return result;
-	} catch (error) {
-		if (io.signal.aborted) {
-			await runner.complete("cancelled");
-			throw error;
-		}
-		await runner.fail(error instanceof Error ? error : String(error));
-		return {
-			parts: [
-				textPart("I couldn't complete that request. Please try again."),
-			],
-			topicId: context.topic?.id,
-			pendingProposal: null,
-		};
-	}
+	});
 }
 
 export async function handleDecision(
@@ -175,6 +177,7 @@ export async function handleDecision(
 		onProgress: io.onProgress,
 	});
 
+	return runner.withTrace(async () => {
 	try {
 		if (decision === "reject") {
 			const text = "Okay, I won't do that.";
@@ -218,6 +221,7 @@ export async function handleDecision(
 			pendingProposal: null,
 		};
 	}
+	});
 }
 
 export async function routeMessage(
@@ -650,7 +654,10 @@ async function executeCreateTopicCommand(
 	});
 	await setCurrentTopic(db, context.userId, topic.id, part);
 
-	if (!context.topic) {
+	// /new must own the triggering user turn on the new topic, not the old one.
+	if (context.topic) {
+		await reassignTopicMessage(db, request.message, topic.id);
+	} else {
 		await createTopicMessage(db, {
 			id: request.message,
 			topicId: topic.id,
@@ -672,8 +679,9 @@ async function executeCreateTopicCommand(
 			summary: topicMeta.summary,
 			part,
 		},
+		recentMessages: [],
 	};
-	runner.announce("Writing an introduction");
+	runner.announce("Drafting a plan");
 	const { parts } = await executeNewTopicContinuation(
 		runner,
 		nextContext,
@@ -727,15 +735,16 @@ async function acceptProposal(
 					summary: proposal.summary,
 					part,
 				},
+				recentMessages: [],
 			};
-			runner.announce("Writing an introduction");
+			runner.announce("Drafting a plan");
 			const { parts } = await executeNewTopicContinuation(
 				runner,
 				nextContext,
 				proposal,
 				(text) => {
-				io.onDelta(0, text);
-			},
+					io.onDelta(0, text);
+				},
 			);
 			return {
 				parts,

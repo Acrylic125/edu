@@ -16,10 +16,10 @@ export function LoginForm() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Sign in</CardTitle>
-          <CardDescription>Use your Google account.</CardDescription>
+          <CardDescription>Use your Microsoft account.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <Button
+          {/* <Button
             type="button"
             onClick={() => {
               void signIn.social({
@@ -29,6 +29,17 @@ export function LoginForm() {
             }}
           >
             Continue with Google
+          </Button> */}
+          <Button
+            type="button"
+            onClick={() => {
+              void signIn.social({
+                provider: "microsoft",
+                callbackURL: "/",
+              })
+            }}
+          >
+            Continue with Microsoft
           </Button>
         </CardContent>
       </Card>

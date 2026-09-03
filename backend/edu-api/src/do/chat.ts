@@ -15,7 +15,7 @@ import {
 	type MessagePart,
 	type WsServerMessage,
 } from "../messages/schema";
-import { getCurrentTopic } from "../topics/repository";
+import { getCurrentTopic, getTopicForUser, setCurrentTopic } from "../topics/repository";
 
 export const EDU_USER_ID_HEADER = "X-Edu-User-Id";
 
@@ -181,6 +181,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 					attachment.userId,
 					frame.message,
 					frame.parts,
+					frame.topicId,
 				);
 				return;
 			}
@@ -202,6 +203,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 		userId: string,
 		userMessageId: string,
 		parts: MessagePart[],
+		clientTopicId?: string,
 	) {
 		if (!this.env.DB) {
 			this.broadcast({
@@ -212,6 +214,22 @@ export class ChatDurableObject extends DurableObject<Env> {
 		}
 
 		const db = createDb(this.env.DB);
+
+		if (clientTopicId) {
+			const owned = await getTopicForUser(db, clientTopicId, userId);
+			if (!owned) {
+				this.broadcast({
+					type: "error",
+					message: "Topic not found.",
+				});
+				return;
+			}
+			const existing = await getCurrentTopic(db, userId);
+			const part =
+				existing?.topic.id === clientTopicId ? existing.part : null;
+			await setCurrentTopic(db, userId, clientTopicId, part);
+		}
+
 		const current = await getCurrentTopic(db, userId);
 		const persistedParts = persistableParts(parts);
 		const refs = attachmentRefs(persistedParts);
@@ -349,6 +367,8 @@ export class ChatDurableObject extends DurableObject<Env> {
 			const result = await handleChat(
 				db,
 				{
+					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
+					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
 					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
 					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
 				},
@@ -444,6 +464,8 @@ export class ChatDurableObject extends DurableObject<Env> {
 			const result = await handleDecision(
 				db,
 				{
+					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
+					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
 					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
 					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
 				},

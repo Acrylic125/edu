@@ -18,9 +18,12 @@ import { shortOptionLabel } from "@/lib/chat/option-label"
 import { MOCK_SKILLS } from "@/lib/chat/skills"
 import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/types"
 import type { MessagePart } from "@/lib/chat/ws-schema"
+import type { ReactNode } from "react"
 
 type MessageListProps = {
   messages: ChatMessage[]
+  header?: ReactNode
+  footer?: ReactNode
   onOption: (label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }
@@ -189,7 +192,22 @@ function ComposerSpacer() {
   return <div className="h-36 shrink-0" aria-hidden />
 }
 
-export function MessageList({ messages, onOption, onDecision }: MessageListProps) {
+function ListFooter({ footer }: { footer: ReactNode }) {
+  return (
+    <>
+      {footer}
+      <ComposerSpacer />
+    </>
+  )
+}
+
+export function MessageList({
+  messages,
+  header,
+  footer,
+  onOption,
+  onDecision,
+}: MessageListProps) {
   const [expandedImage, setExpandedImage] = useState<ChatMessageAttachment | null>(
     null
   )
@@ -229,7 +247,8 @@ export function MessageList({ messages, onOption, onDecision }: MessageListProps
         initialScrollAtEnd
         maintainScrollAtEnd
         maintainVisibleContentPosition
-        ListFooterComponent={ComposerSpacer}
+        ListHeaderComponent={header ?? undefined}
+        ListFooterComponent={<ListFooter footer={footer} />}
       />
       <ImagePreviewDialog
         open={expandedImage !== null}
