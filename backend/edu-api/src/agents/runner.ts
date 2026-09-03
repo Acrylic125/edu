@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { agentRun, agentStep, modelUsage } from "../../db/schema";
 import { nanoid } from "nanoid";
-import { callLlm, streamLlm, type LlmEnv } from "./llm";
+import { callLlm, streamLlm, withLlmTrace, type LlmEnv } from "./llm";
 import { drainWordChunks, flushWords } from "../chat/word-buffer";
 import type { AgentImage } from "../assets/load";
 
@@ -46,6 +46,10 @@ export class AgentRunner {
 			return;
 		}
 		this.onProgress(label);
+	}
+
+	withTrace<T>(fn: () => Promise<T>) {
+		return withLlmTrace(this.llmEnv, this.runId, fn);
 	}
 
 	private async nextSequence() {

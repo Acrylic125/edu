@@ -11,6 +11,10 @@ Auth sessions must live in the **same local D1** as `wrangler dev`.
 
 `.dev.vars` `BETTER_AUTH_SECRET` must match web `BETTER_AUTH_SECRET`.
 
+Set `LANGTRACE_API_KEY` in `.dev.vars` to trace LangChain's underlying OpenAI
+requests. For a self-hosted Langtrace instance, also set
+`LANGTRACE_API_HOST` to its `/api/trace` endpoint.
+
 Force remote auth DB from Next while developing: `AUTH_D1_LOCAL=0`.
 
 ## Production (`env.production-ben`)
@@ -19,6 +23,7 @@ Put secrets remotely (one prompt each):
 
 ```sh
 pnpx wrangler secret put BETTER_AUTH_SECRET --env production-ben
+pnpx wrangler secret put LANGTRACE_API_KEY --env production-ben
 pnpx wrangler secret put OPENROUTER_API_KEY --env production-ben
 pnpx wrangler secret put R2_ACCESS_KEY_ID --env production-ben
 pnpx wrangler secret put R2_SECRET_ACCESS_KEY --env production-ben

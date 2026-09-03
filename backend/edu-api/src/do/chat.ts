@@ -367,6 +367,8 @@ export class ChatDurableObject extends DurableObject<Env> {
 			const result = await handleChat(
 				db,
 				{
+					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
+					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
 					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
 					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
 				},
@@ -462,6 +464,8 @@ export class ChatDurableObject extends DurableObject<Env> {
 			const result = await handleDecision(
 				db,
 				{
+					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
+					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
 					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
 					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
 				},

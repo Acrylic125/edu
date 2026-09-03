@@ -110,41 +110,43 @@ export async function handleChat(
 		images: io.images,
 	});
 
-	try {
-		runner.announce("Reading your message");
-		const route = await routeMessage(messageText, context, runner);
-		const result = await fulfillRoute(
-			db,
-			runner,
-			context,
-			io,
-			parsed,
-			route,
-		);
-		await runner.complete();
-		if (result.topicId) {
-			await maybeScheduleSummaryUpdate(
+	return runner.withTrace(async () => {
+		try {
+			runner.announce("Reading your message");
+			const route = await routeMessage(messageText, context, runner);
+			const result = await fulfillRoute(
 				db,
 				runner,
-				result.topicId,
-				userId,
+				context,
+				io,
+				parsed,
+				route,
 			);
+			await runner.complete();
+			if (result.topicId) {
+				await maybeScheduleSummaryUpdate(
+					db,
+					runner,
+					result.topicId,
+					userId,
+				);
+			}
+			return result;
+		} catch (error) {
+			if (io.signal.aborted) {
+				await runner.complete("cancelled");
+				throw error;
+			}
+			await runner.fail(error instanceof Error ? error : String(error));
+			return {
+				parts: [
+					textPart("I couldn't complete that request. Please try again."),
+				],
+				topicId: context.topic?.id,
+				pendingProposal: null,
+			};
 		}
-		return result;
-	} catch (error) {
-		if (io.signal.aborted) {
-			await runner.complete("cancelled");
-			throw error;
-		}
-		await runner.fail(error instanceof Error ? error : String(error));
-		return {
-			parts: [
-				textPart("I couldn't complete that request. Please try again."),
-			],
-			topicId: context.topic?.id,
-			pendingProposal: null,
-		};
-	}
+	});
 }
 
 export async function handleDecision(
@@ -175,6 +177,7 @@ export async function handleDecision(
 		onProgress: io.onProgress,
 	});
 
+	return runner.withTrace(async () => {
 	try {
 		if (decision === "reject") {
 			const text = "Okay, I won't do that.";
@@ -218,6 +221,7 @@ export async function handleDecision(
 			pendingProposal: null,
 		};
 	}
+	});
 }
 
 export async function routeMessage(

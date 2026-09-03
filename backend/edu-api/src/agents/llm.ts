@@ -1,10 +1,27 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
+import * as openai from "openai";
+import {
+	context,
+	trace,
+	SpanStatusCode,
+} from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { BasicTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+	chatCompletionCreate,
+	embeddingsCreate,
+	imageEdit,
+	imagesGenerate,
+} from "@langtrase/typescript-sdk/dist/instrumentation/openai/patch";
+import { createLangtraceExporter } from "./langtrace-exporter";
 
 export const DEFAULT_MODEL = "openai/gpt-5.6-luna";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type LlmEnv = {
+	LANGTRACE_API_HOST?: string;
+	LANGTRACE_API_KEY?: string;
 	OPENROUTER_API_KEY: string;
 	OPENROUTER_MODEL?: string;
 };
@@ -20,6 +37,88 @@ export type LlmCallParams = {
 export type StreamLlmParams = LlmCallParams & {
 	onDelta: (delta: string) => void | Promise<void>;
 };
+
+let langtraceInitialized = false;
+
+let langtraceTracer = trace.getTracer("edu-api");
+
+function initializeLangtrace(env: LlmEnv) {
+	if (langtraceInitialized || (!env.LANGTRACE_API_KEY && !env.LANGTRACE_API_HOST)) {
+		return;
+	}
+
+	const provider = new BasicTracerProvider();
+	provider.addSpanProcessor(
+		new SimpleSpanProcessor(
+			createLangtraceExporter(
+				env.LANGTRACE_API_KEY ?? "",
+				env.LANGTRACE_API_HOST ?? "https://app.langtrace.ai/api/trace",
+			),
+		),
+	);
+	context.setGlobalContextManager(
+		new AsyncLocalStorageContextManager().enable(),
+	);
+	trace.setGlobalTracerProvider(provider);
+
+	const tracer = trace.getTracer("edu-api");
+	langtraceTracer = tracer;
+	const openAiVersion = "5.12.2";
+	const langtraceVersion = "6.3.7";
+	openai.OpenAI.Chat.Completions.prototype.create = chatCompletionCreate(
+		openai.OpenAI.Chat.Completions.prototype.create,
+		tracer,
+		langtraceVersion,
+		openAiVersion,
+	) as typeof openai.OpenAI.Chat.Completions.prototype.create;
+	openai.OpenAI.Images.prototype.generate = imagesGenerate(
+		openai.OpenAI.Images.prototype.generate,
+		tracer,
+		langtraceVersion,
+		openAiVersion,
+	) as typeof openai.OpenAI.Images.prototype.generate;
+	openai.OpenAI.Images.prototype.edit = imageEdit(
+		openai.OpenAI.Images.prototype.edit,
+		tracer,
+		langtraceVersion,
+		openAiVersion,
+	) as typeof openai.OpenAI.Images.prototype.edit;
+	openai.OpenAI.Embeddings.prototype.create = embeddingsCreate(
+		openai.OpenAI.Embeddings.prototype.create,
+		tracer,
+		langtraceVersion,
+		openAiVersion,
+	) as typeof openai.OpenAI.Embeddings.prototype.create;
+	langtraceInitialized = true;
+}
+
+export async function withLlmTrace<T>(env: LlmEnv, runId: string, fn: () => Promise<T>) {
+	initializeLangtrace(env);
+	if (!langtraceInitialized) {
+		return fn();
+	}
+
+	const span = langtraceTracer.startSpan("chat.run", {
+		attributes: {
+			"langtrace.service.name": "edu-api",
+			"langtrace.service.type": "agent",
+			"edu.run.id": runId,
+		},
+	});
+	return context.with(trace.setSpan(context.active(), span), async () => {
+		try {
+			const result = await fn();
+			span.setStatus({ code: SpanStatusCode.OK });
+			return result;
+		} catch (error) {
+			span.recordException(error instanceof Error ? error : String(error));
+			span.setStatus({ code: SpanStatusCode.ERROR });
+			throw error;
+		} finally {
+			span.end();
+		}
+	});
+}
 
 function humanMessage(input: string, images: Array<{ dataUrl: string }> | undefined) {
 	if (!images || images.length === 0) {
@@ -42,6 +141,8 @@ function estimateTokens(text: string) {
 }
 
 function createChatModel(env: LlmEnv, maxTokens: number, streaming: boolean) {
+	initializeLangtrace(env);
+
 	if (streaming) {
 		return new ChatOpenAI({
 			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,

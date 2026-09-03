@@ -140,9 +140,5 @@ export async function updateCurrentPart(db: Db, userId: string, part: string): P
 }
 
 export async function listUserTopics(db: Db, userId: string): Promise<TopicRecord[]> {
-	return db
-		.select()
-		.from(topic)
-		.where(eq(topic.userId, userId))
-		.orderBy(asc(topic.createdAt));
+	return db.select().from(topic).where(eq(topic.userId, userId)).orderBy(asc(topic.createdAt));
 }
