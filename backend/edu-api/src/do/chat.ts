@@ -390,7 +390,13 @@ export class ChatDurableObject extends DurableObject<Env> {
 					),
 					onDelta: (partIndex, text) => {
 						accumulated += text;
-						void partIndex;
+						this.broadcast({
+							type: "run.delta",
+							runId: params.runId,
+							messageId: params.assistantMessageId,
+							partIndex,
+							text,
+						});
 					},
 					onProgress: (label) => {
 						this.broadcast({
@@ -399,6 +405,9 @@ export class ChatDurableObject extends DurableObject<Env> {
 							messageId: params.assistantMessageId,
 							label,
 						});
+					},
+					defer: (task) => {
+						this.ctx.waitUntil(task);
 					},
 				},
 			);
@@ -473,7 +482,13 @@ export class ChatDurableObject extends DurableObject<Env> {
 					userMessageId: params.userMessageId,
 					onDelta: (partIndex, text) => {
 						accumulated += text;
-						void partIndex;
+						this.broadcast({
+							type: "run.delta",
+							runId: params.runId,
+							messageId: params.assistantMessageId,
+							partIndex,
+							text,
+						});
 					},
 					onProgress: (label) => {
 						this.broadcast({
@@ -482,6 +497,9 @@ export class ChatDurableObject extends DurableObject<Env> {
 							messageId: params.assistantMessageId,
 							label,
 						});
+					},
+					defer: (task) => {
+						this.ctx.waitUntil(task);
 					},
 				},
 			);

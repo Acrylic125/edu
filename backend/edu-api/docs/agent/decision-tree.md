@@ -25,6 +25,7 @@ flowchart TD
     E -- "Yes" --> I{"Obvious intent?"}
     I -- "Quiz me or another question" --> QUESTION
     I -- "Student work after practice question" --> GRADE
+    I -- "Diagram or visualization request" --> CHAT
     I -- "No" --> J{"Natural-language next-section request?"}
 
     J -- "Yes" --> PROPOSE_UPDATE["Propose learning-plan update"]
@@ -82,12 +83,22 @@ flowchart TD
 ## Response delivery
 
 - Progress events may still be sent while the agent works.
-- Response text is not exposed through `run.delta` events.
-- The client receives the complete response in a single `run.ended` event.
+- Provisional response text is streamed through `run.delta` events.
+- While streaming, the client renders Markdown prose but does not execute KaTeX or Mermaid.
+- The completed response is validated and repaired before `run.ended`.
+- `run.ended` replaces the provisional text with the authoritative response, after which the client renders validated math and diagrams.
+
+## Latency controls
+
+- Obvious diagram and visualization requests bypass LLM intent classification.
+- LLM intent classification is capped at 16 output tokens.
+- Topic summaries run outside the response-delivery path and only when the topic message count reaches a multiple of 20.
+- Previous Mermaid source is replaced with a short placeholder in model history.
+- Diagram responses place Mermaid where it best supports the explanation, always complete and close the block, avoid redundant edge-by-edge prose, and use a 640-token output cap.
 
 ## Final-response validation
 
-Before persistence and delivery, every text part is checked for inline `$...$`, display `$$...$$`, and fenced `latex` or `tex` blocks. KaTeX validates each extracted expression. If validation fails, the agent makes one non-streaming repair call and uses the corrected response only if it passes validation.
+Before persistence and final delivery, every text part is checked for inline `$...$`, display `$$...$$`, fenced `latex` or `tex` blocks, and fenced `mermaid` blocks. Unclosed delimiters and fences are rejected. KaTeX validates each math expression, while Worker-safe structural checks verify that Mermaid blocks are complete and use a supported diagram directive. The browser's Mermaid renderer performs full parsing. If server validation fails, the agent makes one repair call and uses the corrected response only if it passes validation. If repair also fails, rich markup is converted to inert text instead of being executed by the client.
 
 ## Diagram output
 

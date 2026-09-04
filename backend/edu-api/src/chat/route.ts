@@ -27,7 +27,7 @@ import {
 } from "./intent";
 import { executeNewQuestion } from "./new-question";
 import { executeNewTopicContinuation } from "./new-topic";
-import { repairInvalidLatex } from "./latex";
+import { repairInvalidResponseMarkup } from "./latex";
 import { shortFocus, TOPIC_PART_RULE } from "./option-label";
 import { applyTopicUpdate, generateTopicUpdate } from "./update-topic";
 import { createTopicMessage, reassignTopicMessage } from "../messages/persistence";
@@ -52,6 +52,7 @@ export type ChatRunIo = {
 	userMessageId: string;
 	onDelta: (partIndex: number, text: string) => void;
 	onProgress: (label: string) => void;
+	defer?: (task: Promise<void>) => void;
 	images?: AgentImage[];
 };
 
@@ -123,15 +124,15 @@ export async function handleChat(
 				parsed,
 				route,
 			);
-			const parts = await repairInvalidLatex(runner, result.parts);
+			const parts = await repairInvalidResponseMarkup(runner, result.parts);
 			await runner.complete();
 			if (result.topicId) {
-				await maybeScheduleSummaryUpdate(
+				io.defer?.(maybeScheduleSummaryUpdate(
 					db,
 					runner,
 					result.topicId,
 					userId,
-				);
+				));
 			}
 			return { ...result, parts };
 		} catch (error) {
@@ -184,7 +185,7 @@ export async function handleDecision(
 		if (decision === "reject") {
 			const text = "Okay, I won't do that.";
 			emitVisible(io, text);
-			const parts = await repairInvalidLatex(runner, [textPart(text)]);
+			const parts = await repairInvalidResponseMarkup(runner, [textPart(text)]);
 			await runner.complete();
 			return {
 				parts,
@@ -200,15 +201,15 @@ export async function handleDecision(
 			io,
 			stored.proposal,
 		);
-		const parts = await repairInvalidLatex(runner, result.parts);
+		const parts = await repairInvalidResponseMarkup(runner, result.parts);
 		await runner.complete();
 		if (result.topicId) {
-			await maybeScheduleSummaryUpdate(
+			io.defer?.(maybeScheduleSummaryUpdate(
 				db,
 				runner,
 				result.topicId,
 				userId,
-			);
+			));
 		}
 		return { ...result, parts };
 	} catch (error) {

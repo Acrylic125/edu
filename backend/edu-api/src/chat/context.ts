@@ -52,7 +52,14 @@ export async function loadChatContext(
 }
 
 export function formatMessagesForModel(messages: PersistedTopicMessage[]) {
-	return messages.map(formatMessageForModel).join("\n\n");
+	return messages
+		.map((message) => {
+			return formatMessageForModel(message).replace(
+				/```mermaid\b[\s\S]*?(?:```|$)/gi,
+				"[Previous Mermaid diagram omitted]",
+			);
+		})
+		.join("\n\n");
 }
 
 export function buildSystemContext(context: AgentContext) {
@@ -60,7 +67,8 @@ export function buildSystemContext(context: AgentContext) {
 		"You are an educational assistant helping a student learn.",
 		[
 			"When the student asks for a diagram, visualization, state machine, flowchart, graph, or process map, include a valid Mermaid diagram in a fenced ```mermaid code block.",
-			"Do not use ASCII art for diagrams. Keep Mermaid node identifiers simple and put human-readable labels in quotes.",
+			"Place the Mermaid diagram where it best supports the explanation. Always complete the diagram and close its code fence, and keep the entire response concise.",
+			"Do not use ASCII art for diagrams, repeat the transition table in prose, or explain every edge unless asked. Keep Mermaid node identifiers simple and put human-readable labels in quotes.",
 		].join(" "),
 	];
 
@@ -90,7 +98,7 @@ export async function maybeScheduleSummaryUpdate(
 ) {
 	try {
 		const count = await countTopicMessages(db, topicId);
-		if (count < SUMMARY_THRESHOLD) {
+		if (count < SUMMARY_THRESHOLD || count % SUMMARY_THRESHOLD !== 0) {
 			return;
 		}
 

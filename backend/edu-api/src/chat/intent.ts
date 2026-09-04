@@ -58,6 +58,13 @@ const NEW_QUESTION_RE =
 const NEXT_WITHIN_TOPIC_RE =
 	/\b((what'?s|what is|whats)\s+(the\s+)?next\s+(topic|section|unit|part|chapter|lesson|focus)|next\s+(topic|section|unit|part|chapter|lesson|focus)|(move on|continue)\s+(to\s+)?(the\s+)?next)\b/i;
 
+const DIAGRAM_REQUEST_RE =
+	/\b(diagram|visuali[sz](e|ation)|state\s*machine|flowchart|graph|process\s+map)\b/i;
+
+export function looksLikeDiagramRequest(message: string) {
+	return DIAGRAM_REQUEST_RE.test(message.trim());
+}
+
 export function lastPracticeQuestion(
 	messages: PersistedTopicMessage[],
 ): string | null {
@@ -131,6 +138,9 @@ export function deduceObviousIntent(
 	if (NEW_QUESTION_RE.test(trimmed)) {
 		return { type: "new-question", message };
 	}
+	if (looksLikeDiagramRequest(trimmed)) {
+		return { type: "chat", message };
+	}
 	const lastQuestion = lastPracticeQuestion(context.recentMessages);
 	if (lastQuestion && looksLikeStudentWork(trimmed)) {
 		return { type: "answer", message };
@@ -177,6 +187,7 @@ export async function inferFromRaw(
 	const response = await runner.llmCall({
 		name: "infer_intent",
 		stepType: "routing",
+		maxTokens: 16,
 		instructions: systemContext,
 		input: message,
 	});
