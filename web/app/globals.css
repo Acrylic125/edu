@@ -207,3 +207,31 @@
   overflow-x: auto;
   overflow-y: visible;
 }
+
+@keyframes topic-enter-from-top {
+  from {
+    opacity: 0;
+    transform: translateY(-2.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes topic-enter-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(2.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="topic-enter-from-"] {
+    animation: none;
+  }
+}

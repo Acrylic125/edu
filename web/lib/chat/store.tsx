@@ -32,6 +32,7 @@ import type {
   TopicCatalog,
   TopicId,
   TopicListing,
+  TopicTransitionDirection,
 } from "./types"
 import type { WsServerMessage } from "./ws-schema"
 
@@ -44,7 +45,10 @@ export type ChatStore = ChatStoreState & {
     attachments: ChatMessageAttachment[]
   ) => void
   stopLocal: () => void
-  beginSwitch: (topicId: TopicId) => void
+  beginSwitch: (
+    topicId: TopicId,
+    direction: TopicTransitionDirection
+  ) => void
   commitSwitch: (payload: CurrentMessagesPayload) => void
   failSwitch: (message: string) => void
   replaceCurrentMessages: (payload: CurrentMessagesPayload) => void
@@ -71,6 +75,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     socket: { status: "boot" },
     run: { status: "idle" },
     switch: null,
+    topicEntry: null,
     revealed: false,
     topicBornRefresh: null,
 
@@ -185,8 +190,8 @@ export function createChatStore(bootstrap: ChatBootstrap) {
       set({ run: { status: "idle" } })
     },
 
-    beginSwitch: (topicId) => {
-      set({ switch: { topicId } })
+    beginSwitch: (topicId, direction) => {
+      set({ switch: { topicId, direction }, topicEntry: null })
     },
 
     commitSwitch: (payload) => {
@@ -206,12 +211,13 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           session,
           catalog,
           switch: null,
+          topicEntry: state.switch,
           run: { status: "idle" },
         }
       })
     },
 
-    failSwitch: (_message) => {
+    failSwitch: () => {
       set({ switch: null })
     },
 

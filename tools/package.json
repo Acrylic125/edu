@@ -1,0 +1,11 @@
+{
+	"name": "edu-development-tools",
+	"private": true,
+	"packageManager": "pnpm@10.26.0",
+	"scripts": {
+		"build": "pnpm -r build",
+		"langtrace": "pnpm --filter @edu-tools/langtrace trace",
+		"test": "pnpm -r test",
+		"typecheck": "pnpm -r typecheck"
+	}
+}

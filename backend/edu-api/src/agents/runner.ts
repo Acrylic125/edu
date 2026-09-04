@@ -95,6 +95,7 @@ export class AgentRunner {
 		stepType?: string;
 		instructions: string;
 		input: string;
+		maxTokens?: number;
 	}) {
 		const stepId = await this.recordStep({
 			type: params.stepType ?? "llm",
@@ -107,6 +108,7 @@ export class AgentRunner {
 				instructions: params.instructions,
 				input: params.input,
 				images: this.images,
+				maxTokens: params.maxTokens,
 				signal: this.signal,
 			});
 
@@ -137,6 +139,7 @@ export class AgentRunner {
 		instructions: string;
 		input: string;
 		onChunk: (text: string) => void;
+		maxTokens?: number;
 	}) {
 		const stepId = await this.recordStep({
 			type: params.stepType ?? "llm",
@@ -150,6 +153,7 @@ export class AgentRunner {
 				instructions: params.instructions,
 				input: params.input,
 				images: this.images,
+				maxTokens: params.maxTokens,
 				signal: this.signal,
 				onDelta: async (delta) => {
 					pending = await drainWordChunks(

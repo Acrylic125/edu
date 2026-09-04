@@ -406,6 +406,9 @@ export class ChatDurableObject extends DurableObject<Env> {
 							label,
 						});
 					},
+					defer: (task) => {
+						this.ctx.waitUntil(task);
+					},
 				},
 			);
 
@@ -494,6 +497,9 @@ export class ChatDurableObject extends DurableObject<Env> {
 							messageId: params.assistantMessageId,
 							label,
 						});
+					},
+					defer: (task) => {
+						this.ctx.waitUntil(task);
 					},
 				},
 			);

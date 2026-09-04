@@ -4,7 +4,7 @@ import {
 	QuestionIdentificationSchema,
 } from "../agents/parsed-output";
 import { buildSystemContext, type AgentContext } from "./context";
-import { lastPracticeQuestion } from "./intent";
+import { lastPracticeQuestion, looksLikeDiagramRequest } from "./intent";
 import { optionsPart, textPart } from "../messages/parts";
 import type { MessagePart } from "../messages/schema";
 import { MATH_MARKDOWN_RULE, shortFocus } from "./option-label";
@@ -117,8 +117,10 @@ export async function executeExplanation(
 	onDelta: (text: string) => void,
 ) {
 	const systemContext = buildSystemContext(context);
+	const diagramRequest = looksLikeDiagramRequest(message);
 	const responseText = await runner.llmStream({
 		name: "generate_response",
+		maxTokens: diagramRequest ? 640 : undefined,
 		instructions: [
 			systemContext,
 			"",

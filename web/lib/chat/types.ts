@@ -35,7 +35,10 @@ export type TopicCatalog = {
 export type TopicHandoff = {
   topicId: TopicId
   title: string
+  summary: string
 }
+
+export type TopicTransitionDirection = "up" | "down"
 
 export type ChatSession =
   | { kind: "none" }
@@ -74,7 +77,11 @@ export type ChatStoreState = {
   session: ChatSession
   socket: SocketFact
   run: RunFact
-  switch: null | { topicId: TopicId }
+  switch: null | { topicId: TopicId; direction: TopicTransitionDirection }
+  topicEntry: null | {
+    topicId: TopicId
+    direction: TopicTransitionDirection
+  }
   revealed: boolean
 }
 

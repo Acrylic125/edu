@@ -89,6 +89,15 @@ describe("parseExplicitCommand", () => {
 });
 
 describe("deduceObviousIntent", () => {
+	it("routes diagram requests directly to chat", () => {
+		expect(
+			deduceObviousIntent("Show me the state machine diagram", contextWith([])),
+		).toEqual({
+			type: "chat",
+			message: "Show me the state machine diagram",
+		});
+	});
+
 	it("treats New qns as a new question", () => {
 		expect(deduceObviousIntent("New qns", contextWith([]))).toEqual({
 			type: "new-question",

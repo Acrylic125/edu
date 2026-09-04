@@ -59,7 +59,11 @@ function toHandoff(listing: TopicListing | null): TopicHandoff | null {
   if (listing === null) {
     return null
   }
-  return { topicId: listing.id, title: listing.title }
+  return {
+    topicId: listing.id,
+    title: listing.title,
+    summary: listing.summary,
+  }
 }
 
 /** Immediate neighbor before `currentTopicId` in creation order. */
