@@ -1,6 +1,8 @@
 "use client"
 
 import { Loader2Icon, XIcon } from "lucide-react"
+import { useRef, useState } from "react"
+import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react"
 
 import {
   Dialog,
@@ -135,18 +137,165 @@ export function ImagePreviewDialog(props: {
   image: ImagePreview | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  panZoom?: boolean
+  aspectRatio?: number
 }) {
+  const [scale, setScale] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const dragRef = useRef({
+    active: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+  })
+
+  function clampOffset(nextOffset: { x: number; y: number }, nextScale = scale) {
+    const viewport = viewportRef.current
+    const image = imageRef.current
+    if (viewport == null || image == null) {
+      return nextOffset
+    }
+
+    const maxX = Math.max(0, (image.offsetWidth * nextScale - viewport.clientWidth) / 2)
+    const maxY = Math.max(0, (image.offsetHeight * nextScale - viewport.clientHeight) / 2)
+    return {
+      x: Math.min(maxX, Math.max(-maxX, nextOffset.x)),
+      y: Math.min(maxY, Math.max(-maxY, nextOffset.y)),
+    }
+  }
+
+  function zoomTo(nextScale: number) {
+    setScale(nextScale)
+    setOffset((currentOffset) => clampOffset(currentOffset, nextScale))
+  }
+
+  function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (!props.panZoom) {
+      return
+    }
+    event.preventDefault()
+    setScale((current) => {
+      const nextScale = Math.min(
+        4,
+        Math.max(1, current * (event.deltaY < 0 ? 1.1 : 0.9))
+      )
+      setOffset((currentOffset) => clampOffset(currentOffset, nextScale))
+      return nextScale
+    })
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!props.panZoom || scale === 1) {
+      return
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragRef.current = {
+      active: true,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: offset.x,
+      offsetY: offset.y,
+    }
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current
+    if (!drag.active || drag.pointerId !== event.pointerId) {
+      return
+    }
+    setOffset(
+      clampOffset({
+        x: drag.offsetX + event.clientX - drag.startX,
+        y: drag.offsetY + event.clientY - drag.startY,
+      })
+    )
+  }
+
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current.pointerId === event.pointerId) {
+      dragRef.current.active = false
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function resetView() {
+    setScale(1)
+    setOffset({ x: 0, y: 0 })
+  }
+
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-[min(96vw,56rem)] gap-0 overflow-hidden p-2 sm:p-3">
+      <DialogContent className="w-screen max-w-none gap-0 overflow-hidden p-2 sm:max-w-none sm:p-3">
         {props.image ? (
           <>
             <DialogTitle className="sr-only">{props.image.name}</DialogTitle>
-            <img
-              src={props.image.previewUrl}
-              alt={props.image.name}
-              className="max-h-[min(80vh,48rem)] w-full rounded-md object-contain"
-            />
+            <div
+              ref={viewportRef}
+              className={cn(
+                "relative flex w-full items-center justify-center overflow-hidden rounded-md bg-black/10",
+                props.aspectRatio
+                  ? "h-auto max-h-[min(86vh,52rem)]"
+                  : "h-[min(86vh,52rem)]",
+                props.panZoom && scale > 1 ? "cursor-grab active:cursor-grabbing" : ""
+              )}
+              style={props.aspectRatio ? { aspectRatio: props.aspectRatio } : undefined}
+              onWheel={handleWheel}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            >
+              <img
+                ref={imageRef}
+                src={props.image.previewUrl}
+                alt={props.image.name}
+                draggable={false}
+                className="max-h-full max-w-full select-none rounded-md object-contain"
+                style={{
+                  transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+                }}
+              />
+              {props.panZoom ? (
+                <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-background/85 p-1 shadow-sm">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Zoom out"
+                    onClick={() => {
+                      zoomTo(Math.max(1, scale - 0.25))
+                    }}
+                  >
+                    −
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Reset zoom"
+                    onClick={resetView}
+                  >
+                    1×
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Zoom in"
+                    onClick={() => {
+                      zoomTo(Math.min(4, scale + 0.25))
+                    }}
+                  >
+                    +
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           </>
         ) : null}
       </DialogContent>
