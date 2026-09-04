@@ -58,6 +58,10 @@ export function formatMessagesForModel(messages: PersistedTopicMessage[]) {
 export function buildSystemContext(context: AgentContext) {
 	const sections: string[] = [
 		"You are an educational assistant helping a student learn.",
+		[
+			"When the student asks for a diagram, visualization, state machine, flowchart, graph, or process map, include a valid Mermaid diagram in a fenced ```mermaid code block.",
+			"Do not use ASCII art for diagrams. Keep Mermaid node identifiers simple and put human-readable labels in quotes.",
+		].join(" "),
 	];
 
 	if (context.topic) {

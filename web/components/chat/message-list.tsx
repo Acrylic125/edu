@@ -192,6 +192,10 @@ function ComposerSpacer() {
   return <div className="h-36 shrink-0" aria-hidden />
 }
 
+function ListHeader({ header }: { header: ReactNode }) {
+  return <>{header}</>
+}
+
 function ListFooter({ footer }: { footer: ReactNode }) {
   return (
     <>
@@ -247,7 +251,7 @@ export function MessageList({
         initialScrollAtEnd
         maintainScrollAtEnd
         maintainVisibleContentPosition
-        ListHeaderComponent={header ?? undefined}
+        ListHeaderComponent={<ListHeader header={header} />}
         ListFooterComponent={<ListFooter footer={footer} />}
       />
       <ImagePreviewDialog

@@ -6,7 +6,7 @@ import {
   fetchTopics,
   postSelectTopic,
 } from "@/lib/chat/http"
-import type { TopicId } from "@/lib/chat/types"
+import type { TopicId, TopicTransitionDirection } from "@/lib/chat/types"
 import { useChatStoreApi } from "@/lib/chat/store"
 
 export function useSwitchTopic() {
@@ -24,7 +24,16 @@ export function useSwitchTopic() {
       return
     }
 
-    store.getState().beginSwitch(topicId)
+    let direction: TopicTransitionDirection = "down"
+    if (state.session.kind === "topic") {
+      const currentIndex = state.catalog.order.indexOf(state.session.topicId)
+      const targetIndex = state.catalog.order.indexOf(topicId)
+      if (currentIndex >= 0 && targetIndex >= 0 && targetIndex < currentIndex) {
+        direction = "up"
+      }
+    }
+
+    store.getState().beginSwitch(topicId, direction)
     try {
       await postSelectTopic(token, topicId)
       const [current, catalog] = await Promise.all([

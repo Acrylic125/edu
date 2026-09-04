@@ -362,5 +362,5 @@ export function handoffFromSession(session: ChatSession): TopicHandoff | null {
   if (session.topicId === "") {
     return null
   }
-  return { topicId: session.topicId, title: session.title }
+  return { topicId: session.topicId, title: session.title, summary: "" }
 }

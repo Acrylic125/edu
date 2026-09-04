@@ -6,6 +6,9 @@ import type { Components } from "react-markdown"
 import rehypeKatex from "rehype-katex"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
+import { isValidElement } from "react"
+
+import { MermaidDiagram } from "@/components/chat/mermaid-diagram"
 
 import "katex/dist/katex.min.css"
 
@@ -30,16 +33,31 @@ const assistantMarkdownComponents: Components = {
       {children}
     </a>
   ),
-  code: ({ children }) => (
-    <code className="rounded bg-muted px-1 py-0.5 text-[0.9em]">
-      {children}
-    </code>
-  ),
-  pre: ({ children }) => (
-    <pre className="mb-2 overflow-x-auto rounded-md bg-muted p-3 text-sm last:mb-0">
-      {children}
-    </pre>
-  ),
+  code: ({ className, children }) => {
+    if (className?.split(" ").includes("language-mermaid")) {
+      return <MermaidDiagram definition={String(children).trimEnd()} />
+    }
+    return (
+      <code
+        className={`${className ?? ""} rounded bg-muted px-1 py-0.5 text-[0.9em]`}
+      >
+        {children}
+      </code>
+    )
+  },
+  pre: ({ children }) => {
+    if (
+      isValidElement<{ className?: string }>(children) &&
+      children.props.className?.split(" ").includes("language-mermaid")
+    ) {
+      return <div className="mb-2 last:mb-0">{children}</div>
+    }
+    return (
+      <pre className="mb-2 overflow-x-auto rounded-md bg-muted p-3 text-sm last:mb-0">
+        {children}
+      </pre>
+    )
+  },
   strong: ({ children }) => (
     <strong className="font-semibold">{children}</strong>
   ),

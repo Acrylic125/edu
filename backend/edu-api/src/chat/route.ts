@@ -27,6 +27,7 @@ import {
 } from "./intent";
 import { executeNewQuestion } from "./new-question";
 import { executeNewTopicContinuation } from "./new-topic";
+import { repairInvalidLatex } from "./latex";
 import { shortFocus, TOPIC_PART_RULE } from "./option-label";
 import { applyTopicUpdate, generateTopicUpdate } from "./update-topic";
 import { createTopicMessage, reassignTopicMessage } from "../messages/persistence";
@@ -122,6 +123,7 @@ export async function handleChat(
 				parsed,
 				route,
 			);
+			const parts = await repairInvalidLatex(runner, result.parts);
 			await runner.complete();
 			if (result.topicId) {
 				await maybeScheduleSummaryUpdate(
@@ -131,7 +133,7 @@ export async function handleChat(
 					userId,
 				);
 			}
-			return result;
+			return { ...result, parts };
 		} catch (error) {
 			if (io.signal.aborted) {
 				await runner.complete("cancelled");
@@ -182,9 +184,10 @@ export async function handleDecision(
 		if (decision === "reject") {
 			const text = "Okay, I won't do that.";
 			emitVisible(io, text);
+			const parts = await repairInvalidLatex(runner, [textPart(text)]);
 			await runner.complete();
 			return {
-				parts: [textPart(text)],
+				parts,
 				topicId: context.topic?.id,
 				pendingProposal: null,
 			};
@@ -197,6 +200,7 @@ export async function handleDecision(
 			io,
 			stored.proposal,
 		);
+		const parts = await repairInvalidLatex(runner, result.parts);
 		await runner.complete();
 		if (result.topicId) {
 			await maybeScheduleSummaryUpdate(
@@ -206,7 +210,7 @@ export async function handleDecision(
 				userId,
 			);
 		}
-		return result;
+		return { ...result, parts };
 	} catch (error) {
 		if (io.signal.aborted) {
 			await runner.complete("cancelled");
