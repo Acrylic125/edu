@@ -17,6 +17,7 @@ import {
   ImagePreviewDialog,
 } from "@/components/chat/composer-attachments"
 import { ComposerHighlightText } from "@/components/chat/composer-highlight-text"
+import { NewTopicDialog } from "@/components/chat/new-topic-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -416,6 +417,12 @@ export function ChatComposer({
               <PaperclipIcon />
             </Button>
             {footerStart}
+            <NewTopicDialog
+              onCreate={(topic, files) => {
+                setDraft(`/new ${topic}`)
+                addImageFiles(files)
+              }}
+            />
           </div>
 
           <ComposerActionButton gate={gate} canSend={canSend} onStop={onStop} />
