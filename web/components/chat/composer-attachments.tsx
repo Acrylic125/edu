@@ -168,11 +168,6 @@ export function ImagePreviewDialog(props: {
     }
   }
 
-  function zoomTo(nextScale: number) {
-    setScale(nextScale)
-    setOffset((currentOffset) => clampOffset(currentOffset, nextScale))
-  }
-
   function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
     if (!props.panZoom) {
       return
@@ -223,11 +218,6 @@ export function ImagePreviewDialog(props: {
     }
   }
 
-  function resetView() {
-    setScale(1)
-    setOffset({ x: 0, y: 0 })
-  }
-
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="w-screen max-w-none gap-0 overflow-hidden p-2 sm:max-w-none sm:p-3">
@@ -260,41 +250,6 @@ export function ImagePreviewDialog(props: {
                   transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
                 }}
               />
-              {props.panZoom ? (
-                <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-background/85 p-1 shadow-sm">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Zoom out"
-                    onClick={() => {
-                      zoomTo(Math.max(1, scale - 0.25))
-                    }}
-                  >
-                    −
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Reset zoom"
-                    onClick={resetView}
-                  >
-                    1×
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Zoom in"
-                    onClick={() => {
-                      zoomTo(Math.min(4, scale + 0.25))
-                    }}
-                  >
-                    +
-                  </Button>
-                </div>
-              ) : null}
             </div>
           </>
         ) : null}

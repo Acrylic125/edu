@@ -74,9 +74,11 @@ const baseAssistantMarkdownComponents: Components = {
 
 export function AssistantMarkdown({
   text,
+  renderScope,
   enableRichContent,
 }: {
   text: string
+  renderScope: string
   enableRichContent: boolean
 }) {
   const components: Components = {
@@ -84,7 +86,12 @@ export function AssistantMarkdown({
     code: ({ className, children }) => {
       const isMermaid = className?.split(" ").includes("language-mermaid")
       if (isMermaid && enableRichContent) {
-        return <MermaidDiagram definition={String(children).trimEnd()} />
+        return (
+          <MermaidDiagram
+            definition={String(children).trimEnd()}
+            renderScope={renderScope}
+          />
+        )
       }
       return (
         <code

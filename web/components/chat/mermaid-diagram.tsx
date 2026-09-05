@@ -4,6 +4,8 @@ import { useEffect, useId, useState, useSyncExternalStore } from "react"
 
 import { ImagePreviewDialog } from "@/components/chat/composer-attachments"
 
+const mermaidSvgCache = new Map<string, string>()
+
 function subscribeToDarkMode(onStoreChange: () => void) {
   const observer = new MutationObserver(onStoreChange)
   observer.observe(document.documentElement, {
@@ -40,7 +42,13 @@ function getSvgAspectRatio(svg: string) {
   return undefined
 }
 
-export function MermaidDiagram({ definition }: { definition: string }) {
+export function MermaidDiagram({
+  definition,
+  renderScope,
+}: {
+  definition: string
+  renderScope: string
+}) {
   const reactId = useId()
   const [previewOpen, setPreviewOpen] = useState(false)
   const dark = useSyncExternalStore(
@@ -48,14 +56,24 @@ export function MermaidDiagram({ definition }: { definition: string }) {
     getDarkModeSnapshot,
     getServerDarkModeSnapshot
   )
-  const renderKey = `${dark}:${definition}`
-  const [result, setResult] = useState({
-    key: "",
-    svg: null as string | null,
-    error: false,
+  const renderKey = `${dark}:${renderScope}:${definition}`
+  const [result, setResult] = useState(() => {
+    const cachedSvg = mermaidSvgCache.get(renderKey) ?? null
+    return {
+      key: cachedSvg == null ? "" : renderKey,
+      svg: cachedSvg,
+      error: false,
+    }
   })
+  const cachedSvg = mermaidSvgCache.get(renderKey) ?? null
+  const svg = result.key === renderKey ? result.svg : cachedSvg
+  const renderError = result.key === renderKey && result.error
 
   useEffect(() => {
+    if (cachedSvg != null) {
+      return
+    }
+
     let active = true
 
     async function renderDiagram() {
@@ -69,6 +87,7 @@ export function MermaidDiagram({ definition }: { definition: string }) {
         const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`
         const rendered = await mermaid.render(id, definition)
         if (active) {
+          mermaidSvgCache.set(renderKey, rendered.svg)
           setResult({ key: renderKey, svg: rendered.svg, error: false })
         }
       } catch {
@@ -82,9 +101,9 @@ export function MermaidDiagram({ definition }: { definition: string }) {
     return () => {
       active = false
     }
-  }, [dark, definition, reactId, renderKey])
+  }, [cachedSvg, dark, definition, reactId, renderKey])
 
-  if (result.key === renderKey && result.error) {
+  if (renderError) {
     return (
       <div className="w-full rounded-md border border-destructive/30 bg-destructive/5 p-3">
         <p className="mb-2 text-xs text-destructive">
@@ -97,16 +116,16 @@ export function MermaidDiagram({ definition }: { definition: string }) {
     )
   }
 
-  if (result.key !== renderKey || result.svg === null) {
+  if (svg === null) {
     return (
-      <div className="flex min-h-28 w-full items-center justify-center rounded-md border border-border bg-muted/30 text-xs text-muted-foreground">
+      <div className="flex h-[min(70vh,32rem)] w-full items-center justify-center rounded-md border border-border bg-muted/30 text-xs text-muted-foreground">
         Rendering diagram…
       </div>
     )
   }
 
-  const previewUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(result.svg)}`
-  const aspectRatio = getSvgAspectRatio(result.svg)
+  const previewUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  const aspectRatio = getSvgAspectRatio(svg)
 
   return (
     <>
@@ -119,8 +138,8 @@ export function MermaidDiagram({ definition }: { definition: string }) {
         }}
       >
         <span
-          className="mermaid-diagram flex w-full justify-center overflow-x-auto rounded-md border border-border bg-card p-3 [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-none!"
-          dangerouslySetInnerHTML={{ __html: result.svg }}
+          className="mermaid-diagram block h-[min(70vh,32rem)] w-full overflow-auto rounded-md border border-border bg-card p-3 [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-none!"
+          dangerouslySetInnerHTML={{ __html: svg }}
         />
       </button>
       <ImagePreviewDialog

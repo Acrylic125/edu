@@ -7,7 +7,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "@legendapp/list/react"
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useRef, useState } from "react"
 
 import { AssistantMarkdown } from "@/components/chat/assistant-markdown"
 import {
@@ -102,6 +102,7 @@ function MessageRow({
               <PartView
                 key={`${message.id}-${index}`}
                 part={part}
+                renderScope={`${message.id}-${index}`}
                 enableRichContent={enableRichContent}
                 actionsEnabled={isLatest}
                 onOption={onOption}
@@ -149,12 +150,14 @@ function ThinkingStatus({ steps }: { steps: string[] }) {
 
 function PartView({
   part,
+  renderScope,
   enableRichContent,
   actionsEnabled,
   onOption,
   onDecision,
 }: {
   part: MessagePart
+  renderScope: string
   enableRichContent: boolean
   actionsEnabled: boolean
   onOption: (label: string) => void
@@ -164,6 +167,7 @@ function PartView({
     return (
       <AssistantMarkdown
         text={part.content}
+        renderScope={renderScope}
         enableRichContent={enableRichContent}
       />
     )
@@ -258,47 +262,18 @@ export function MessageList({
       lastScrollOffsetRef.current = 0
     }
 
-    if (lastMessage?.status !== "streaming" || !followStreamingRef.current) {
+    if (!followStreamingRef.current) {
       return
     }
 
     const timer = window.setTimeout(() => {
-      const scroller = listRef.current?.getScrollableNode()
-      scroller?.scrollTo({ top: scroller.scrollHeight, behavior: "auto" })
+      void listRef.current?.scrollToEnd({ animated: false })
     }, 0)
 
     return () => {
       window.clearTimeout(timer)
     }
   }, [lastMessage, lastMessageId, messages])
-
-  useEffect(() => {
-    const scroller = listRef.current?.getScrollableNode()
-    const content = scroller?.querySelector<HTMLElement>(
-      ".legend-list-content-container"
-    )
-    if (content == null) {
-      return
-    }
-
-    const observer = new ResizeObserver(() => {
-      if (!followStreamingRef.current) {
-        return
-      }
-      window.setTimeout(() => {
-        const currentScroller = listRef.current?.getScrollableNode()
-        currentScroller?.scrollTo({
-          top: currentScroller.scrollHeight,
-          behavior: "auto",
-        })
-      }, 0)
-    })
-    observer.observe(content)
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [lastMessageId])
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -358,7 +333,7 @@ export function MessageList({
         }}
         estimatedItemSize={72}
         initialScrollAtEnd
-        alignItemsAtEnd
+        alignItemsAtEnd={messages.length > 0}
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={0.25}
         maintainVisibleContentPosition

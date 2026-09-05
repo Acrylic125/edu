@@ -17,7 +17,7 @@ export function TopicNavButton({
   const summary = target.summary.trim()
   const gradientClass =
     direction === "previous"
-      ? "bg-gradient-to-b from-background via-background/75 to-background/10"
+      ? "bg-gradient-to-b from-background/10 via-background/75 to-background"
       : "bg-gradient-to-t from-background via-background/75 to-background/10"
 
   return (
