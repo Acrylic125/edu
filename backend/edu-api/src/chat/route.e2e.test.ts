@@ -1,133 +1,172 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { Db } from "../../db/client";
-import type { AgentContext } from "./context";
+import type { ChatCompletionMessage } from 'openai/resources/chat/completions';
+function response(input: Pick<ChatCompletionMessage, 'content' | 'tool_calls'>) {
+	return { role: 'assistant' as const, refusal: null, ...input };
+}
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Db } from '../../db/client';
+import type { AgentContext } from './context';
+import { MAX_TUTOR_TURNS } from '../agents/tool-loop';
 
 const mocks = vi.hoisted(() => ({
 	createAgentRun: vi.fn(),
 	loadChatContext: vi.fn(),
-	maybeScheduleSummaryUpdate: vi.fn(),
-	enrichChatContextWithMemory: vi.fn(),
 	captureConversationMemory: vi.fn(),
+	createTopic: vi.fn(),
+	setCurrentTopic: vi.fn(),
+	createTopicMessage: vi.fn(),
+	reassignTopicMessage: vi.fn(),
+	linkAssetsToMessage: vi.fn(),
+	listRecentConversationMemories: vi.fn(),
+	loadConversationExchanges: vi.fn(),
 }));
-
-vi.mock("../agents/runner", () => ({
-	createAgentRun: mocks.createAgentRun,
-}));
-
-vi.mock("./context", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("./context")>();
-	return {
-		...actual,
-		loadChatContext: mocks.loadChatContext,
-		maybeScheduleSummaryUpdate: mocks.maybeScheduleSummaryUpdate,
-	};
-});
-
-vi.mock("../memory/service", () => ({
-	enrichChatContextWithMemory: mocks.enrichChatContextWithMemory,
+vi.mock('../agents/runner', () => ({ createAgentRun: mocks.createAgentRun }));
+vi.mock('./context', async (original) => ({ ...(await original<typeof import('./context')>()), loadChatContext: mocks.loadChatContext }));
+vi.mock('../memory/service', async (original) => ({
+	...(await original<typeof import('../memory/service')>()),
 	captureConversationMemory: mocks.captureConversationMemory,
 }));
+vi.mock('../topics/repository', () => ({ createTopic: mocks.createTopic, setCurrentTopic: mocks.setCurrentTopic }));
+vi.mock('../messages/persistence', () => ({
+	createTopicMessage: mocks.createTopicMessage,
+	reassignTopicMessage: mocks.reassignTopicMessage,
+}));
+vi.mock('../assets/repository', () => ({ linkAssetsToMessage: mocks.linkAssetsToMessage }));
+vi.mock('../memory/repository', () => ({
+	listRecentConversationMemories: mocks.listRecentConversationMemories,
+	loadConversationExchanges: mocks.loadConversationExchanges,
+}));
+import { handleChat, handleDecision } from './route';
 
-import { handleChat } from "./route";
+function setup(
+	responses: ChatCompletionMessage[],
+	topic: AgentContext['topic'] = { id: 'topic_1', title: 'Vectors', summary: 'Vector arithmetic', part: 'Addition' },
+) {
+	const context: AgentContext = { userId: 'user_1', topic, recentMessages: [], currentMessage: 'Explain vectors' };
+	mocks.loadChatContext.mockImplementation(async (_db, _user, text: string) => ({ ...context, currentMessage: text }));
+	const runner = {
+		announce: vi.fn(),
+		complete: vi.fn(),
+		fail: vi.fn(),
+		recordStep: vi.fn(),
+		llmCall: vi.fn().mockResolvedValue('{"correct":true,"partiallyCorrect":false,"feedback":"Correct","errors":[]}'),
+		withTrace: (fn: () => Promise<object>) => fn(),
+		toolTurn: vi.fn(async (params: { messages: object[]; onDelta: (text: string) => void }) => {
+			const next = responses.shift() ?? response({ content: 'Done.' });
+			if (typeof next.content === 'string') params.onDelta(next.content);
+			return next;
+		}),
+	};
+	mocks.createAgentRun.mockResolvedValue(runner);
+	const controller = new AbortController();
+	const io = {
+		signal: controller.signal,
+		runId: 'run_1',
+		assistantMessageId: 'msg_a',
+		userMessageId: 'msg_u',
+		onDelta: vi.fn(),
+		onProgress: vi.fn(),
+	};
+	const send = (content = 'Explain vectors') =>
+		handleChat({} as Db, { OPENROUTER_API_KEY: 'test' }, 'user_1', { messageId: 'msg_u', parts: [{ type: 'text', content }] }, io);
+	return { runner, send, controller, io };
+}
+function call(name: string, args: object) {
+	return response({ content: '', tool_calls: [{ id: 'call_1', function: { name, arguments: JSON.stringify(args) }, type: 'function' }] });
+}
+const plan = {
+	title: 'Vectors',
+	summary: 'Vector arithmetic',
+	part: 'Addition',
+	chapters: [
+		{ chapter: 'Basics', whatIsCovered: 'Notation' },
+		{ chapter: 'Addition', whatIsCovered: 'Add vectors' },
+		{ chapter: 'Products', whatIsCovered: 'Dot products' },
+	],
+};
 
-describe("handleChat end-to-end orchestration", () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
+beforeEach(() => {
+	vi.clearAllMocks();
+	mocks.createTopic.mockResolvedValue({ id: 'topic_new' });
+});
+describe('Tutor orchestration with real tool dispatch', () => {
+	it('answers directly with one model turn and no mandatory retrieval', async () => {
+		const { send, runner, io } = setup([response({ content: 'A vector has magnitude and direction.' })]);
+		const result = await send();
+		expect(result.parts).toEqual([{ type: 'text', content: 'A vector has magnitude and direction.' }]);
+		expect(runner.toolTurn).toHaveBeenCalledOnce();
+		expect(runner.llmCall).not.toHaveBeenCalled();
+		expect(mocks.listRecentConversationMemories).not.toHaveBeenCalled();
+		expect(io.onDelta).toHaveBeenCalledWith(0, 'A vector has magnitude and direction.');
 	});
-
-	it("routes an in-topic explanation and streams the final response", async () => {
-		const deltas: string[] = [];
-		const progress: string[] = [];
-		const context: AgentContext = {
-			userId: "user_1",
-			topic: {
-				id: "topic_1",
-				title: "Finite automata",
-				summary: "DFAs, NFAs, and regular languages",
-				part: "Deterministic finite automata",
-			},
-			recentMessages: [],
-			currentMessage: "Why can a DFA only follow one path?",
-		};
-		mocks.loadChatContext.mockResolvedValue(context);
-		mocks.enrichChatContextWithMemory.mockResolvedValue(context);
-
-		const llmCall = vi.fn().mockResolvedValue("chat");
-		const llmStream = vi.fn(async (params: { onChunk: (text: string) => void }) => {
-			params.onChunk("A DFA has exactly one transition ");
-			params.onChunk("for each state and input symbol.");
-			return "A DFA has exactly one transition for each state and input symbol.";
-		});
-		const runner = {
-			announce: vi.fn((label: string) => progress.push(label)),
-			complete: vi.fn(),
-			fail: vi.fn(),
-			llmCall,
-			llmStream,
-			recordRoutingStep: vi.fn(),
-			recordStep: vi.fn(),
-			addRetrievedImages: vi.fn(),
-			withTrace: vi.fn((fn: () => Promise<object>) => fn()),
-		};
-		mocks.createAgentRun.mockResolvedValue(runner);
-
-		const result = await handleChat(
-			{} as Db,
-			{ OPENROUTER_API_KEY: "test-key" },
-			"user_1",
-			{
-				message: "msg_user_1",
-				parts: [
-					{
-						type: "text",
-						content: "Why can a DFA only follow one path?",
-					},
-				],
-			},
-			{
-				signal: new AbortController().signal,
-				runId: "run_1",
-				assistantMessageId: "msg_agent_1",
-				userMessageId: "msg_user_1",
-				onDelta: (_partIndex, text) => deltas.push(text),
-				onProgress: (label) => progress.push(label),
-			},
+	it('loads a skill, verifies an answer, and feeds both tool results back to the Tutor', async () => {
+		const { send, runner } = setup([
+			call('load_skill', { name: 'assess' }),
+			call('verify_answer', { question: '1+1?', solution: '2' }),
+			response({ content: 'Correct: 1 + 1 = 2.' }),
+		]);
+		await send('/ans 2');
+		expect(runner.llmCall).toHaveBeenCalledWith(expect.objectContaining({ name: 'verify_solution' }));
+		expect(runner.recordStep).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool', name: 'verify_answer' }));
+		expect(runner.toolTurn.mock.calls.at(-1)?.[0].messages).toHaveLength(6);
+	});
+	it('validates model arguments before executing a mutation', async () => {
+		const { send } = setup([call('create_topic', { ...plan, chapters: [] }), response({ content: 'Please clarify the plan.' })], null);
+		await send('/new vectors');
+		expect(mocks.createTopic).not.toHaveBeenCalled();
+	});
+	it('proposes natural-language plan creation without mutating the DB', async () => {
+		const { send } = setup([call('create_topic', plan)], null);
+		const result = await send('I want to learn vectors');
+		expect(result.pendingProposal).toMatchObject({ topicId: null, proposal: { kind: 'create-topic' }, request: { messageId: 'msg_u' } });
+		expect(mocks.createTopic).not.toHaveBeenCalled();
+	});
+	it('preserves the triggering text when /new creates the first topic', async () => {
+		const { send } = setup([call('create_topic', plan)], null);
+		expect((await send('/new vectors')).topicId).toBe('topic_new');
+		expect(mocks.createTopicMessage).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ id: 'msg_u', parts: [{ type: 'text', content: '/new vectors' }] }),
 		);
-
-		expect(llmCall).toHaveBeenCalledWith(
-			expect.objectContaining({
-				name: "infer_intent",
-				input: "Why can a DFA only follow one path?",
-			}),
-		);
-		expect(llmStream).toHaveBeenCalledWith(
-			expect.objectContaining({
-				name: "generate_response",
-				input: "Why can a DFA only follow one path?",
-			}),
-		);
-		expect(deltas.join("")).toBe(
-			"A DFA has exactly one transition for each state and input symbol.",
-		);
-		expect(result).toEqual({
-			parts: [
+	});
+	it('does not let the model switch an active subject without /new', async () => {
+		const { send } = setup([call('create_topic', plan), response({ content: 'Use /new to change subjects.' })]);
+		await send();
+		expect(mocks.createTopic).not.toHaveBeenCalled();
+	});
+	it('rejects a proposal after switching topics', async () => {
+		const { io } = setup([]);
+		await expect(
+			handleDecision(
+				{} as Db,
+				{ OPENROUTER_API_KEY: 'test' },
+				'user_1',
 				{
-					type: "text",
-					content:
-						"A DFA has exactly one transition for each state and input symbol.",
+					proposalId: 'p1',
+					topicId: 'another_topic',
+					prompt: 'Change?',
+					proposal: { kind: 'update-topic', part: 'Products' },
+					request: { messageId: 'msg_u', parts: [{ type: 'text', content: 'next' }] },
 				},
-			],
-			topicId: "topic_1",
-			pendingProposal: null,
+				'accept',
+				io,
+			),
+		).rejects.toThrow('different topic');
+		expect(mocks.createTopicMessage).not.toHaveBeenCalled();
+	});
+	it('bounds tool loops and does not fabricate a successful response', async () => {
+		const { send, runner } = setup(Array.from({ length: MAX_TUTOR_TURNS }, () => call('load_skill', { name: 'explain' })));
+		await expect(send()).rejects.toThrow('budget exhausted');
+		expect(runner.fail).toHaveBeenCalledOnce();
+		expect(runner.complete).not.toHaveBeenCalled();
+	});
+	it('does not execute a tool when cancellation arrives with the model response', async () => {
+		const { send, runner, controller } = setup([]);
+		runner.toolTurn.mockImplementationOnce(async () => {
+			controller.abort();
+			return call('create_topic', plan);
 		});
-		expect(runner.recordRoutingStep).toHaveBeenCalledWith(
-			"route",
-			{ message: "Why can a DFA only follow one path?" },
-			{ type: "reply" },
-		);
-		expect(runner.complete).toHaveBeenCalledOnce();
-		expect(runner.fail).not.toHaveBeenCalled();
-		expect(progress).toEqual(["Reading your message", "Writing a response"]);
+		await expect(send('/new vectors')).rejects.toThrow();
+		expect(mocks.createTopic).not.toHaveBeenCalled();
+		expect(runner.complete).toHaveBeenCalledWith('cancelled');
 	});
 });

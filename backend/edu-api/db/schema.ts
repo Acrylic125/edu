@@ -84,10 +84,7 @@ export const topic = sqliteTable(
 
 		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [
-		index('topic_user_idx').on(table.userId),
-		index('topic_user_created_idx').on(table.userId, table.createdAt),
-	],
+	(table) => [index('topic_user_idx').on(table.userId), index('topic_user_created_idx').on(table.userId, table.createdAt)],
 );
 
 export const userCurrentTopic = sqliteTable('user_current_topic', {
@@ -117,7 +114,7 @@ export const topicMessage = sqliteTable(
 			.notNull()
 			.references(() => topic.id, { onDelete: 'cascade' }),
 
-		role: text('role', { enum: ['user', 'agent'] }).notNull(),
+		role: text('role', { enum: ['user', 'assistant'] }).notNull(),
 
 		parts: text('parts', { mode: 'json' }).notNull(),
 
@@ -160,18 +157,9 @@ export const conversationMemory = sqliteTable(
 		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 	},
 	(table) => [
-		uniqueIndex('conversation_memory_user_message_uidx').on(
-			table.userMessageId,
-		),
-		index('conversation_memory_user_created_idx').on(
-			table.userId,
-			table.createdAt,
-		),
-		index('conversation_memory_user_topic_created_idx').on(
-			table.userId,
-			table.topicId,
-			table.createdAt,
-		),
+		uniqueIndex('conversation_memory_user_message_uidx').on(table.userMessageId),
+		index('conversation_memory_user_created_idx').on(table.userId, table.createdAt),
+		index('conversation_memory_user_topic_created_idx').on(table.userId, table.topicId, table.createdAt),
 	],
 );
 
@@ -267,6 +255,9 @@ export const modelUsage = sqliteTable(
 		outputPriceMicros: integer('output_price_micros'),
 
 		costMicros: integer('cost_micros').notNull().default(0),
+		costSource: text('cost_source', { enum: ['provider', 'unavailable'] })
+			.notNull()
+			.default('unavailable'),
 
 		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
@@ -295,8 +286,5 @@ export const asset = sqliteTable(
 		metadata: text('metadata', { mode: 'json' }),
 		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 	},
-	(table) => [
-		index('asset_user_idx').on(table.userId),
-		index('asset_topic_message_idx').on(table.topicMessageId, table.orderIndex),
-	],
+	(table) => [index('asset_user_idx').on(table.userId), index('asset_topic_message_idx').on(table.topicMessageId, table.orderIndex)],
 );

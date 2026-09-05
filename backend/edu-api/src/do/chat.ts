@@ -1,670 +1,251 @@
-import { DurableObject } from "cloudflare:workers";
-import { nanoid } from "nanoid";
-import { z } from "zod";
-
-import { createDb } from "../../db/client";
-import { loadAttachedImages, loadOwnedImagesByIds } from "../assets/load";
-import { MAX_MESSAGE_ASSETS } from "../assets/limits";
-import { attachmentRefs, linkAssetsToMessage } from "../assets/repository";
-import { handleChat, handleDecision, type StoredProposal } from "../chat/route";
-import { createTopicMessage } from "../messages/persistence";
-import { persistableParts, textPart } from "../messages/parts";
+import { DurableObject } from 'cloudflare:workers';
+import { nanoid } from 'nanoid';
+import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import { createDb } from '../../db/client';
+import { agentRun } from '../../db/schema';
+import { loadAttachedImages, loadOwnedImagesByIds } from '../assets/load';
+import { MAX_MESSAGE_ASSETS } from '../assets/limits';
+import { attachmentRefs, linkAssetsToMessage, listOwnedAssetsByIds } from '../assets/repository';
+import { handleChat, handleDecision, type ChatTurnResult } from '../chat/route';
+import { createTopicMessage } from '../messages/persistence';
+import { persistableParts, textPart } from '../messages/parts';
 import {
 	ProposalSchema,
+	ChatRequestSchema,
 	WsClientEnvelopeSchema,
-	type MessagePart,
+	MAX_WS_MESSAGE_BYTES,
+	type WsClientEnvelope,
 	type WsServerMessage,
-} from "../messages/schema";
-import { getCurrentTopic, getTopicForUser, setCurrentTopic } from "../topics/repository";
+} from '../messages/schema';
+import { getCurrentTopic, getTopicForUser, setCurrentTopic } from '../topics/repository';
 
-export const EDU_USER_ID_HEADER = "X-Edu-User-Id";
-
-const ACTIVE_RUN_KEY = "activeRun";
-const PENDING_PROPOSAL_KEY = "pendingProposal";
-
-const WsAttachmentSchema = z.object({
-	userId: z.string(),
-});
-
-const ActiveRunSchema = z.object({
-	runId: z.string(),
-	messageId: z.string(),
-});
-
+export const EDU_USER_ID_HEADER = 'X-Edu-User-Id';
+export const EDU_SESSION_EXPIRES_HEADER = 'X-Edu-Session-Expires';
+const ACTIVE_RUN_KEY = 'activeRun';
+const PENDING_PROPOSAL_KEY = 'pendingProposal';
+const WsAttachmentSchema = z.object({ userId: z.string(), expiresAt: z.number() });
+const ActiveRunSchema = z.object({ runId: z.string(), messageId: z.string(), topicId: z.string().optional() });
 const StoredProposalSchema = z.object({
+	request: ChatRequestSchema,
 	proposalId: z.string(),
+	topicId: z.string().nullable(),
 	prompt: z.string(),
 	proposal: ProposalSchema,
 });
 
-function getWsAttachment(ws: WebSocket) {
-	const parsed = WsAttachmentSchema.safeParse(ws.deserializeAttachment());
-	if (!parsed.success) {
-		return null;
-	}
-	return parsed.data;
-}
-
-function setWsAttachment(ws: WebSocket, attachment: { userId: string }) {
-	ws.serializeAttachment(attachment);
-}
-
-function isAbortError(error: unknown, signal: AbortSignal) {
-	if (signal.aborted) {
-		return true;
-	}
-	if (error instanceof Error && error.name === "AbortError") {
-		return true;
-	}
-	return false;
-}
-
 export class ChatDurableObject extends DurableObject<Env> {
 	private abort: AbortController | null = null;
+	private submitting = false;
+	private lastSubmitAt = 0;
 
 	private broadcast(message: WsServerMessage) {
-		const payload = JSON.stringify(message);
-		for (const socket of this.ctx.getWebSockets()) {
-			socket.send(payload);
-		}
+		for (const socket of this.ctx.getWebSockets()) this.sendJson(socket, message);
 	}
 
 	private sendJson(ws: WebSocket, message: WsServerMessage) {
-		ws.send(JSON.stringify(message));
+		try {
+			ws.send(JSON.stringify(message));
+		} catch {
+			ws.close(1011, 'Connection closed');
+		}
 	}
 
 	async fetch(request: Request) {
-		const upgradeHeader = request.headers.get("Upgrade");
-		if (upgradeHeader?.toLowerCase() !== "websocket") {
-			return new Response("Expected WebSocket upgrade.", { status: 426 });
-		}
-
-		const userId = request.headers.get(EDU_USER_ID_HEADER)?.trim();
-		if (!userId) {
-			return new Response("Missing user.", { status: 401 });
-		}
-
-		if (!this.env.OPENROUTER_API_KEY) {
-			return new Response("OPENROUTER_API_KEY is not configured", {
-				status: 500,
-			});
-		}
-
-		const webSocketPair = new WebSocketPair();
-		const [client, server] = Object.values(webSocketPair);
-
+		if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected WebSocket upgrade', { status: 426 });
+		const userId = request.headers.get(EDU_USER_ID_HEADER);
+		const expiresAt = Number(request.headers.get(EDU_SESSION_EXPIRES_HEADER));
+		if (!userId || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return new Response('Unauthorized', { status: 401 });
+		if (this.ctx.getWebSockets().length >= 5) return new Response('Too many connections', { status: 429 });
+		const [client, server] = Object.values(new WebSocketPair());
 		this.ctx.acceptWebSocket(server);
-		setWsAttachment(server, { userId });
-
-		// waitUntil work dies on DO restart; storage may still hold activeRun.
+		server.serializeAttachment({ userId, expiresAt });
 		await this.recoverOrphanedRun();
-
-		const pending = await this.readPendingProposal();
-		let pendingProposalId: string | null = null;
-		if (pending) {
-			pendingProposalId = pending.proposalId;
-		}
-		this.sendJson(server, {
-			type: "ready",
-			userId,
-			pendingProposalId,
-		});
-
-		return new Response(null, {
-			status: 101,
-			webSocket: client,
-		});
+		this.sendJson(server, { type: 'ready', userId });
+		const active = await this.readActiveRun();
+		if (active) this.sendJson(server, { type: 'run.started', ...active });
+		return new Response(null, { status: 101, webSocket: client, headers: { 'Sec-WebSocket-Protocol': 'edu-chat' } });
 	}
 
 	async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-		if (typeof message !== "string") {
-			this.sendJson(ws, {
-				type: "error",
-				message: "Expected a text message.",
-			});
+		if (typeof message !== 'string' || new TextEncoder().encode(message).byteLength > MAX_WS_MESSAGE_BYTES) {
+			ws.close(1009, 'Message too large or unsupported');
 			return;
 		}
-
-		const attachment = getWsAttachment(ws);
-		if (!attachment) {
-			this.sendJson(ws, { type: "error", message: "Invalid session." });
+		const attachment = WsAttachmentSchema.safeParse(ws.deserializeAttachment());
+		if (!attachment.success || attachment.data.expiresAt <= Date.now()) {
+			ws.close(1008, 'Session expired');
 			return;
 		}
-
-		let parsedMessage: unknown;
+		let frame: WsClientEnvelope;
 		try {
-			parsedMessage = JSON.parse(message);
+			frame = WsClientEnvelopeSchema.parse(JSON.parse(message));
 		} catch {
-			this.sendJson(ws, { type: "error", message: "Invalid message." });
+			this.sendJson(ws, { type: 'error', message: 'Invalid message' });
 			return;
 		}
-
-		const envelope = WsClientEnvelopeSchema.safeParse(parsedMessage);
-		if (!envelope.success) {
-			this.sendJson(ws, { type: "error", message: "Invalid message." });
+		if (frame.type === 'stop') {
+			const active = await this.readActiveRun();
+			if (active?.runId === frame.runId) this.abort?.abort();
+			// Keep the lease until execution settles; aborted work must not overlap a new run.
 			return;
 		}
-
-		let active = await this.readActiveRun();
-		const frame = envelope.data;
-
-		if (frame.type === "stop") {
-			if (!active || frame.runId !== active.runId) {
-				return;
-			}
-			this.abort?.abort();
-			// Release the lock immediately so the client isn't blocked if the
-			// LLM ignores AbortSignal (common with large image payloads).
-			await this.forceEndRun(active, "cancelled");
+		if (this.submitting || this.abort) {
+			this.sendJson(ws, { type: 'error', message: 'Tutor is already running' });
 			return;
 		}
-
-		if (active && !this.abort) {
-			await this.recoverOrphanedRun();
-			active = await this.readActiveRun();
-		}
-
-		if (active) {
-			if (frame.type === "message") {
-				this.sendJson(ws, {
-					type: "error",
-					message: "Agent is already running.",
-					runId: active.runId,
-				});
-			}
+		if (Date.now() - this.lastSubmitAt < 1000) {
+			this.sendJson(ws, { type: 'error', message: 'Please wait before sending again' });
 			return;
 		}
-
+		// Acquire before the first await: Durable Object handlers can interleave at I/O.
+		this.submitting = true;
+		this.lastSubmitAt = Date.now();
 		try {
-			if (frame.type === "message") {
-				await this.submitMessage(
-					attachment.userId,
-					frame.message,
-					frame.parts,
-					frame.topicId,
-				);
-				return;
-			}
-
-			await this.submitDecision(
-				attachment.userId,
-				frame.proposalId,
-				frame.decision,
-			);
+			await this.recoverOrphanedRun();
+			await this.submit(attachment.data.userId, frame);
 		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : "Failed to handle message.";
-			this.sendJson(ws, { type: "error", message });
-			await this.clearActiveRun();
+			console.error('Chat submission failed', error);
+			this.sendJson(ws, { type: 'error', message: 'Could not submit that request. Check the topic and attachments, then retry.' });
+		} finally {
+			this.submitting = false;
 		}
 	}
 
-	private async submitMessage(
+	private async submit(userId: string, frame: Exclude<WsClientEnvelope, { type: 'stop' }>) {
+		const db = createDb(this.env.DB);
+		if (frame.type === 'message' && frame.topicId) {
+			if (!(await getTopicForUser(db, frame.topicId, userId))) throw new Error('Topic not found');
+			const previous = await getCurrentTopic(db, userId);
+			let part: string | null = null;
+			if (previous?.topic.id === frame.topicId) part = previous.part;
+			await setCurrentTopic(db, userId, frame.topicId, part);
+		}
+		const current = await getCurrentTopic(db, userId);
+		let stored: z.infer<typeof StoredProposalSchema> | null = null;
+		let userMessageId = `msg_${nanoid()}`;
+		if (frame.type === 'decision') {
+			stored = await this.readPendingProposal();
+			if (!stored || stored.proposalId !== frame.proposalId || stored.topicId !== (current?.topic.id ?? null))
+				throw new Error('Stale proposal');
+			await this.ctx.storage.delete(PENDING_PROPOSAL_KEY);
+		} else {
+			userMessageId = frame.messageId;
+			const refs = attachmentRefs(frame.parts);
+			if (refs.length > MAX_MESSAGE_ASSETS || new Set(refs).size !== refs.length) throw new Error('Invalid attachments');
+			const owned = await listOwnedAssetsByIds(db, userId, refs);
+			if (owned.length !== refs.length || owned.some((asset) => asset.topicMessageId !== null)) throw new Error('Attachment unavailable');
+			if (current) {
+				await createTopicMessage(db, { id: userMessageId, topicId: current.topic.id, role: 'user', parts: persistableParts(frame.parts) });
+				await linkAssetsToMessage(db, { userId, messageId: userMessageId, parts: frame.parts });
+			}
+			await this.ctx.storage.delete(PENDING_PROPOSAL_KEY);
+		}
+		const active = { runId: `run_${nanoid()}`, messageId: `msg_${nanoid()}`, topicId: current?.topic.id };
+		const abort = new AbortController();
+		await this.ctx.storage.put(ACTIVE_RUN_KEY, active);
+		this.abort = abort;
+		this.broadcast({ type: 'run.started', ...active });
+		this.ctx.waitUntil(
+			this.execute(userId, userMessageId, active, frame, stored, AbortSignal.any([abort.signal, AbortSignal.timeout(120000)])),
+		);
+	}
+
+	private async execute(
 		userId: string,
 		userMessageId: string,
-		parts: MessagePart[],
-		clientTopicId?: string,
+		active: z.infer<typeof ActiveRunSchema>,
+		frame: Exclude<WsClientEnvelope, { type: 'stop' }>,
+		stored: z.infer<typeof StoredProposalSchema> | null,
+		signal: AbortSignal,
 	) {
-		if (!this.env.DB) {
-			this.broadcast({
-				type: "error",
-				message: "Database is not configured.",
-			});
-			return;
-		}
-
 		const db = createDb(this.env.DB);
-
-		if (clientTopicId) {
-			const owned = await getTopicForUser(db, clientTopicId, userId);
-			if (!owned) {
-				this.broadcast({
-					type: "error",
-					message: "Topic not found.",
-				});
-				return;
-			}
-			const existing = await getCurrentTopic(db, userId);
-			const part =
-				existing?.topic.id === clientTopicId ? existing.part : null;
-			await setCurrentTopic(db, userId, clientTopicId, part);
-		}
-
-		const current = await getCurrentTopic(db, userId);
-		const persistedParts = persistableParts(parts);
-		const refs = attachmentRefs(persistedParts);
-		if (refs.length > MAX_MESSAGE_ASSETS) {
-			this.broadcast({
-				type: "error",
-				message: `You can attach up to ${MAX_MESSAGE_ASSETS} images per message.`,
-			});
-			return;
-		}
-
-		if (current) {
-			await createTopicMessage(db, {
-				id: userMessageId,
-				topicId: current.topic.id,
-				role: "user",
-				parts: persistedParts,
-			});
-			await linkAssetsToMessage(db, {
-				userId,
-				messageId: userMessageId,
-				parts: persistedParts,
-			});
-		}
-
-		const runId = `run_${nanoid()}`;
-		const assistantMessageId = `msg_${nanoid()}`;
-		const abort = new AbortController();
-		this.abort = abort;
-		await this.ctx.storage.put(ACTIVE_RUN_KEY, {
-			runId,
-			messageId: assistantMessageId,
-		});
-
-		if (current) {
-			this.broadcast({
-				type: "run.started",
-				runId,
-				messageId: assistantMessageId,
-				topicId: current.topic.id,
-			});
-		} else {
-			this.broadcast({
-				type: "run.started",
-				runId,
-				messageId: assistantMessageId,
-			});
-		}
-
-		this.ctx.waitUntil(
-			this.executeRun({
-				userId,
-				userMessageId,
-				assistantMessageId,
-				runId,
-				parts: persistedParts,
-				signal: abort.signal,
-			}),
-		);
-	}
-
-	private async submitDecision(
-		userId: string,
-		proposalId: string,
-		decision: "accept" | "reject",
-	) {
-		const stored = await this.readPendingProposal();
-		if (!stored || stored.proposalId !== proposalId) {
-			this.broadcast({
-				type: "error",
-				message: "No pending proposal.",
-			});
-			return;
-		}
-
-		if (!this.env.DB) {
-			this.broadcast({
-				type: "error",
-				message: "Database is not configured.",
-			});
-			return;
-		}
-
-		const runId = `run_${nanoid()}`;
-		const assistantMessageId = `msg_${nanoid()}`;
-		const abort = new AbortController();
-		this.abort = abort;
-		await this.ctx.storage.put(ACTIVE_RUN_KEY, {
-			runId,
-			messageId: assistantMessageId,
-		});
-
-		const db = createDb(this.env.DB);
-		const current = await getCurrentTopic(db, userId);
-		if (current) {
-			this.broadcast({
-				type: "run.started",
-				runId,
-				messageId: assistantMessageId,
-				topicId: current.topic.id,
-			});
-		} else {
-			this.broadcast({
-				type: "run.started",
-				runId,
-				messageId: assistantMessageId,
-			});
-		}
-
-		this.ctx.waitUntil(
-			this.executeDecisionRun({
-				userId,
-				userMessageId: `msg_${nanoid()}`,
-				assistantMessageId,
-				runId,
-				stored,
-				decision,
-				signal: abort.signal,
-			}),
-		);
-	}
-
-	private async executeRun(params: {
-		userId: string;
-		userMessageId: string;
-		assistantMessageId: string;
-		runId: string;
-		parts: MessagePart[];
-		signal: AbortSignal;
-	}) {
-		const db = createDb(this.env.DB);
-		let accumulated = "";
-
-		try {
-			const result = await handleChat(
-				db,
-				{
-					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
-					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
-					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
-					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
-				},
-				params.userId,
-				{
-					message: params.userMessageId,
-					parts: params.parts,
-				},
-				{
-					signal: params.signal,
-					runId: params.runId,
-					assistantMessageId: params.assistantMessageId,
-					userMessageId: params.userMessageId,
-					images: await loadAttachedImages(
-						this.env,
-						db,
-						params.userId,
-						params.parts,
-					),
-					loadImagesByIds: (assetIds) =>
-						loadOwnedImagesByIds(
-							this.env,
-							db,
-							params.userId,
-							assetIds,
-						),
-					onDelta: (partIndex, text) => {
-						accumulated += text;
-						this.broadcast({
-							type: "run.delta",
-							runId: params.runId,
-							messageId: params.assistantMessageId,
-							partIndex,
-							text,
-						});
-					},
-					onProgress: (label) => {
-						this.broadcast({
-							type: "run.progress",
-							runId: params.runId,
-							messageId: params.assistantMessageId,
-							label,
-						});
-					},
-					defer: (task) => {
-						this.ctx.waitUntil(task);
-					},
-				},
-			);
-
-			await this.finishRun({
-				db,
-				runId: params.runId,
-				messageId: params.assistantMessageId,
-				parts: result.parts,
-				topicId: result.topicId,
-				status: "completed",
-				pendingProposal: result.pendingProposal,
-			});
-		} catch (error) {
-			if (isAbortError(error, params.signal)) {
-				const parts: MessagePart[] = [];
-				if (accumulated.length > 0) {
-					parts.push(textPart(accumulated));
-				}
-				const current = await getCurrentTopic(db, params.userId);
-				await this.finishRun({
-					db,
-					runId: params.runId,
-					messageId: params.assistantMessageId,
-					parts,
-					topicId: current?.topic.id,
-					status: "cancelled",
-					pendingProposal: await this.readPendingProposal(),
-				});
-				return;
-			}
-
-			const errorMessage =
-				error instanceof Error ? error.message : "An unknown error occurred";
-			this.broadcast({
-				type: "error",
-				message: errorMessage,
-				runId: params.runId,
-			});
-			await this.clearActiveRun();
-		}
-	}
-
-	private async executeDecisionRun(params: {
-		userId: string;
-		userMessageId: string;
-		assistantMessageId: string;
-		runId: string;
-		stored: StoredProposal;
-		decision: "accept" | "reject";
-		signal: AbortSignal;
-	}) {
-		const db = createDb(this.env.DB);
-		let accumulated = "";
-
-		try {
-			const result = await handleDecision(
-				db,
-				{
-					LANGTRACE_API_HOST: this.env.LANGTRACE_API_HOST,
-					LANGTRACE_API_KEY: this.env.LANGTRACE_API_KEY,
-					OPENROUTER_API_KEY: this.env.OPENROUTER_API_KEY,
-					OPENROUTER_MODEL: this.env.OPENROUTER_MODEL,
-				},
-				params.userId,
-				params.stored,
-				params.decision,
-				{
-					signal: params.signal,
-					runId: params.runId,
-					assistantMessageId: params.assistantMessageId,
-					userMessageId: params.userMessageId,
-					onDelta: (partIndex, text) => {
-						accumulated += text;
-						this.broadcast({
-							type: "run.delta",
-							runId: params.runId,
-							messageId: params.assistantMessageId,
-							partIndex,
-							text,
-						});
-					},
-					onProgress: (label) => {
-						this.broadcast({
-							type: "run.progress",
-							runId: params.runId,
-							messageId: params.assistantMessageId,
-							label,
-						});
-					},
-					defer: (task) => {
-						this.ctx.waitUntil(task);
-					},
-				},
-			);
-
-			await this.finishRun({
-				db,
-				runId: params.runId,
-				messageId: params.assistantMessageId,
-				parts: result.parts,
-				topicId: result.topicId,
-				status: "completed",
-				pendingProposal: result.pendingProposal,
-			});
-		} catch (error) {
-			if (isAbortError(error, params.signal)) {
-				const parts: MessagePart[] = [];
-				if (accumulated.length > 0) {
-					parts.push(textPart(accumulated));
-				}
-				const current = await getCurrentTopic(db, params.userId);
-				await this.finishRun({
-					db,
-					runId: params.runId,
-					messageId: params.assistantMessageId,
-					parts,
-					topicId: current?.topic.id,
-					status: "cancelled",
-					pendingProposal: params.stored,
-				});
-				return;
-			}
-
-			const errorMessage =
-				error instanceof Error ? error.message : "An unknown error occurred";
-			this.broadcast({
-				type: "error",
-				message: errorMessage,
-				runId: params.runId,
-			});
-			await this.clearActiveRun();
-		}
-	}
-
-	private async finishRun(params: {
-		db: ReturnType<typeof createDb>;
-		runId: string;
-		messageId: string;
-		parts: MessagePart[];
-		topicId?: string;
-		status: "completed" | "cancelled" | "failed";
-		pendingProposal: StoredProposal | null;
-	}) {
-		try {
-			if (params.topicId && params.parts.length > 0) {
-				await createTopicMessage(params.db, {
-					id: params.messageId,
-					topicId: params.topicId,
-					role: "agent",
-					parts: params.parts,
-				});
-			}
-
-			if (params.pendingProposal) {
-				await this.ctx.storage.put(PENDING_PROPOSAL_KEY, params.pendingProposal);
-			} else {
-				await this.ctx.storage.delete(PENDING_PROPOSAL_KEY);
-			}
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : "Failed to persist run result.";
-			this.broadcast({
-				type: "error",
-				message,
-				runId: params.runId,
-			});
-		} finally {
-			const active = await this.readActiveRun();
-			if (!active || active.runId !== params.runId) {
-				// Stop already released this run; avoid a duplicate run.ended.
-				return;
-			}
-			// Always unblock the client, even if persistence failed.
-			if (params.topicId) {
-				this.broadcast({
-					type: "run.ended",
-					runId: params.runId,
-					messageId: params.messageId,
-					parts: params.parts,
-					status: params.status,
-					topicId: params.topicId,
-				});
-			} else {
-				this.broadcast({
-					type: "run.ended",
-					runId: params.runId,
-					messageId: params.messageId,
-					parts: params.parts,
-					status: params.status,
-				});
-			}
-			await this.clearActiveRun();
-		}
-	}
-
-	private async forceEndRun(
-		active: { runId: string; messageId: string },
-		status: "cancelled" | "failed",
-	) {
-		const current = await this.readActiveRun();
-		if (!current || current.runId !== active.runId) {
-			return;
-		}
-		this.broadcast({
-			type: "run.ended",
+		let accumulated = '';
+		let result: ChatTurnResult = { parts: [], topicId: active.topicId, pendingProposal: null };
+		let status: 'completed' | 'cancelled' | 'failed' = 'completed';
+		const deferred: Array<() => Promise<void>> = [];
+		const io = {
+			signal,
+			topicId: active.topicId ?? null,
 			runId: active.runId,
-			messageId: active.messageId,
-			parts: [],
-			status,
-		});
-		await this.clearActiveRun();
+			assistantMessageId: active.messageId,
+			userMessageId,
+			onDelta: (partIndex: number, text: string) => {
+				if (signal.aborted) return;
+				accumulated += text;
+				this.broadcast({ type: 'run.delta', ...active, partIndex, text });
+			},
+			onProgress: (label: string) => {
+				if (!signal.aborted) this.broadcast({ type: 'run.progress', ...active, label });
+			},
+			defer: (task: () => Promise<void>) => {
+				deferred.push(task);
+			},
+			loadImagesByIds: (ids: string[]) => loadOwnedImagesByIds(this.env, db, userId, ids),
+		};
+		try {
+			if (frame.type === 'message') {
+				const images = await loadAttachedImages(this.env, db, userId, frame.parts);
+				result = await handleChat(db, this.env, userId, frame, { ...io, images });
+			} else if (stored) {
+				result = await handleDecision(db, this.env, userId, stored, frame.decision, io);
+			}
+			if (!result.committed) signal.throwIfAborted();
+		} catch (error) {
+			if (signal.aborted) status = 'cancelled';
+			else {
+				status = 'failed';
+				console.error('Tutor run failed', error);
+			}
+			let text = accumulated;
+			if (status === 'failed') text += "\n\nI couldn't complete that request. Please try again.";
+			result = { parts: text ? [textPart(text)] : [], topicId: active.topicId, pendingProposal: null };
+		}
+		try {
+			const lease = await this.readActiveRun();
+			if (lease?.runId !== active.runId) return;
+			if (result.topicId && result.parts.length)
+				await createTopicMessage(db, {
+					id: active.messageId,
+					topicId: result.topicId,
+					role: 'assistant',
+					parts: result.parts,
+				});
+			if (result.pendingProposal && status === 'completed') await this.ctx.storage.put(PENDING_PROPOSAL_KEY, result.pendingProposal);
+		} catch (error) {
+			status = 'failed';
+			console.error('Chat persistence failed', error);
+		} finally {
+			const lease = await this.readActiveRun();
+			if (lease?.runId === active.runId) {
+				this.broadcast({ type: 'run.ended', ...active, topicId: result.topicId, parts: result.parts, status });
+				await this.ctx.storage.delete(ACTIVE_RUN_KEY);
+				this.abort = null;
+			}
+			if (status === 'completed') for (const task of deferred) this.ctx.waitUntil(task());
+		}
 	}
 
 	private async recoverOrphanedRun() {
-		if (this.abort) {
-			return;
-		}
+		if (this.abort) return;
 		const active = await this.readActiveRun();
-		if (!active) {
-			return;
-		}
-		await this.forceEndRun(active, "failed");
-	}
-
-	private async clearActiveRun() {
-		this.abort = null;
+		if (!active) return;
+		await createDb(this.env.DB).update(agentRun).set({ status: 'failed', completedAt: new Date() }).where(eq(agentRun.id, active.runId));
+		this.broadcast({ type: 'run.ended', ...active, parts: [], status: 'failed' });
 		await this.ctx.storage.delete(ACTIVE_RUN_KEY);
 	}
 
 	private async readActiveRun() {
-		const value = await this.ctx.storage.get(ACTIVE_RUN_KEY);
-		const parsed = ActiveRunSchema.safeParse(value);
-		if (!parsed.success) {
-			return null;
-		}
+		const parsed = ActiveRunSchema.safeParse(await this.ctx.storage.get(ACTIVE_RUN_KEY));
+		if (!parsed.success) return null;
 		return parsed.data;
 	}
-
 	private async readPendingProposal() {
-		const value = await this.ctx.storage.get(PENDING_PROPOSAL_KEY);
-		const parsed = StoredProposalSchema.safeParse(value);
-		if (!parsed.success) {
-			return null;
-		}
+		const parsed = StoredProposalSchema.safeParse(await this.ctx.storage.get(PENDING_PROPOSAL_KEY));
+		if (!parsed.success) return null;
 		return parsed.data;
 	}
-
-	async webSocketError(ws: WebSocket, error: Error | string) {
-		console.error("Chat durable object websocket error:", error);
-		ws.close(1011, "WebSocket error.");
+	async webSocketError(ws: WebSocket) {
+		ws.close(1011, 'WebSocket error');
 	}
 }

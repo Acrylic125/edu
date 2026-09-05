@@ -5,9 +5,8 @@ import type { Options } from "react-use-websocket"
 
 import { env } from "@/env"
 
-export function getChatWebSocketUrl(token: string) {
+export function getChatWebSocketUrl() {
   const url = new URL("/chat", env.NEXT_PUBLIC_API_URL)
-  url.searchParams.set("token", token)
   if (url.protocol === "https:") {
     url.protocol = "wss:"
   } else {
@@ -25,10 +24,7 @@ const sharedWebSocketOptions = {
   reconnectInterval: 3000,
 } as const satisfies Options
 
-export function useChatWebSocket(
-  socketUrl: string | null,
-  options?: Options
-) {
+export function useChatWebSocket(socketUrl: string | null, options?: Options) {
   return useWebSocket(socketUrl, {
     ...sharedWebSocketOptions,
     ...options,

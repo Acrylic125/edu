@@ -1,14 +1,7 @@
-import { catalogFromTopics, emptyCatalog } from "./catalog"
+import { catalogFromTopics } from "./catalog"
 import { toChatMessage } from "./map-message"
-import type {
-  CurrentMessagesPayload,
-  TopicCatalog,
-  TopicId,
-} from "./types"
-import {
-  CurrentTopicMessagesSchema,
-  TopicsListSchema,
-} from "./ws-schema"
+import type { CurrentMessagesPayload, TopicCatalog, TopicId } from "./types"
+import { CurrentTopicMessagesSchema, TopicsListSchema } from "./ws-schema"
 import { env } from "@/env"
 
 function topicsUrl() {
@@ -22,14 +15,14 @@ function currentMessagesUrl() {
 function selectTopicUrl(topicId: TopicId) {
   return new URL(
     `/topics/${encodeURIComponent(topicId)}/select`,
-    env.NEXT_PUBLIC_API_URL
+    env.NEXT_PUBLIC_API_URL,
   )
 }
 
 export function parseTopicsResponse(json: unknown): TopicCatalog {
   const parsed = TopicsListSchema.safeParse(json)
   if (!parsed.success) {
-    return emptyCatalog()
+    throw new Error("Could not load topics")
   }
   return catalogFromTopics(parsed.data.topics)
 }
@@ -37,7 +30,7 @@ export function parseTopicsResponse(json: unknown): TopicCatalog {
 export function parseCurrentMessages(json: unknown): CurrentMessagesPayload {
   const parsed = CurrentTopicMessagesSchema.safeParse(json)
   if (!parsed.success) {
-    return { topic: null, messages: [] }
+    throw new Error("Invalid messages response")
   }
   return {
     topic: parsed.data.topic,
@@ -64,7 +57,7 @@ export async function fetchTopics(token: string) {
     cache: "no-store",
   })
   if (!response.ok) {
-    return emptyCatalog()
+    throw new Error("Could not load topics")
   }
   const json: unknown = await response.json()
   return parseTopicsResponse(json)
@@ -76,7 +69,7 @@ export async function fetchCurrentMessages(token: string) {
     cache: "no-store",
   })
   if (!response.ok) {
-    return { topic: null, messages: [] } satisfies CurrentMessagesPayload
+    throw new Error("Could not load messages")
   }
   const json: unknown = await response.json()
   return parseCurrentMessages(json)

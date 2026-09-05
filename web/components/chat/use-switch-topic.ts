@@ -20,6 +20,7 @@ export function useSwitchTopic() {
     }
 
     const state = store.getState()
+    if (state.run.status === "running" || state.switch !== null) return
     if (state.session.kind === "topic" && state.session.topicId === topicId) {
       return
     }

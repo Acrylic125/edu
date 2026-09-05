@@ -2,64 +2,93 @@
 
 import {
   createContext,
-  useCallback,
   useContext,
-  useEffect,
-  useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react"
-
 import {
   applyThemeMode,
   getSystemPrefersDark,
   readStoredThemeMode,
+  resolveIsDark,
   writeStoredThemeMode,
+  THEME_STORAGE_KEY,
   type ThemeMode,
 } from "@/lib/theme"
 
-type ThemeContextValue = {
-  mode: ThemeMode
-  setMode: (mode: ThemeMode) => void
+const listeners = new Set<() => void>()
+let mode: ThemeMode = "system"
+let dark = false
+let disconnect: (() => void) | undefined
+
+function updateTheme() {
+  mode = readStoredThemeMode()
+  dark = resolveIsDark(mode, getSystemPrefersDark())
+  applyThemeMode(mode, dark)
+  for (const listener of listeners) listener()
 }
 
-const ThemeContext = createContext<ThemeContextValue | null>(null)
+function subscribe(listener: () => void) {
+  listeners.add(listener)
+  if (listeners.size === 1) {
+    const media = window.matchMedia("(prefers-color-scheme: dark)")
+    const storage = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY || event.key === null) updateTheme()
+    }
+    media.addEventListener("change", updateTheme)
+    window.addEventListener("storage", storage)
+    disconnect = () => {
+      media.removeEventListener("change", updateTheme)
+      window.removeEventListener("storage", storage)
+    }
+    updateTheme()
+  }
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) {
+      disconnect?.()
+      disconnect = undefined
+    }
+  }
+}
+
+function setMode(next: ThemeMode) {
+  writeStoredThemeMode(next)
+  mode = next
+  dark = resolveIsDark(next, getSystemPrefersDark())
+  applyThemeMode(next, dark)
+  for (const listener of listeners) listener()
+}
+
+const ThemeContext = createContext<{
+  mode: ThemeMode
+  dark: boolean
+  setMode: typeof setMode
+} | null>(null)
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<ThemeMode>("system")
-
-  useEffect(() => {
-    const stored = readStoredThemeMode()
-    setModeState(stored)
-    applyThemeMode(stored)
-  }, [])
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)")
-    const onChange = () => {
-      if (readStoredThemeMode() === "system") {
-        applyThemeMode("system", media.matches)
-      }
-    }
-    media.addEventListener("change", onChange)
-    return () => media.removeEventListener("change", onChange)
-  }, [])
-
-  const setMode = useCallback((next: ThemeMode) => {
-    setModeState(next)
-    writeStoredThemeMode(next)
-    applyThemeMode(next, getSystemPrefersDark())
-  }, [])
-
-  const value = useMemo(() => ({ mode, setMode }), [mode, setMode])
-
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  const currentMode = useSyncExternalStore(
+    subscribe,
+    () => mode,
+    () => "system" as const,
+  )
+  const currentDark = useSyncExternalStore(
+    subscribe,
+    () => dark,
+    () => false,
+  )
+  return (
+    <ThemeContext.Provider
+      value={{ mode: currentMode, dark: currentDark, setMode }}
+    >
+      {children}
+    </ThemeContext.Provider>
+  )
 }
 
-export function useThemeMode(): ThemeContextValue {
+export function useThemeMode() {
   const context = useContext(ThemeContext)
-  if (!context) {
+  if (!context)
     throw new Error("useThemeMode must be used within ThemeProvider")
-  }
   return context
 }

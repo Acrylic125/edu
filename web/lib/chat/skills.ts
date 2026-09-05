@@ -4,21 +4,15 @@ export type ChatSkill = {
   description?: string
 }
 
-/** UI-only skills for inline chip rendering. */
-export const MOCK_SKILLS: ChatSkill[] = [
-  {
-    name: "new",
-    displayName: "New",
-    description: "Start something new.",
-  },
-]
-
-const skillByName = new Map(MOCK_SKILLS.map((skill) => [skill.name, skill]))
+import { CHAT_COMMANDS } from "@edu/chat-contract"
+export { CHAT_COMMANDS }
 
 export function getSkillByName(name: string): ChatSkill | undefined {
-  return skillByName.get(name)
+  return CHAT_COMMANDS.find((command) => command.name === name)
 }
 
-export function formatSkillDisplayName(skill: Pick<ChatSkill, "name" | "displayName">): string {
+export function formatSkillDisplayName(
+  skill: Pick<ChatSkill, "name" | "displayName">,
+): string {
   return skill.displayName.trim() || skill.name
 }

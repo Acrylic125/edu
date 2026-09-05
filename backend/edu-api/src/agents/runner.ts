@@ -1,16 +1,13 @@
-import { eq } from "drizzle-orm";
+import { eq } from 'drizzle-orm';
 
-import type { Db } from "../../db/client";
-import { agentRun, agentStep, modelUsage } from "../../db/schema";
-import { nanoid } from "nanoid";
-import { callLlm, streamLlm, withLlmTrace, type LlmEnv } from "./llm";
-import { drainWordChunks, flushWords } from "../chat/word-buffer";
-import type { AgentImage } from "../assets/load";
+import type { Db } from '../../db/client';
+import { agentRun, agentStep, modelUsage } from '../../db/schema';
+import { nanoid } from 'nanoid';
+import { callLlm, streamLlm, streamToolModel, withLlmTrace, type LlmEnv } from './llm';
+import { drainWordChunks, flushWords } from '../chat/word-buffer';
+import type { AgentImage } from '../assets/load';
 
-const PROVIDER = "openrouter";
-
-const INPUT_PRICE_MICROS = 150;
-const OUTPUT_PRICE_MICROS = 600;
+const PROVIDER = 'openrouter';
 
 export class AgentRunner {
 	private db: Db;
@@ -57,24 +54,13 @@ export class AgentRunner {
 		return withLlmTrace(this.llmEnv, this.runId, fn);
 	}
 
-	private async nextSequence() {
-		this.sequence += 1;
-		return this.sequence;
-	}
-
-	async recordStep(params: {
-		type: string;
-		name: string;
-		input?: object | null;
-		output?: object | null;
-		error?: string;
-	}) {
+	async recordStep(params: { type: string; name: string; input?: object | null; output?: object | null; error?: string }) {
 		const stepId = `step_${nanoid()}`;
 		if (!this.topicId) {
 			return stepId;
 		}
 
-		const sequence = await this.nextSequence();
+		const sequence = ++this.sequence;
 
 		await this.db.insert(agentStep).values({
 			id: stepId,
@@ -92,7 +78,21 @@ export class AgentRunner {
 	}
 
 	async recordRoutingStep(name: string, input: object, output: object) {
-		return this.recordStep({ type: "routing", name, input, output });
+		return this.recordStep({ type: 'routing', name, input, output });
+	}
+
+	async toolTurn(params: Omit<Parameters<typeof streamToolModel>[1], 'signal'>) {
+		this.signal?.throwIfAborted();
+		const stepId = await this.recordStep({ type: 'llm', name: 'tutor' });
+		const result = await streamToolModel(this.llmEnv, { ...params, signal: this.signal });
+		if (this.topicId) {
+			await this.db
+				.update(agentStep)
+				.set({ output: { text: result.text, toolCalls: result.response.tool_calls } })
+				.where(eq(agentStep.id, stepId));
+			await this.recordModelUsage(stepId, result);
+		}
+		return result.response;
 	}
 
 	async llmCall(params: {
@@ -103,8 +103,9 @@ export class AgentRunner {
 		maxTokens?: number;
 		currentImagesOnly?: boolean;
 	}) {
+		this.signal?.throwIfAborted();
 		const stepId = await this.recordStep({
-			type: params.stepType ?? "llm",
+			type: params.stepType ?? 'llm',
 			name: params.name,
 			input: { instructions: params.instructions, input: params.input },
 		});
@@ -133,12 +134,8 @@ export class AgentRunner {
 
 			return result.text;
 		} catch (error) {
-			const errorMessage =
-				error instanceof Error ? error.message : "LLM call failed";
-			await this.db
-				.update(agentStep)
-				.set({ error: errorMessage })
-				.where(eq(agentStep.id, stepId));
+			const errorMessage = error instanceof Error ? error.message : 'LLM call failed';
+			await this.db.update(agentStep).set({ error: errorMessage }).where(eq(agentStep.id, stepId));
 			throw error;
 		}
 	}
@@ -152,14 +149,15 @@ export class AgentRunner {
 		maxTokens?: number;
 		currentImagesOnly?: boolean;
 	}) {
+		this.signal?.throwIfAborted();
 		const stepId = await this.recordStep({
-			type: params.stepType ?? "llm",
+			type: params.stepType ?? 'llm',
 			name: params.name,
 			input: { instructions: params.instructions, input: params.input },
 		});
 
 		try {
-			let pending = "";
+			let pending = '';
 			let images = [...this.images, ...this.retrievedImages];
 			if (params.currentImagesOnly) {
 				images = this.images;
@@ -171,16 +169,12 @@ export class AgentRunner {
 				maxTokens: params.maxTokens,
 				signal: this.signal,
 				onDelta: async (delta) => {
-					pending = await drainWordChunks(
-						pending,
-						delta,
-						params.onChunk,
-					);
+					pending = await drainWordChunks(pending, delta, params.onChunk);
 				},
 			});
 
 			const remainder = flushWords(pending);
-			if (remainder.flush !== "") {
+			if (remainder.flush !== '') {
 				params.onChunk(remainder.flush);
 			}
 
@@ -195,24 +189,13 @@ export class AgentRunner {
 
 			return result.text;
 		} catch (error) {
-			const errorMessage =
-				error instanceof Error ? error.message : "LLM call failed";
-			await this.db
-				.update(agentStep)
-				.set({ error: errorMessage })
-				.where(eq(agentStep.id, stepId));
+			const errorMessage = error instanceof Error ? error.message : 'LLM call failed';
+			await this.db.update(agentStep).set({ error: errorMessage }).where(eq(agentStep.id, stepId));
 			throw error;
 		}
 	}
 
-	private async recordModelUsage(
-		stepId: string,
-		result: Awaited<ReturnType<typeof callLlm>>,
-	) {
-		const costMicros =
-			result.inputTokens * INPUT_PRICE_MICROS +
-			result.outputTokens * OUTPUT_PRICE_MICROS;
-
+	private async recordModelUsage(stepId: string, result: Awaited<ReturnType<typeof callLlm>>) {
 		await this.db.insert(modelUsage).values({
 			id: `usage_${nanoid()}`,
 			runId: this.runId,
@@ -223,22 +206,20 @@ export class AgentRunner {
 			outputTokens: result.outputTokens,
 			cachedInputTokens: result.cachedInputTokens,
 			reasoningTokens: result.reasoningTokens,
-			inputPriceMicros: INPUT_PRICE_MICROS,
-			outputPriceMicros: OUTPUT_PRICE_MICROS,
-			costMicros,
+			inputPriceMicros: null,
+			outputPriceMicros: null,
+			costMicros: result.costMicros ?? 0,
+			costSource: result.costMicros === null ? 'unavailable' : 'provider',
 			createdAt: new Date(),
 		});
 	}
 
-	async complete(status: "completed" | "failed" | "cancelled" = "completed") {
+	async complete(status: 'completed' | 'failed' | 'cancelled' = 'completed') {
 		if (!this.topicId) {
 			return;
 		}
 
-		await this.db
-			.update(agentRun)
-			.set({ status, completedAt: new Date() })
-			.where(eq(agentRun.id, this.runId));
+		await this.db.update(agentRun).set({ status, completedAt: new Date() }).where(eq(agentRun.id, this.runId));
 	}
 
 	async fail(error: Error | string) {
@@ -249,17 +230,16 @@ export class AgentRunner {
 		await this.db
 			.update(agentRun)
 			.set({
-				status: "failed",
+				status: 'failed',
 				completedAt: new Date(),
 			})
 			.where(eq(agentRun.id, this.runId));
 
-		const errorMessage =
-			error instanceof Error ? error.message : String(error);
+		const errorMessage = error instanceof Error ? error.message : String(error);
 
 		await this.recordStep({
-			type: "error",
-			name: "run_failure",
+			type: 'error',
+			name: 'run_failure',
 			error: errorMessage,
 		});
 	}
@@ -286,7 +266,7 @@ export async function createAgentRun(
 			topicId: params.topicId,
 			userMessageId: params.userMessageId,
 			intent: params.intent,
-			status: "running",
+			status: 'running',
 			createdAt: new Date(),
 		});
 	}
@@ -304,9 +284,10 @@ export async function createAgentRun(
 
 export async function getRunCostMicros(db: Db, runId: string) {
 	const rows = await db
-		.select({ costMicros: modelUsage.costMicros })
+		.select({ costMicros: modelUsage.costMicros, costSource: modelUsage.costSource })
 		.from(modelUsage)
 		.where(eq(modelUsage.runId, runId));
 
+	if (!rows.length || rows.some((row) => row.costSource !== 'provider')) return null;
 	return rows.reduce((sum, row) => sum + row.costMicros, 0);
 }

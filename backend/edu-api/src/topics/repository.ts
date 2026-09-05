@@ -31,7 +31,7 @@ export async function getCurrentTopic(db: Db, userId: string): Promise<CurrentTo
 		})
 		.from(userCurrentTopic)
 		.innerJoin(topic, eq(userCurrentTopic.topicId, topic.id))
-		.where(eq(userCurrentTopic.userId, userId))
+		.where(and(eq(userCurrentTopic.userId, userId), eq(topic.userId, userId)))
 		.limit(1);
 
 	const row = rows[0];
@@ -134,9 +134,12 @@ export async function setCurrentTopic(db: Db, userId: string, topicId: string, p
 	}
 }
 
-export async function updateCurrentPart(db: Db, userId: string, part: string): Promise<void> {
+export async function updateCurrentPart(db: Db, userId: string, part: string, topicId: string): Promise<void> {
 	const now = new Date();
-	await db.update(userCurrentTopic).set({ part, updatedAt: now }).where(eq(userCurrentTopic.userId, userId));
+	await db
+		.update(userCurrentTopic)
+		.set({ part, updatedAt: now })
+		.where(and(eq(userCurrentTopic.userId, userId), eq(userCurrentTopic.topicId, topicId)));
 }
 
 export async function listUserTopics(db: Db, userId: string): Promise<TopicRecord[]> {

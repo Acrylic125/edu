@@ -1,6 +1,6 @@
 export const WORDS_PER_FLUSH = 8;
 
-const WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
+const WHITESPACE = new Set([' ', '\t', '\n', '\r']);
 
 export function takeWordChunk(pending: string) {
 	let words = 0;
@@ -38,36 +38,29 @@ export function takeWordChunk(pending: string) {
 	}
 
 	if (cut === -1) {
-		return { chunk: "", rest: pending };
+		return { chunk: '', rest: pending };
 	}
 	return { chunk: pending.slice(0, cut), rest: pending.slice(cut) };
 }
 
-export async function drainWordChunks(
-	pending: string,
-	incoming: string,
-	onChunk: (chunk: string) => void,
-) {
+export async function drainWordChunks(pending: string, incoming: string, onChunk: (chunk: string) => void) {
 	let rest = pending + incoming;
 	while (true) {
 		const taken = takeWordChunk(rest);
-		if (taken.chunk === "") {
+		if (taken.chunk === '') {
 			return rest;
 		}
 		rest = taken.rest;
 		onChunk(taken.chunk);
-		await new Promise((resolve) => {
-			setTimeout(resolve, 16);
-		});
 	}
 }
 
 export function pushWords(pending: string, incoming: string) {
 	let rest = pending + incoming;
-	let flushed = "";
+	let flushed = '';
 	while (true) {
 		const taken = takeWordChunk(rest);
-		if (taken.chunk === "") {
+		if (taken.chunk === '') {
 			break;
 		}
 		flushed += taken.chunk;
@@ -77,5 +70,5 @@ export function pushWords(pending: string, incoming: string) {
 }
 
 export function flushWords(pending: string) {
-	return { pending: "", flush: pending };
+	return { pending: '', flush: pending };
 }

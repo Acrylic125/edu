@@ -42,11 +42,13 @@ function ChatAppShell() {
   const phase = useChatStore(selectShellPhase)
   const status = useChatStore(headerStatusSelector)
   const store = useChatStoreApi()
+  const error = useChatStore((state) => state.error)
   const topicCreation = useChatStore((state) => state.topicCreation)
   const { sendJsonMessage } = useChatSend()
 
+  const hasPendingTopic = topicCreation !== null
   useEffect(() => {
-    if (topicCreation === null) {
+    if (!hasPendingTopic) {
       return
     }
     function warnBeforeLeaving(event: BeforeUnloadEvent) {
@@ -58,7 +60,7 @@ function ChatAppShell() {
     return () => {
       window.removeEventListener("beforeunload", warnBeforeLeaving)
     }
-  }, [topicCreation])
+  }, [hasPendingTopic])
 
   let title = "Chat"
   if (phase.show === "thread" && phase.title) {
@@ -83,10 +85,10 @@ function ChatAppShell() {
     sendJsonMessage(
       WsChatClientMessageSchema.parse({
         type: "message",
-        message: messageId,
+        messageId: messageId,
         parts: [{ type: "text", content: text }],
         ...(topicId ? { topicId } : {}),
-      })
+      }),
     )
   }
 
@@ -119,7 +121,7 @@ function ChatAppShell() {
                 type: "decision",
                 proposalId,
                 decision,
-              })
+              }),
             )
           }}
         />
@@ -140,7 +142,7 @@ function ChatAppShell() {
                 "pointer-events-none absolute inset-x-0 z-10 flex flex-col items-center px-4 transition-[bottom,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
                 isEmptyThread
                   ? "bottom-1/2 translate-y-1/2"
-                  : "bottom-4 translate-y-0"
+                  : "bottom-4 translate-y-0",
               )}
             >
               <div
@@ -148,7 +150,7 @@ function ChatAppShell() {
                   "overflow-hidden text-center transition-all duration-300 ease-out",
                   isEmptyThread
                     ? "mb-8 max-h-24 translate-y-0 opacity-100"
-                    : "mb-0 max-h-0 -translate-y-2 opacity-0"
+                    : "mb-0 max-h-0 -translate-y-2 opacity-0",
                 )}
               >
                 <p className="text-xl font-medium tracking-tight">New chat</p>
@@ -158,8 +160,16 @@ function ChatAppShell() {
               </div>
 
               <div className="pointer-events-auto w-full max-w-3xl">
+                {error ? (
+                  <Alert variant="destructive" className="mb-3">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                ) : null}
                 {topicCreation?.status === "failed" ? (
-                  <Alert variant="destructive" className="mb-3 bg-background/95">
+                  <Alert
+                    variant="destructive"
+                    className="mb-3 bg-background/95"
+                  >
                     <AlertDescription className="flex items-center justify-between gap-3">
                       <span>
                         {topicCreation.error ??
@@ -176,9 +186,9 @@ function ChatAppShell() {
                           sendJsonMessage(
                             WsChatClientMessageSchema.parse({
                               type: "message",
-                              message: messageId,
+                              messageId: messageId,
                               parts: topicCreation.parts,
-                            })
+                            }),
                           )
                         }}
                       >

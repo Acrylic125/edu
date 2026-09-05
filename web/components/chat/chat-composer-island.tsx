@@ -27,13 +27,7 @@ export function ChatComposerIsland({ className }: { className?: string }) {
       footerStart={<TopicMenu />}
       onSend={(content, attachments) => {
         const state = store.getState()
-        if (
-          state.sendGate(
-            content,
-            attachments.length > 0,
-            true
-          ) !== "send"
-        ) {
+        if (state.sendGate(content, attachments.length > 0, true) !== "send") {
           return
         }
         const text = content.trim()
@@ -58,10 +52,10 @@ export function ChatComposerIsland({ className }: { className?: string }) {
           sendJsonMessage(
             WsChatClientMessageSchema.parse({
               type: "message",
-              message: messageId,
+              messageId: messageId,
               parts,
               ...(topicId ? { topicId } : {}),
-            })
+            }),
           )
         } catch {
           store.getState().stopLocal()
@@ -73,7 +67,6 @@ export function ChatComposerIsland({ className }: { className?: string }) {
           return
         }
         const runId = state.run.runId
-        state.stopLocal()
         if (runId === "") {
           return
         }
@@ -81,7 +74,7 @@ export function ChatComposerIsland({ className }: { className?: string }) {
           WsChatClientStopSchema.parse({
             type: "stop",
             runId,
-          })
+          }),
         )
       }}
     />

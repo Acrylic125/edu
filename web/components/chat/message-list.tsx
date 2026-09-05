@@ -2,12 +2,9 @@
 
 import {
   LegendList,
-  type LegendListRef,
   type LegendListRenderItemProps,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
 } from "@legendapp/list/react"
-import { useCallback, useLayoutEffect, useRef, useState } from "react"
+import { memo, useCallback, useState } from "react"
 
 import { AssistantMarkdown } from "@/components/chat/assistant-markdown"
 import {
@@ -18,7 +15,7 @@ import { SkillInlineText } from "@/components/chat/skill-inline-text"
 import { Button } from "@/components/ui/button"
 import { isLatestChatMessage } from "@/lib/chat/latest-message"
 import { shortOptionLabel } from "@/lib/chat/option-label"
-import { MOCK_SKILLS } from "@/lib/chat/skills"
+import { CHAT_COMMANDS } from "@/lib/chat/skills"
 import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/types"
 import type { MessagePart } from "@/lib/chat/ws-schema"
 import { cn } from "@/lib/utils"
@@ -45,7 +42,7 @@ function textFromParts(parts: MessagePart[]) {
   return lines.join("\n")
 }
 
-function MessageRow({
+const MessageRow = memo(function MessageRow({
   message,
   isLatest,
   onExpandImage,
@@ -58,7 +55,16 @@ function MessageRow({
   onOption: (label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
-  const attachments = message.attachments ?? []
+  const attachments: ChatMessageAttachment[] = []
+  for (const part of message.parts) {
+    if (part.type === "attachment" && part.url)
+      attachments.push({
+        id: part.ref,
+        name: part.filename ?? "Image",
+        mimeType: part.mimeType ?? "image/jpeg",
+        previewUrl: part.url,
+      })
+  }
 
   switch (message.role) {
     case "user": {
@@ -69,11 +75,13 @@ function MessageRow({
             <MessageImageGrid images={attachments} onExpand={onExpandImage} />
             {text.length > 0 ? (
               <p className="whitespace-pre-wrap">
-                <SkillInlineText text={text} skills={MOCK_SKILLS} />
+                <SkillInlineText text={text} skills={CHAT_COMMANDS} />
               </p>
             ) : null}
             {text.length === 0 && attachments.length > 0 ? (
-              <p className="text-muted-foreground text-xs italic">Attached image</p>
+              <p className="text-muted-foreground text-xs italic">
+                Attached image
+              </p>
             ) : null}
           </div>
         </div>
@@ -85,18 +93,26 @@ function MessageRow({
       const progress = message.progress ?? []
       const hasMermaid = message.parts.some(
         (part) =>
-          part.type === "text" && /```mermaid(?:\s|$)/i.test(part.content)
+          part.type === "text" && /```mermaid(?:\s|$)/i.test(part.content),
       )
       return (
         <div className="flex justify-start py-2">
           <div
             className={cn(
               "flex flex-col gap-2 text-sm",
-              hasMermaid ? "w-full" : "max-w-[85%]"
+              hasMermaid ? "w-full" : "max-w-[85%]",
             )}
           >
             {progress.length > 0 && message.status === "streaming" ? (
               <ThinkingStatus steps={progress} />
+            ) : null}
+            {message.status === "failed" ? (
+              <p className="text-destructive text-xs">
+                This response could not be completed. Please retry.
+              </p>
+            ) : null}
+            {message.status === "cancelled" ? (
+              <p className="text-muted-foreground text-xs">Response stopped.</p>
             ) : null}
             {message.parts.map((part, index) => (
               <PartView
@@ -118,7 +134,7 @@ function MessageRow({
       return _exhaustive
     }
   }
-}
+})
 
 function ThinkingStatus({ steps }: { steps: string[] }) {
   const currentStep = steps.at(-1)
@@ -133,7 +149,10 @@ function ThinkingStatus({ steps }: { steps: string[] }) {
       aria-live="polite"
       className="flex h-5 items-center gap-2 text-xs text-muted-foreground"
     >
-      <span className="flex w-5 shrink-0 items-center justify-center gap-0.5" aria-hidden>
+      <span
+        className="flex w-5 shrink-0 items-center justify-center gap-0.5"
+        aria-hidden
+      >
         <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-300ms]" />
         <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-150ms]" />
         <span className="size-1 animate-bounce rounded-full bg-current" />
@@ -190,16 +209,16 @@ function PartView({
     return (
       <div className="flex flex-wrap gap-2">
         {options.map((option) => (
-            <Button
-              key={option.key}
-              type="button"
-              variant="outline"
-              size="sm"
-              className="max-w-full"
-              onClick={() => {
-                onOption(option.label)
-              }}
-            >
+          <Button
+            key={option.key}
+            type="button"
+            variant="outline"
+            size="sm"
+            className="max-w-full"
+            onClick={() => {
+              onOption(option.key)
+            }}
+          >
             {option.label}
           </Button>
         ))}
@@ -245,53 +264,9 @@ export function MessageList({
   onOption,
   onDecision,
 }: MessageListProps) {
-  const listRef = useRef<LegendListRef>(null)
-  const followStreamingRef = useRef(true)
-  const lastScrollOffsetRef = useRef(0)
-  const previousMessageIdRef = useRef<string | undefined>(undefined)
-  const [expandedImage, setExpandedImage] = useState<ChatMessageAttachment | null>(
-    null
-  )
-  const lastMessage = messages.at(-1)
-  const lastMessageId = lastMessage?.id
-
-  useLayoutEffect(() => {
-    if (previousMessageIdRef.current !== lastMessageId) {
-      previousMessageIdRef.current = lastMessageId
-      followStreamingRef.current = true
-      lastScrollOffsetRef.current = 0
-    }
-
-    if (!followStreamingRef.current) {
-      return
-    }
-
-    const timer = window.setTimeout(() => {
-      void listRef.current?.scrollToEnd({ animated: false })
-    }, 0)
-
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [lastMessage, lastMessageId, messages])
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent
-      const distanceFromEnd =
-        contentSize.height - layoutMeasurement.height - contentOffset.y
-      const scrollingUp = contentOffset.y < lastScrollOffsetRef.current - 1
-
-      if (scrollingUp) {
-        followStreamingRef.current = false
-      } else if (distanceFromEnd < 160) {
-        followStreamingRef.current = true
-      }
-
-      lastScrollOffsetRef.current = contentOffset.y
-    },
-    []
-  )
+  const [expandedImage, setExpandedImage] =
+    useState<ChatMessageAttachment | null>(null)
+  const lastMessageId = messages.at(-1)?.id
 
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<ChatMessage>) => {
@@ -311,13 +286,12 @@ export function MessageList({
         </>
       )
     },
-    [footer, lastMessageId, onDecision, onOption]
+    [footer, lastMessageId, onDecision, onOption],
   )
 
   return (
     <>
       <LegendList
-        ref={listRef}
         className="h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
         style={{ height: "100%" }}
         contentContainerStyle={messageListContentStyle}
@@ -337,7 +311,6 @@ export function MessageList({
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={0.25}
         maintainVisibleContentPosition
-        onScroll={handleScroll}
         recycleItems={false}
         ListHeaderComponent={
           header == null ? undefined : <ListHeader header={header} />

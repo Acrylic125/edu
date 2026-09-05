@@ -1,40 +1,32 @@
-import { ChatDurableObject, EDU_USER_ID_HEADER } from "./do/chat";
-import { createDb } from "../db/client";
-import { handleAssetRequest } from "./assets/http";
-import { hydrateAttachmentParts } from "./assets/load";
-import { selectTopic } from "./chat/select-topic";
-import { requireUser } from "./lib/auth-middleware";
-import { loadAllMessages, toResponseMessage } from "./messages/persistence";
-import { getCurrentTopic, listUserTopics } from "./topics/repository";
+import { ChatDurableObject, EDU_USER_ID_HEADER, EDU_SESSION_EXPIRES_HEADER } from './do/chat';
+import { createDb } from '../db/client';
+import { handleAssetRequest } from './assets/http';
+import { hydrateAttachmentParts } from './assets/load';
+import { selectTopic } from './chat/select-topic';
+import { requireUser } from './lib/auth-middleware';
+import { loadAllMessages, toResponseMessage } from './messages/persistence';
+import { getCurrentTopic, listUserTopics } from './topics/repository';
 
 export { ChatDurableObject };
 
 function jsonResponse(data: object, status = 200) {
 	return new Response(JSON.stringify(data), {
 		status,
-		headers: { "Content-Type": "application/json" },
+		headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
 	});
 }
 
 function withCors(env: Env, request: Request, response: Response) {
 	const headers = new Headers(response.headers);
-	headers.set("Access-Control-Allow-Origin", env.WEB_ORIGIN);
-	headers.set("Access-Control-Allow-Credentials", "true");
-	const requestedHeaders = request.headers.get(
-		"Access-Control-Request-Headers",
-	);
+	headers.set('Access-Control-Allow-Origin', env.WEB_ORIGIN);
+	headers.set('Access-Control-Allow-Credentials', 'true');
+	const requestedHeaders = request.headers.get('Access-Control-Request-Headers');
 	if (requestedHeaders) {
-		headers.set("Access-Control-Allow-Headers", requestedHeaders);
+		headers.set('Access-Control-Allow-Headers', requestedHeaders);
 	} else {
-		headers.set(
-			"Access-Control-Allow-Headers",
-			"Content-Type, Authorization, Cookie",
-		);
+		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie');
 	}
-	headers.set(
-		"Access-Control-Allow-Methods",
-		"GET, POST, PUT, PATCH, DELETE, OPTIONS",
-	);
+	headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,
@@ -45,8 +37,11 @@ function withCors(env: Env, request: Request, response: Response) {
 export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
+		const origin = request.headers.get('Origin');
+		if (origin && origin !== env.WEB_ORIGIN && !['GET', 'OPTIONS'].includes(request.method))
+			return new Response('Forbidden origin', { status: 403 });
 
-		if (request.method === "OPTIONS") {
+		if (request.method === 'OPTIONS') {
 			return withCors(env, request, new Response(null, { status: 204 }));
 		}
 
@@ -55,10 +50,11 @@ export default {
 			return withCors(env, request, assetResponse);
 		}
 
-		if (url.pathname === "/chat") {
-			const upgradeHeader = request.headers.get("Upgrade");
-			if (upgradeHeader?.toLowerCase() !== "websocket") {
-				return new Response("Expected WebSocket upgrade.", { status: 426 });
+		if (url.pathname === '/chat') {
+			if (request.headers.get('Origin') !== env.WEB_ORIGIN) return new Response('Forbidden origin', { status: 403 });
+			const upgradeHeader = request.headers.get('Upgrade');
+			if (upgradeHeader?.toLowerCase() !== 'websocket') {
+				return new Response('Expected WebSocket upgrade.', { status: 426 });
 			}
 
 			const authResult = await requireUser(request, env);
@@ -67,26 +63,19 @@ export default {
 			}
 
 			if (!env.OPENROUTER_API_KEY) {
-				return jsonResponse(
-					{ error: "OPENROUTER_API_KEY is not configured" },
-					500,
-				);
+				return jsonResponse({ error: 'OPENROUTER_API_KEY is not configured' }, 500);
 			}
 
 			if (!env.CHAT_DURABLE_OBJECT) {
-				return jsonResponse(
-					{ error: "CHAT_DURABLE_OBJECT is not configured" },
-					500,
-				);
+				return jsonResponse({ error: 'CHAT_DURABLE_OBJECT is not configured' }, 500);
 			}
 
-			const durableObjectId = env.CHAT_DURABLE_OBJECT.idFromName(
-				authResult.userId,
-			);
+			const durableObjectId = env.CHAT_DURABLE_OBJECT.idFromName(authResult.userId);
 			const stub = env.CHAT_DURABLE_OBJECT.get(durableObjectId);
 
 			const headers = new Headers(request.headers);
 			headers.set(EDU_USER_ID_HEADER, authResult.userId);
+			headers.set(EDU_SESSION_EXPIRES_HEADER, String(authResult.expiresAt));
 
 			return stub.fetch(
 				new Request(request.url, {
@@ -97,69 +86,47 @@ export default {
 		}
 
 		const selectMatch = url.pathname.match(/^\/topics\/([^/]+)\/select\/?$/);
-		if (selectMatch && request.method === "POST") {
+		if (selectMatch && request.method === 'POST') {
 			const authResult = await requireUser(request, env);
 			if (authResult instanceof Response) {
 				return withCors(env, request, authResult);
 			}
 
-			const topicId = decodeURIComponent(selectMatch[1] ?? "");
+			const topicId = decodeURIComponent(selectMatch[1] ?? '');
 			if (!env.DB) {
-				return withCors(
-					env,
-					request,
-					jsonResponse({ error: "DB is not configured" }, 500),
-				);
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
 			}
 
 			const db = createDb(env.DB);
 			const result = await selectTopic(db, authResult.userId, topicId);
 
 			if (!result.success) {
-				return withCors(
-					env,
-					request,
-					jsonResponse({ error: result.error ?? "Not found" }, 404),
-				);
+				return withCors(env, request, jsonResponse({ error: result.error ?? 'Not found' }, 404));
 			}
 
 			return withCors(env, request, jsonResponse({ success: true, topicId }));
 		}
 
-		if (url.pathname === "/topics/current/messages" && request.method === "GET") {
+		if (url.pathname === '/topics/current/messages' && request.method === 'GET') {
 			const authResult = await requireUser(request, env);
 			if (authResult instanceof Response) {
 				return withCors(env, request, authResult);
 			}
 
 			if (!env.DB) {
-				return withCors(
-					env,
-					request,
-					jsonResponse({ error: "DB is not configured" }, 500),
-				);
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
 			}
 
 			const db = createDb(env.DB);
 			const current = await getCurrentTopic(db, authResult.userId);
 			if (!current) {
-				return withCors(
-					env,
-					request,
-					jsonResponse({ topic: null, messages: [] }),
-				);
+				return withCors(env, request, jsonResponse({ topic: null, messages: [] }));
 			}
 
 			const messages = await loadAllMessages(db, current.topic.id);
 			const hydrated = [];
 			for (const message of messages) {
-				const parts = await hydrateAttachmentParts(
-					env,
-					db,
-					authResult.userId,
-					message.parts,
-					url.origin,
-				);
+				const parts = await hydrateAttachmentParts(env, db, authResult.userId, message.parts, url.origin);
 				hydrated.push(
 					toResponseMessage({
 						...message,
@@ -180,18 +147,14 @@ export default {
 			);
 		}
 
-		if (url.pathname === "/topics" && request.method === "GET") {
+		if (url.pathname === '/topics' && request.method === 'GET') {
 			const authResult = await requireUser(request, env);
 			if (authResult instanceof Response) {
 				return withCors(env, request, authResult);
 			}
 
 			if (!env.DB) {
-				return withCors(
-					env,
-					request,
-					jsonResponse({ error: "DB is not configured" }, 500),
-				);
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
 			}
 
 			const db = createDb(env.DB);
@@ -212,6 +175,6 @@ export default {
 			);
 		}
 
-		return new Response("Not found", { status: 404 });
+		return new Response('Not found', { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;

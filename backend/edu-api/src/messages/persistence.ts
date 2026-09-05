@@ -1,9 +1,9 @@
-import { asc, desc, eq } from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { and, asc, desc, eq } from 'drizzle-orm';
+import { nanoid } from 'nanoid';
 
-import type { Db } from "../../db/client";
-import { topicMessage } from "../../db/schema";
-import { partsToText, persistableParts } from "./parts";
+import type { Db } from '../../db/client';
+import { topicMessage } from '../../db/schema';
+import { partsToText, persistableParts } from './parts';
 import {
 	CreateTopicMessageSchema,
 	MessagePartsSchema,
@@ -12,14 +12,11 @@ import {
 	ResponseMessageSchema,
 	type CreateTopicMessageInput,
 	type PersistedTopicMessage,
-} from "./schema";
+} from './schema';
 
-export type { PersistedTopicMessage, MessageRole, ResponseMessage } from "./schema";
+export type { PersistedTopicMessage, MessageRole, ResponseMessage } from './schema';
 
-export async function createTopicMessage(
-	db: Db,
-	params: CreateTopicMessageInput,
-) {
+export async function createTopicMessage(db: Db, params: CreateTopicMessageInput) {
 	const input = CreateTopicMessageSchema.parse(params);
 	const id = input.id ?? `msg_${nanoid()}`;
 	const now = new Date();
@@ -42,23 +39,15 @@ export async function createTopicMessage(
 	});
 }
 
-export async function reassignTopicMessage(
-	db: Db,
-	messageId: string,
-	topicId: string,
-) {
+export async function reassignTopicMessage(db: Db, messageId: string, previousTopicId: string, topicId: string) {
 	await db
 		.update(topicMessage)
 		.set({ topicId })
-		.where(eq(topicMessage.id, messageId));
+		.where(and(eq(topicMessage.id, messageId), eq(topicMessage.topicId, previousTopicId)));
 }
 
 export async function loadAllMessages(db: Db, topicId: string) {
-	const rows = await db
-		.select()
-		.from(topicMessage)
-		.where(eq(topicMessage.topicId, topicId))
-		.orderBy(asc(topicMessage.createdAt));
+	const rows = await db.select().from(topicMessage).where(eq(topicMessage.topicId, topicId)).orderBy(asc(topicMessage.createdAt));
 
 	return rows.map((row) => {
 		const partsResult = MessagePartsSchema.safeParse(row.parts);
@@ -74,11 +63,7 @@ export async function loadAllMessages(db: Db, topicId: string) {
 	});
 }
 
-export async function loadRecentMessages(
-	db: Db,
-	topicId: string,
-	limit = 8,
-) {
+export async function loadRecentMessages(db: Db, topicId: string, limit = 8) {
 	const rows = await db
 		.select()
 		.from(topicMessage)
@@ -101,10 +86,7 @@ export async function loadRecentMessages(
 }
 
 export async function countTopicMessages(db: Db, topicId: string) {
-	const rows = await db
-		.select({ id: topicMessage.id })
-		.from(topicMessage)
-		.where(eq(topicMessage.topicId, topicId));
+	const rows = await db.select({ id: topicMessage.id }).from(topicMessage).where(eq(topicMessage.topicId, topicId));
 
 	return rows.length;
 }
@@ -114,10 +96,7 @@ export function toResponseMessage(msg: PersistedTopicMessage) {
 		id: msg.id,
 		role: msg.role,
 		parts: msg.parts,
-		createdAt:
-			msg.createdAt instanceof Date
-				? msg.createdAt.toISOString()
-				: msg.createdAt,
+		createdAt: msg.createdAt instanceof Date ? msg.createdAt.toISOString() : msg.createdAt,
 	});
 }
 

@@ -1,4 +1,4 @@
-import type { SpanExporter } from "@opentelemetry/sdk-trace-base";
+import type { SpanExporter } from '@opentelemetry/sdk-trace-base';
 
 export function createLangtraceExporter(apiKey: string, apiHost: string): SpanExporter {
 	return {
@@ -16,8 +16,8 @@ export function createLangtraceExporter(apiKey: string, apiHost: string): SpanEx
 				events: span.events,
 				resource: span.resource,
 				links: span.links,
-				parentSpanId: span.parentSpanId,
-				instrumentationLibrary: span.instrumentationLibrary,
+				parentSpanId: span.parentSpanContext?.spanId,
+				instrumentationLibrary: span.instrumentationScope,
 				duration: span.duration,
 				droppedEventsCount: span.droppedEventsCount,
 				droppedAttributesCount: span.droppedAttributesCount,
@@ -26,12 +26,13 @@ export function createLangtraceExporter(apiKey: string, apiHost: string): SpanEx
 			}));
 
 			void fetch(apiHost, {
-				method: "POST",
+				method: 'POST',
+				signal: AbortSignal.timeout(5000),
 				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-					"User-Agent": "LangTraceExporter",
-					...(apiKey ? { "x-api-key": apiKey } : {}),
+					Accept: 'application/json',
+					'Content-Type': 'application/json',
+					'User-Agent': 'LangTraceExporter',
+					...(apiKey ? { 'x-api-key': apiKey } : {}),
 				},
 				body: JSON.stringify(payload),
 			})
@@ -44,18 +45,14 @@ export function createLangtraceExporter(apiKey: string, apiHost: string): SpanEx
 					const details = await response.text();
 					resultCallback({
 						code: 1,
-						error: new Error(
-							`Failed to export ${spans.length} spans to ${apiHost}: ${response.status} ${details}`,
-						),
+						error: new Error(`Failed to export ${spans.length} spans to ${apiHost}: ${response.status} ${details}`),
 					});
 				})
 				.catch((error) => {
 					const message = error instanceof Error ? error.message : String(error);
 					resultCallback({
 						code: 1,
-						error: new Error(
-							`Failed to export ${spans.length} spans to ${apiHost}: ${message}`,
-						),
+						error: new Error(`Failed to export ${spans.length} spans to ${apiHost}: ${message}`),
 					});
 				});
 		},

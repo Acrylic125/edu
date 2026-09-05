@@ -1,4 +1,4 @@
-import { MOCK_SKILLS } from "@/lib/chat/skills"
+import { CHAT_COMMANDS } from "@/lib/chat/skills"
 
 export type SkillTokenMatch = {
   name: string
@@ -12,7 +12,7 @@ function escapeRegExp(value: string): string {
 }
 
 function buildSkillTokenRegex(): RegExp {
-  const names = MOCK_SKILLS.map((skill) => escapeRegExp(skill.name)).join("|")
+  const names = CHAT_COMMANDS.map((skill) => escapeRegExp(skill.name)).join("|")
   return new RegExp(`(^|\\s)\\/(${names})(?=\\s|$)`, "g")
 }
 

@@ -1,11 +1,6 @@
 "use client"
 
-import {
-  createContext,
-  useContext,
-  useState,
-  type ReactNode,
-} from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
 import { createStore, type StoreApi } from "zustand"
 import { useStoreWithEqualityFn } from "zustand/traditional"
 import { shallow } from "zustand/shallow"
@@ -43,20 +38,17 @@ export type ChatStore = ChatStoreState & {
   stageUserMessage: (
     messageId: MessageId,
     content: string,
-    attachments: ChatMessageAttachment[]
+    attachments: ChatMessageAttachment[],
   ) => void
   stageNewTopic: (
     messageId: MessageId,
     content: string,
     attachments: ChatMessageAttachment[],
-    parts: MessagePart[]
+    parts: MessagePart[],
   ) => void
   retryNewTopic: (messageId: MessageId) => void
   stopLocal: () => void
-  beginSwitch: (
-    topicId: TopicId,
-    direction: TopicTransitionDirection
-  ) => void
+  beginSwitch: (topicId: TopicId, direction: TopicTransitionDirection) => void
   commitSwitch: (payload: CurrentMessagesPayload) => void
   failSwitch: (message: string) => void
   replaceCurrentMessages: (payload: CurrentMessagesPayload) => void
@@ -65,7 +57,7 @@ export type ChatStore = ChatStoreState & {
   sendGate: (
     draft: string,
     hasAttachments: boolean,
-    attachmentsReady: boolean
+    attachmentsReady: boolean,
   ) => Gate
   takeTopicBornRefresh: () => TopicId | null
 }
@@ -87,6 +79,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     revealed: false,
     topicBornRefresh: null,
     topicCreation: null,
+    error: null,
 
     applyWs: (message) => {
       if (message.type === "ready") {
@@ -99,42 +92,44 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         return
       }
 
+      const current = get()
       if (message.type === "error") {
-        if (message.runId) {
-          set((state) => ({
-            run: { status: "idle" },
-            topicCreation: state.topicCreation
-              ? {
-                  ...state.topicCreation,
-                  status: "failed",
-                  error: message.message,
-                }
-              : null,
-          }))
+        if (
+          message.runId &&
+          (current.run.status !== "running" ||
+            current.run.runId !== message.runId)
+        )
           return
-        }
-        set((state) => {
-          if (state.topicCreation) {
-            return {
-              run: { status: "idle" },
-              topicCreation: {
-                ...state.topicCreation,
+        set({
+          error: message.message,
+          run:
+            current.run.status === "running" && current.run.runId !== ""
+              ? current.run
+              : { status: "idle" },
+          topicCreation: current.topicCreation
+            ? {
+                ...current.topicCreation,
                 status: "failed",
                 error: message.message,
-              },
-            }
-          }
-          if (state.revealed) {
-            return {
-              socket: { status: "error", message: message.message },
-              run: { status: "idle" },
-            }
-          }
-          return {
-            socket: { status: "error", message: message.message },
-            run: { status: "idle" },
-          }
+              }
+            : null,
         })
+        return
+      }
+      if (message.type !== "run.started") {
+        if (
+          current.run.status !== "running" ||
+          current.run.runId !== message.runId ||
+          current.run.messageId !== message.messageId
+        )
+          return
+      } else if (
+        message.topicId &&
+        current.session.kind === "topic" &&
+        current.session.topicId &&
+        current.session.topicId !== message.topicId &&
+        current.run.status !== "running"
+      ) {
         return
       }
 
@@ -160,8 +155,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             error: "The topic wasn't created. Please retry.",
           }
         }
-        const currentId =
-          session.kind === "topic" ? session.topicId : null
+        const currentId = session.kind === "topic" ? session.topicId : null
         const isBirth =
           (topicCreation === null || message.type === "run.ended") &&
           bornTopicId !== previousTopicId &&
@@ -228,7 +222,8 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           topicCreation = {
             ...topicCreation,
             status: "failed",
-            error: "The connection closed before the topic was created. Please retry.",
+            error:
+              "The connection closed before the topic was created. Please retry.",
           }
         }
         return {
@@ -241,6 +236,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     },
 
     stageUserMessage: (messageId, content, attachments) => {
+      set({ error: null })
       set((state) => {
         const reduced = reduceSession(state.session, state.run, {
           type: "user_sent",
@@ -258,11 +254,12 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     stageNewTopic: (messageId, content, attachments, parts) => {
       set((state) => {
         const previous = handoffFromSession(state.session)
-        const started = reduceSession(
-          { kind: "none" },
-          state.run,
-          { type: "user_sent", messageId, content, attachments }
-        )
+        const started = reduceSession({ kind: "none" }, state.run, {
+          type: "user_sent",
+          messageId,
+          content,
+          attachments,
+        })
         if (started.session.kind !== "topic") {
           return state
         }
@@ -270,7 +267,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           session: {
             ...started.session,
             title: titleFromContent(
-              content.trim().replace(/^\/new(?:\s+|$)/, "")
+              content.trim().replace(/^\/new(?:\s+|$)/, ""),
             ),
             handoff: previous,
           },
@@ -324,7 +321,10 @@ export function createChatStore(bootstrap: ChatBootstrap) {
       set((state) => {
         const session = sessionFromPayload(payload)
         let catalog = state.catalog
-        if (payload.topic !== null && catalog.byId[payload.topic.id] === undefined) {
+        if (
+          payload.topic !== null &&
+          catalog.byId[payload.topic.id] === undefined
+        ) {
           catalog = upsertListingInCatalog(catalog, {
             id: payload.topic.id,
             title: payload.topic.title,
@@ -398,7 +398,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         state.run,
         draft,
         hasAttachments,
-        attachmentsReady
+        attachmentsReady,
       )
     },
 

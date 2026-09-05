@@ -1,5 +1,5 @@
 import type { TopicId, MessageId } from "./ids"
-import type { MessagePart } from "./ws-schema"
+import type { MessagePart, ResponseMessage } from "./ws-schema"
 
 export type { TopicId, MessageId }
 
@@ -10,22 +10,13 @@ export type ChatMessageAttachment = {
   previewUrl: string
 }
 
-export type ChatMessage = {
-  id: MessageId
-  role: "user" | "assistant"
-  parts: MessagePart[]
-  attachments?: ChatMessageAttachment[]
-  status?: "streaming" | "complete" | "cancelled"
+export type ChatMessage = Omit<ResponseMessage, "createdAt"> & {
+  status?: "streaming" | "complete" | "cancelled" | "failed"
   progress?: string[]
 }
 
-export type TopicListing = {
-  id: TopicId
-  title: string
-  summary: string
-  createdAt: string
-  updatedAt: string
-}
+export type { TopicListing } from "./ws-schema"
+import type { TopicListing } from "./ws-schema"
 
 export type TopicCatalog = {
   byId: Record<TopicId, TopicListing>
@@ -73,6 +64,7 @@ export type ChatBootstrap = {
 }
 
 export type ChatStoreState = {
+  error: string | null
   catalog: TopicCatalog
   session: ChatSession
   socket: SocketFact

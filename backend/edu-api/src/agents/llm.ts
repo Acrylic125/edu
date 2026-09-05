@@ -1,32 +1,24 @@
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { ChatOpenAI } from "@langchain/openai";
-import * as openai from "openai";
-import {
-	context,
-	trace,
-	SpanStatusCode,
-} from "@opentelemetry/api";
-import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { BasicTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import {
-	chatCompletionCreate,
-	embeddingsCreate,
-	imageEdit,
-	imagesGenerate,
-} from "@langtrase/typescript-sdk/dist/instrumentation/openai/patch";
-import { createLangtraceExporter } from "./langtrace-exporter";
+import OpenAI from 'openai';
+import { z } from 'zod';
+import type {
+	ChatCompletion,
+	ChatCompletionMessageParam,
+	ChatCompletionTool,
+	ChatCompletionUserMessageParam,
+} from 'openai/resources/chat/completions';
+import { context, trace, SpanStatusCode } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { createLangtraceExporter } from './langtrace-exporter';
 
-export const DEFAULT_MODEL = "openai/gpt-5.6-luna";
+export const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
 const DEFAULT_MAX_TOKENS = 4096;
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-
 export type LlmEnv = {
 	LANGTRACE_API_HOST?: string;
 	LANGTRACE_API_KEY?: string;
 	OPENROUTER_API_KEY: string;
 	OPENROUTER_MODEL?: string;
 };
-
 export type LlmCallParams = {
 	instructions: string;
 	input: string;
@@ -34,76 +26,34 @@ export type LlmCallParams = {
 	maxTokens?: number;
 	signal?: AbortSignal;
 };
-
-export type StreamLlmParams = LlmCallParams & {
-	onDelta: (delta: string) => void | Promise<void>;
-};
-
+export type StreamLlmParams = LlmCallParams & { onDelta: (delta: string) => void | Promise<void> };
 let langtraceInitialized = false;
-
-let langtraceTracer = trace.getTracer("edu-api");
-
+let langtraceTracer = trace.getTracer('edu-api');
 function initializeLangtrace(env: LlmEnv) {
-	if (langtraceInitialized || (!env.LANGTRACE_API_KEY && !env.LANGTRACE_API_HOST)) {
-		return;
-	}
-
-	const provider = new BasicTracerProvider();
-	provider.addSpanProcessor(
-		new SimpleSpanProcessor(
-			createLangtraceExporter(
-				env.LANGTRACE_API_KEY ?? "",
-				env.LANGTRACE_API_HOST ?? "https://app.langtrace.ai/api/trace",
+	if (langtraceInitialized || (!env.LANGTRACE_API_KEY && !env.LANGTRACE_API_HOST)) return;
+	const provider = new BasicTracerProvider({
+		spanProcessors: [
+			new SimpleSpanProcessor(
+				createLangtraceExporter(env.LANGTRACE_API_KEY ?? '', env.LANGTRACE_API_HOST ?? 'https://app.langtrace.ai/api/trace'),
 			),
-		),
-	);
-	context.setGlobalContextManager(
-		new AsyncLocalStorageContextManager().enable(),
-	);
+		],
+	});
+	context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 	trace.setGlobalTracerProvider(provider);
-
-	const tracer = trace.getTracer("edu-api");
-	langtraceTracer = tracer;
-	const openAiVersion = "5.12.2";
-	const langtraceVersion = "6.3.7";
-	openai.OpenAI.Chat.Completions.prototype.create = chatCompletionCreate(
-		openai.OpenAI.Chat.Completions.prototype.create,
-		tracer,
-		langtraceVersion,
-		openAiVersion,
-	) as typeof openai.OpenAI.Chat.Completions.prototype.create;
-	openai.OpenAI.Images.prototype.generate = imagesGenerate(
-		openai.OpenAI.Images.prototype.generate,
-		tracer,
-		langtraceVersion,
-		openAiVersion,
-	) as typeof openai.OpenAI.Images.prototype.generate;
-	openai.OpenAI.Images.prototype.edit = imageEdit(
-		openai.OpenAI.Images.prototype.edit,
-		tracer,
-		langtraceVersion,
-		openAiVersion,
-	) as typeof openai.OpenAI.Images.prototype.edit;
-	openai.OpenAI.Embeddings.prototype.create = embeddingsCreate(
-		openai.OpenAI.Embeddings.prototype.create,
-		tracer,
-		langtraceVersion,
-		openAiVersion,
-	) as typeof openai.OpenAI.Embeddings.prototype.create;
+	langtraceTracer = trace.getTracer('edu-api');
 	langtraceInitialized = true;
 }
-
 export async function withLlmTrace<T>(env: LlmEnv, runId: string, fn: () => Promise<T>) {
 	initializeLangtrace(env);
 	if (!langtraceInitialized) {
 		return fn();
 	}
 
-	const span = langtraceTracer.startSpan("chat.run", {
+	const span = langtraceTracer.startSpan('chat.run', {
 		attributes: {
-			"langtrace.service.name": "edu-api",
-			"langtrace.service.type": "agent",
-			"edu.run.id": runId,
+			'langtrace.service.name': 'edu-api',
+			'langtrace.service.type': 'agent',
+			'edu.run.id': runId,
 		},
 	});
 	return context.with(trace.setSpan(context.active(), span), async () => {
@@ -121,175 +71,89 @@ export async function withLlmTrace<T>(env: LlmEnv, runId: string, fn: () => Prom
 	});
 }
 
-function humanMessage(input: string, images: Array<{ dataUrl: string }> | undefined) {
-	if (!images || images.length === 0) {
-		return new HumanMessage(input);
-	}
-
-	return new HumanMessage({
-		content: [
-			{ type: "text" as const, text: input },
-			...images.map((image) => ({
-				type: "image_url" as const,
-				image_url: { url: image.dataUrl },
-			})),
-		],
-	});
+export function humanMessage(input: string, images?: Array<{ dataUrl: string }>) {
+	const content: ChatCompletionUserMessageParam['content'] = [{ type: 'text', text: input }];
+	for (const image of images ?? []) content.push({ type: 'image_url', image_url: { url: image.dataUrl } });
+	return { role: 'user', content } satisfies ChatCompletionUserMessageParam;
 }
 
-function estimateTokens(text: string) {
-	return Math.ceil(text.length / 4);
+function createClient(env: LlmEnv) {
+	return new OpenAI({ apiKey: env.OPENROUTER_API_KEY, baseURL: 'https://openrouter.ai/api/v1', timeout: 45000, maxRetries: 1 });
 }
 
-function createChatModel(env: LlmEnv, maxTokens: number, streaming: boolean) {
-	initializeLangtrace(env);
+const ProviderCostSchema = z.object({ cost: z.number().finite().nonnegative() });
 
-	if (streaming) {
-		return new ChatOpenAI({
-			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-			apiKey: env.OPENROUTER_API_KEY,
-			maxTokens,
-			streaming: true,
-			streamUsage: true,
-			configuration: {
-				baseURL: OPENROUTER_BASE_URL,
-			},
-		});
-	}
-
-	return new ChatOpenAI({
-		model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-		apiKey: env.OPENROUTER_API_KEY,
-		maxTokens,
-		configuration: {
-			baseURL: OPENROUTER_BASE_URL,
-		},
-	});
-}
-
-function extractText(content: HumanMessage["content"]) {
-	if (typeof content === "string") {
-		return content.trim();
-	}
-
-	if (Array.isArray(content)) {
-		const parts: string[] = [];
-		for (const block of content) {
-			if (typeof block === "string") {
-				parts.push(block);
-				continue;
-			}
-			if ("text" in block && typeof block.text === "string") {
-				parts.push(block.text);
-			}
-		}
-		return parts.join("").trim();
-	}
-
-	return "";
-}
-
-function extractDelta(content: HumanMessage["content"]) {
-	if (typeof content === "string") {
-		return content;
-	}
-
-	if (Array.isArray(content)) {
-		const parts: string[] = [];
-		for (const block of content) {
-			if (typeof block === "string") {
-				parts.push(block);
-				continue;
-			}
-			if ("text" in block && typeof block.text === "string") {
-				parts.push(block.text);
-			}
-		}
-		return parts.join("");
-	}
-
-	return "";
-}
-
-function usageFromText(
-	env: LlmEnv,
-	params: { instructions: string; input: string; text: string },
-	usage:
-		| {
-				input_tokens?: number;
-				output_tokens?: number;
-		  }
-		| undefined,
-) {
-	const model = env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
+function modelUsage(env: LlmEnv, completion: ChatCompletion, input: string) {
+	const text = completion.choices[0]?.message.content ?? '';
+	const providerCost = ProviderCostSchema.safeParse(completion.usage);
+	let costMicros: number | null = null;
+	if (providerCost.success) costMicros = Math.round(providerCost.data.cost * 1_000_000);
 	return {
-		text: params.text,
-		model,
-		inputTokens:
-			usage?.input_tokens ??
-			estimateTokens(params.instructions + params.input),
-		outputTokens: usage?.output_tokens ?? estimateTokens(params.text),
-		cachedInputTokens: 0,
-		reasoningTokens: 0,
+		text,
+		costMicros,
+		model: completion.model || env.OPENROUTER_MODEL || DEFAULT_MODEL,
+		inputTokens: completion.usage?.prompt_tokens ?? Math.ceil(input.length / 4),
+		outputTokens: completion.usage?.completion_tokens ?? Math.ceil(text.length / 4),
+		cachedInputTokens: completion.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+		reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
 	};
 }
 
 export async function callLlm(env: LlmEnv, params: LlmCallParams) {
-	const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
-	const chat = createChatModel(env, maxTokens, false);
-	const invokeOptions = params.signal ? { signal: params.signal } : undefined;
-
-	const response = await chat.invoke(
-		[new SystemMessage(params.instructions), humanMessage(params.input, params.images)],
-		invokeOptions,
+	params.signal?.throwIfAborted();
+	const completion = await createClient(env).chat.completions.create(
+		{
+			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
+			max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+			messages: [{ role: 'system', content: params.instructions }, humanMessage(params.input, params.images)],
+		},
+		{ signal: params.signal },
 	);
+	const result = modelUsage(env, completion, params.instructions + params.input);
+	if (!result.text) throw new Error('No response from model');
+	return result;
+}
 
-	const text = extractText(response.content);
-	if (!text) {
-		throw new Error("No response from model");
+export async function streamToolModel(
+	env: LlmEnv,
+	params: {
+		messages: ChatCompletionMessageParam[];
+		tools?: ChatCompletionTool[];
+		signal?: AbortSignal;
+		maxTokens?: number;
+		onDelta: (text: string) => void | Promise<void>;
+	},
+) {
+	params.signal?.throwIfAborted();
+	const stream = createClient(env).chat.completions.stream(
+		{
+			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
+			max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+			messages: params.messages,
+			tools: params.tools,
+			...(params.tools ? { parallel_tool_calls: false } : {}),
+			stream_options: { include_usage: true },
+		},
+		{ signal: params.signal },
+	);
+	for await (const chunk of stream) {
+		params.signal?.throwIfAborted();
+		const text = chunk.choices[0]?.delta.content;
+		if (text) await params.onDelta(text);
 	}
-
-	return usageFromText(
-		env,
-		{ instructions: params.instructions, input: params.input, text },
-		response.usage_metadata,
-	);
+	const completion = await stream.finalChatCompletion();
+	const response = completion.choices[0]?.message;
+	if (!response) throw new Error('No response from model');
+	return { ...modelUsage(env, completion, JSON.stringify(params.messages)), response };
 }
 
 export async function streamLlm(env: LlmEnv, params: StreamLlmParams) {
-	const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
-	const chat = createChatModel(env, maxTokens, true);
-	const streamOptions = params.signal ? { signal: params.signal } : undefined;
-
-	const stream = await chat.stream(
-		[new SystemMessage(params.instructions), humanMessage(params.input, params.images)],
-		streamOptions,
-	);
-
-	let text = "";
-	let usage: { input_tokens?: number; output_tokens?: number } | undefined;
-
-	for await (const chunk of stream) {
-		let delta = extractDelta(chunk.content);
-		if (delta.length === 0 && typeof chunk.text === "string") {
-			delta = chunk.text;
-		}
-		if (delta.length > 0) {
-			text += delta;
-			await params.onDelta(delta);
-		}
-		if (chunk.usage_metadata) {
-			usage = chunk.usage_metadata;
-		}
-	}
-
-	if (!text) {
-		throw new Error("No response from model");
-	}
-
-	return usageFromText(
-		env,
-		{ instructions: params.instructions, input: params.input, text },
-		usage,
-	);
+	const result = await streamToolModel(env, {
+		messages: [{ role: 'system', content: params.instructions }, humanMessage(params.input, params.images)],
+		maxTokens: params.maxTokens,
+		signal: params.signal,
+		onDelta: params.onDelta,
+	});
+	if (!result.text) throw new Error('No response from model');
+	return result;
 }

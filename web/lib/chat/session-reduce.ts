@@ -37,14 +37,14 @@ export function titleFromContent(content: string) {
 export function reduceSession(
   session: ChatSession,
   run: RunFact,
-  event: SessionEvent
+  event: SessionEvent,
 ) {
   if (event.type === "user_sent") {
     return applyUserSent(session, run, event)
   }
   if (event.type === "socket_closed") {
     return {
-      session,
+      session: interruptStreaming(session),
       run: { status: "idle" as const },
     }
   }
@@ -54,7 +54,7 @@ export function reduceSession(
         kind: "topic" as const,
         topicId: event.topicId,
         title: NEW_CHAT_TITLE,
-        messages: [],
+        messages: session.kind === "topic" ? session.messages : [],
         handoff: event.previous,
       },
       run,
@@ -66,7 +66,7 @@ export function reduceSession(
 function applyUserSent(
   session: ChatSession,
   run: RunFact,
-  event: Extract<SessionEvent, { type: "user_sent" }>
+  event: Extract<SessionEvent, { type: "user_sent" }>,
 ) {
   const trimmed = event.content.trim()
   if (trimmed === "" && event.attachments.length === 0) {
@@ -111,7 +111,7 @@ function applyUserSent(
 function userMessage(
   id: MessageId,
   content: string,
-  attachments: ChatMessageAttachment[]
+  attachments: ChatMessageAttachment[],
 ) {
   const parts: MessagePart[] = []
   if (content.length > 0) {
@@ -122,8 +122,14 @@ function userMessage(
     role: "user",
     parts,
   }
-  if (attachments.length > 0) {
-    message.attachments = attachments
+  for (const attachment of attachments) {
+    parts.push({
+      type: "attachment",
+      ref: attachment.id,
+      url: attachment.previewUrl,
+      filename: attachment.name,
+      mimeType: attachment.mimeType,
+    })
   }
   return message
 }
@@ -131,8 +137,20 @@ function userMessage(
 function applyServerMessage(
   session: ChatSession,
   run: RunFact,
-  message: WsServerMessage
+  message: WsServerMessage,
 ) {
+  if (
+    message.type === "run.delta" ||
+    message.type === "run.progress" ||
+    message.type === "run.ended"
+  ) {
+    if (
+      run.status !== "running" ||
+      run.runId !== message.runId ||
+      run.messageId !== message.messageId
+    )
+      return { session, run }
+  }
   switch (message.type) {
     case "ready":
       return { session, run: { status: "idle" as const } }
@@ -159,7 +177,7 @@ function applyServerMessage(
 
 function applyRunStarted(
   session: ChatSession,
-  message: Extract<WsServerMessage, { type: "run.started" }>
+  message: Extract<WsServerMessage, { type: "run.started" }>,
 ) {
   const nextRun: RunFact = {
     status: "running",
@@ -171,7 +189,9 @@ function applyRunStarted(
     return { session, run: nextRun }
   }
 
-  const existing = session.messages.some((item) => item.id === message.messageId)
+  const existing = session.messages.some(
+    (item) => item.id === message.messageId,
+  )
   if (existing) {
     return { session, run: nextRun }
   }
@@ -197,13 +217,15 @@ function applyRunStarted(
 function applyRunDelta(
   session: ChatSession,
   run: RunFact,
-  message: Extract<WsServerMessage, { type: "run.delta" }>
+  message: Extract<WsServerMessage, { type: "run.delta" }>,
 ) {
   if (session.kind === "none") {
     return { session, run }
   }
 
-  const hasMessage = session.messages.some((item) => item.id === message.messageId)
+  const hasMessage = session.messages.some(
+    (item) => item.id === message.messageId,
+  )
   if (!hasMessage) {
     return { session, run }
   }
@@ -229,14 +251,14 @@ function applyRunDelta(
 function applyRunProgress(
   session: ChatSession,
   run: RunFact,
-  message: Extract<WsServerMessage, { type: "run.progress" }>
+  message: Extract<WsServerMessage, { type: "run.progress" }>,
 ) {
   if (session.kind === "none") {
     return { session, run }
   }
 
   const hasMessage = session.messages.some(
-    (item) => item.id === message.messageId
+    (item) => item.id === message.messageId,
   )
   if (!hasMessage) {
     return {
@@ -282,7 +304,7 @@ function applyRunProgress(
 
 function applyRunEnded(
   session: ChatSession,
-  message: Extract<WsServerMessage, { type: "run.ended" }>
+  message: Extract<WsServerMessage, { type: "run.ended" }>,
 ) {
   const nextRun: RunFact = { status: "idle" }
 
@@ -290,12 +312,15 @@ function applyRunEnded(
     return { session, run: nextRun }
   }
 
-  let status: "complete" | "cancelled" = "complete"
+  let status: "complete" | "cancelled" | "failed" = "complete"
+  if (message.status === "failed") status = "failed"
   if (message.status === "cancelled") {
     status = "cancelled"
   }
 
-  const hasMessage = session.messages.some((item) => item.id === message.messageId)
+  const hasMessage = session.messages.some(
+    (item) => item.id === message.messageId,
+  )
   if (!hasMessage) {
     return {
       session: {
@@ -363,4 +388,15 @@ export function handoffFromSession(session: ChatSession): TopicHandoff | null {
     return null
   }
   return { topicId: session.topicId, title: session.title, summary: "" }
+}
+
+function interruptStreaming(session: ChatSession) {
+  if (session.kind === "none") return session
+  return {
+    ...session,
+    messages: session.messages.map((message) => {
+      if (message.status !== "streaming") return message
+      return { ...message, status: "failed" as const, progress: undefined }
+    }),
+  }
 }

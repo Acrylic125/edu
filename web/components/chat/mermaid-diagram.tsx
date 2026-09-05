@@ -1,29 +1,13 @@
 "use client"
 
-import { useEffect, useId, useState, useSyncExternalStore } from "react"
+import { useEffect, useId, useState } from "react"
+
+import { useThemeMode } from "@/components/theme/theme-provider"
 
 import { ImagePreviewDialog } from "@/components/chat/composer-attachments"
 
 const mermaidSvgCache = new Map<string, string>()
-
-function subscribeToDarkMode(onStoreChange: () => void) {
-  const observer = new MutationObserver(onStoreChange)
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["class"],
-  })
-  return () => {
-    observer.disconnect()
-  }
-}
-
-function getDarkModeSnapshot() {
-  return document.documentElement.classList.contains("dark")
-}
-
-function getServerDarkModeSnapshot() {
-  return false
-}
+let renderQueue = Promise.resolve()
 
 function isMermaidErrorSvg(svg: string) {
   return /syntax error in text|mermaid version/i.test(svg)
@@ -40,7 +24,7 @@ function getCachedSvg(key: string) {
 
 function getSvgAspectRatio(svg: string) {
   const viewBox = svg.match(
-    /\bviewBox=["']\s*[^\s"']+\s+[^\s"']+\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*["']/i
+    /\bviewBox=["']\s*[^\s"']+\s+[^\s"']+\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*["']/i,
   )
   if (viewBox) {
     return Number(viewBox[1]) / Number(viewBox[2])
@@ -64,11 +48,7 @@ export function MermaidDiagram({
 }) {
   const reactId = useId()
   const [previewOpen, setPreviewOpen] = useState(false)
-  const dark = useSyncExternalStore(
-    subscribeToDarkMode,
-    getDarkModeSnapshot,
-    getServerDarkModeSnapshot
-  )
+  const { dark } = useThemeMode()
   const renderKey = `${dark}:${renderScope}:${definition}`
   const [result, setResult] = useState(() => {
     const cachedSvg = getCachedSvg(renderKey)
@@ -91,9 +71,14 @@ export function MermaidDiagram({
 
     async function renderDiagram() {
       try {
+        if (!active) return
+        if (definition.length > 16000) throw new Error("Diagram is too large")
         const mermaid = (await import("mermaid")).default
         mermaid.initialize({
           startOnLoad: false,
+          maxTextSize: 16000,
+          maxEdges: 200,
+          suppressErrorRendering: true,
           securityLevel: "strict",
           theme: dark ? "dark" : "default",
         })
@@ -103,6 +88,10 @@ export function MermaidDiagram({
           throw new Error("Mermaid returned an error diagram")
         }
         if (active) {
+          if (mermaidSvgCache.size >= 32) {
+            const oldest = mermaidSvgCache.keys().next().value
+            if (oldest !== undefined) mermaidSvgCache.delete(oldest)
+          }
           mermaidSvgCache.set(renderKey, rendered.svg)
           setResult({ key: renderKey, svg: rendered.svg, error: false })
         }
@@ -113,7 +102,8 @@ export function MermaidDiagram({
       }
     }
 
-    void renderDiagram()
+    // Mermaid configuration and temporary DOM are global; serialize rendering.
+    renderQueue = renderQueue.then(renderDiagram, renderDiagram)
     return () => {
       active = false
     }
