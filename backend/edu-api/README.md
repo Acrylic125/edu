@@ -4,6 +4,10 @@
 
 Auth sessions must live in the **same local D1** as `wrangler dev`.
 
+Install dependencies with `pnpm install --frozen-lockfile` in each of
+`packages/chat-contract`, `backend/edu-api`, and `web`. Both applications link
+the shared contract package directly.
+
 1. Apply local migrations: `pnpm run db:migrate:local`
 2. Start the worker: `pnpm wrangler dev`
 3. Start the web app (`pnpm dev` in `web/`). In development it opens the local D1 sqlite under `.wrangler/state` (not the remote Cloudflare DB).
@@ -11,11 +15,15 @@ Auth sessions must live in the **same local D1** as `wrangler dev`.
 
 `.dev.vars` `BETTER_AUTH_SECRET` must match web `BETTER_AUTH_SECRET`.
 
-Set `LANGTRACE_API_KEY` in `.dev.vars` to trace LangChain's underlying OpenAI
-requests. For a self-hosted Langtrace instance, also set
+Set `LANGTRACE_API_KEY` in `.dev.vars` to export Tutor run traces. Model calls
+use the OpenAI SDK through OpenRouter. For a self-hosted Langtrace instance, set
 `LANGTRACE_API_HOST` to its `/api/trace` endpoint.
 
 Force remote auth DB from Next while developing: `AUTH_D1_LOCAL=0`.
+
+See [Tutor architecture](docs/agent/decision-tree.md) and the
+[September 2026 audit](docs/agent/audit-2026-09-05.md) for the breaking contract,
+migration, verification, and remaining limitations.
 
 ## Production (`env.production-ben`)
 
