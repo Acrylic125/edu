@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 
 import { createDb } from "../../db/client";
-import { loadAttachedImages } from "../assets/load";
+import { loadAttachedImages, loadOwnedImagesByIds } from "../assets/load";
 import { MAX_MESSAGE_ASSETS } from "../assets/limits";
 import { attachmentRefs, linkAssetsToMessage } from "../assets/repository";
 import { handleChat, handleDecision, type StoredProposal } from "../chat/route";
@@ -388,6 +388,13 @@ export class ChatDurableObject extends DurableObject<Env> {
 						params.userId,
 						params.parts,
 					),
+					loadImagesByIds: (assetIds) =>
+						loadOwnedImagesByIds(
+							this.env,
+							db,
+							params.userId,
+							assetIds,
+						),
 					onDelta: (partIndex, text) => {
 						accumulated += text;
 						this.broadcast({

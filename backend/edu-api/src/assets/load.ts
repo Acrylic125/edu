@@ -29,6 +29,18 @@ export async function loadAttachedImages(
 	if (refs.length === 0) {
 		return [];
 	}
+	return loadOwnedImagesByIds(env, db, userId, refs);
+}
+
+export async function loadOwnedImagesByIds(
+	env: Env,
+	db: Db,
+	userId: string,
+	refs: string[],
+) {
+	if (refs.length === 0) {
+		return [];
+	}
 
 	if (!env.ASSETS) {
 		throw new Error("ASSETS bucket is not configured");

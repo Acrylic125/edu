@@ -44,4 +44,45 @@ describe("buildSystemContext", () => {
 		expect(history).toContain("[Previous Mermaid diagram omitted]");
 		expect(history).not.toContain("A --> B");
 	});
+
+	it("includes retrieved summaries and selectively expanded exchanges", () => {
+		const context: AgentContext = {
+			userId: "user_1",
+			topic: null,
+			recentMessages: [],
+			currentMessage: "Continue the eigenvalue example",
+			memorySummaries: [
+				{
+					id: "memory_1",
+					topicId: "topic_1",
+					intent: "chat",
+					summary: "The learner asked how to calculate eigenvalues.",
+					keywords: ["eigenvalues"],
+					createdAt: new Date("2026-09-04T00:00:00Z"),
+					hasImages: true,
+				},
+			],
+			retrievedExchanges: [
+				{
+					memoryId: "memory_1",
+					request: "Show the calculation for matrix A.",
+					response: "Start with det(A - lambda I).",
+					images: [
+						{
+							id: "asset_1",
+							filename: "matrix.png",
+							mimeType: "image/png",
+						},
+					],
+				},
+			],
+		};
+
+		const instructions = buildSystemContext(context);
+
+		expect(instructions).toContain("Retrieved conversation-memory index");
+		expect(instructions).toContain("The learner asked how to calculate eigenvalues");
+		expect(instructions).toContain("Show the calculation for matrix A");
+		expect(instructions).toContain("matrix.png");
+	});
 });

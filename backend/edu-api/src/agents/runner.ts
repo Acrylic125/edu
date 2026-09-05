@@ -22,6 +22,7 @@ export class AgentRunner {
 
 	private onProgress: ((label: string) => void) | undefined;
 	private images: AgentImage[];
+	private retrievedImages: AgentImage[] = [];
 
 	constructor(options: {
 		db: Db;
@@ -46,6 +47,10 @@ export class AgentRunner {
 			return;
 		}
 		this.onProgress(label);
+	}
+
+	addRetrievedImages(images: AgentImage[]) {
+		this.retrievedImages.push(...images);
 	}
 
 	withTrace<T>(fn: () => Promise<T>) {
@@ -96,6 +101,7 @@ export class AgentRunner {
 		instructions: string;
 		input: string;
 		maxTokens?: number;
+		currentImagesOnly?: boolean;
 	}) {
 		const stepId = await this.recordStep({
 			type: params.stepType ?? "llm",
@@ -104,10 +110,14 @@ export class AgentRunner {
 		});
 
 		try {
+			let images = [...this.images, ...this.retrievedImages];
+			if (params.currentImagesOnly) {
+				images = this.images;
+			}
 			const result = await callLlm(this.llmEnv, {
 				instructions: params.instructions,
 				input: params.input,
-				images: this.images,
+				images,
 				maxTokens: params.maxTokens,
 				signal: this.signal,
 			});
@@ -140,6 +150,7 @@ export class AgentRunner {
 		input: string;
 		onChunk: (text: string) => void;
 		maxTokens?: number;
+		currentImagesOnly?: boolean;
 	}) {
 		const stepId = await this.recordStep({
 			type: params.stepType ?? "llm",
@@ -149,10 +160,14 @@ export class AgentRunner {
 
 		try {
 			let pending = "";
+			let images = [...this.images, ...this.retrievedImages];
+			if (params.currentImagesOnly) {
+				images = this.images;
+			}
 			const result = await streamLlm(this.llmEnv, {
 				instructions: params.instructions,
 				input: params.input,
-				images: this.images,
+				images,
 				maxTokens: params.maxTokens,
 				signal: this.signal,
 				onDelta: async (delta) => {

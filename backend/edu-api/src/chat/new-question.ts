@@ -1,6 +1,6 @@
 import type { AgentRunner } from "../agents/runner";
 import { buildSystemContext, type AgentContext } from "./context";
-import { lastPracticeQuestion } from "./intent";
+import { practiceQuestionHistory } from "./intent";
 import {
 	MATH_MARKDOWN_RULE,
 	optionLabel,
@@ -17,23 +17,37 @@ export async function executeNewQuestion(
 ) {
 	const systemContext = buildSystemContext(context);
 	const part = shortFocus(context.topic?.part ?? "the current topic");
-	const previous = lastPracticeQuestion(context.recentMessages);
+	const previousQuestions = practiceQuestionHistory(context.recentMessages);
 
 	runner.announce("Writing a question");
 	const instructions = [
 		systemContext,
 		"",
 		`Generate a practice question appropriate for: ${part}`,
-		"Write a variant of the last practice question.",
-		"Keep the same skill and structure.",
-		"Change the numbers and the concrete setup so it is not a copy.",
-		"Do not switch topics or skills.",
+		"Use the practice-question history below as an exclusion index.",
+		"Do not repeat the same underlying task, theorem, identity, operands, answer, or problem structure.",
+		"Do not merely rename variables or change the story around an equivalent question.",
+		"Choose a materially different skill within the current topic when the recent history already covers this skill.",
+		"Stay within the current topic and learner level.",
 		"Consider the student's demonstrated proficiency and recent mistakes.",
 		"Do not include hints.",
 		MATH_MARKDOWN_RULE,
 	];
-	if (previous) {
-		instructions.push("", "Last practice question:", previous);
+	if (previousQuestions.length > 0) {
+		instructions.push(
+			"",
+			"Recent practice-question exclusion history (do not repeat these):",
+			...previousQuestions.map((question, index) => `${index + 1}. ${question}`),
+		);
+	}
+	if (context.memorySummaries && context.memorySummaries.length > 0) {
+		instructions.push(
+			"",
+			"Retrieved memory index (also treat these prior outcomes as exclusions):",
+			...context.memorySummaries.map(
+				(memory) => `- [${memory.id}] ${memory.summary}`,
+			),
+		);
 	}
 
 	const questionText = await runner.llmStream({

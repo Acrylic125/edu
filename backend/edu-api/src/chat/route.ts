@@ -44,6 +44,10 @@ import {
 } from "../messages/schema";
 import { createTopic, setCurrentTopic } from "../topics/repository";
 import { flushWords, pushWords } from "./word-buffer";
+import {
+	captureConversationMemory,
+	enrichChatContextWithMemory,
+} from "../memory/service";
 
 export type ChatRunIo = {
 	signal: AbortSignal;
@@ -54,6 +58,7 @@ export type ChatRunIo = {
 	onProgress: (label: string) => void;
 	defer?: (task: Promise<void>) => void;
 	images?: AgentImage[];
+	loadImagesByIds?: (assetIds: string[]) => Promise<AgentImage[]>;
 };
 
 export type StoredProposal = {
@@ -84,6 +89,16 @@ function emitVisible(io: ChatRunIo, text: string) {
 	}
 }
 
+function routeIntent(route: Route) {
+	if (route.type === "command") {
+		return route.intent.type;
+	}
+	if (route.type === "reply") {
+		return "chat";
+	}
+	return `proposal:${route.proposal.kind}`;
+}
+
 export async function handleChat(
 	db: Db,
 	llmEnv: LlmEnv,
@@ -100,7 +115,7 @@ export async function handleChat(
 			messageText = `${messageText}\n\nThe user also attached ${io.images.length} image(s).`;
 		}
 	}
-	const context = await loadChatContext(db, userId, messageText);
+	let context: AgentContext = await loadChatContext(db, userId, messageText);
 
 	const runner = await createAgentRun(db, llmEnv, {
 		runId: io.runId,
@@ -115,6 +130,32 @@ export async function handleChat(
 	return runner.withTrace(async () => {
 		try {
 			runner.announce("Reading your message");
+			try {
+				context = await enrichChatContextWithMemory(db, runner, context);
+			} catch (error) {
+				console.error("Conversation memory retrieval failed (non-blocking):", error);
+			}
+			const retrievedImageMetadata =
+				context.retrievedExchanges?.flatMap((exchange) => exchange.images) ?? [];
+			const imageIds = retrievedImageMetadata.map((image) => image.id);
+			let retrievedImages: AgentImage[] = [];
+			if (io.loadImagesByIds && imageIds.length > 0) {
+				try {
+					retrievedImages = await io.loadImagesByIds(imageIds);
+					runner.addRetrievedImages(retrievedImages);
+				} catch (error) {
+					console.error("Conversation memory image retrieval failed (non-blocking):", error);
+				}
+			}
+			await runner.recordStep({
+				type: "tool",
+				name: "retrieve_memory_images",
+				input: { assetIds: imageIds },
+				output: {
+					images: retrievedImageMetadata,
+					loadedCount: retrievedImages.length,
+				},
+			});
 			const route = await routeMessage(messageText, context, runner);
 			const result = await fulfillRoute(
 				db,
@@ -125,6 +166,19 @@ export async function handleChat(
 				route,
 			);
 			const parts = await repairInvalidResponseMarkup(runner, result.parts);
+			try {
+				await captureConversationMemory(db, runner, {
+					userId,
+					topicId: result.topicId ?? null,
+					userMessageId: io.userMessageId,
+					agentMessageId: io.assistantMessageId,
+					intent: routeIntent(route),
+					requestParts: parsed.parts,
+					responseParts: parts,
+				});
+			} catch (error) {
+				console.error("Conversation memory capture failed (non-blocking):", error);
+			}
 			await runner.complete();
 			if (result.topicId) {
 				io.defer?.(maybeScheduleSummaryUpdate(
@@ -302,6 +356,19 @@ export async function routeMessage(
 			{ type: "reply" },
 		);
 		return { type: "reply", message: messageText } satisfies Route;
+	}
+
+	if (inferred.type === "clarify") {
+		await runner.recordRoutingStep(
+			"route",
+			{ message: messageText },
+			{ type: "clarification" },
+		);
+		return {
+			type: "reply",
+			message:
+				"I want to make sure I understand. Are you answering the previous practice question, asking for a new question, or asking for an explanation?",
+		} satisfies Route;
 	}
 
 	if (inferred.type === "update-topic") {

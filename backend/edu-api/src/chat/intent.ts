@@ -9,7 +9,8 @@ export type IntentType =
 	| "update-topic"
 	| "answer"
 	| "new-question"
-	| "chat";
+	| "chat"
+	| "clarify";
 
 export type DeducedIntent = {
 	type: IntentType;
@@ -68,7 +69,15 @@ export function looksLikeDiagramRequest(message: string) {
 export function lastPracticeQuestion(
 	messages: PersistedTopicMessage[],
 ): string | null {
-	for (let i = messages.length - 1; i >= 0; i--) {
+	return practiceQuestionHistory(messages)[0] ?? null;
+}
+
+export function practiceQuestionHistory(
+	messages: PersistedTopicMessage[],
+	limit = 8,
+) {
+	const questions: string[] = [];
+	for (let i = messages.length - 1; i >= 0 && questions.length < limit; i--) {
 		const message = messages[i];
 		if (!message || message.role !== "agent") {
 			continue;
@@ -85,10 +94,10 @@ export function lastPracticeQuestion(
 			continue;
 		}
 		if (looksLikePracticeQuestion(text)) {
-			return text;
+			questions.push(text);
 		}
 	}
-	return null;
+	return questions;
 }
 
 function looksLikePracticeQuestion(text: string) {
@@ -108,6 +117,12 @@ export function looksLikeStudentWork(text: string) {
 	const trimmed = text.trim();
 	if (trimmed === "") {
 		return false;
+	}
+	const numberedJudgements = trimmed.match(
+		/(?:^|\n)\s*\d+\s*[.),:-]\s*(?:true|false|valid|invalid)\b/gi,
+	);
+	if (numberedJudgements && numberedJudgements.length >= 2) {
+		return true;
 	}
 	const letters = (trimmed.match(/[A-Za-z]/g) ?? []).length;
 	const digits = (trimmed.match(/\d/g) ?? []).length;
@@ -184,13 +199,19 @@ export async function inferFromRaw(
 	}
 	const systemContext = parts.join("\n");
 
-	const response = await runner.llmCall({
-		name: "infer_intent",
-		stepType: "routing",
-		maxTokens: 16,
-		instructions: systemContext,
-		input: message,
-	});
+	let response: string;
+	try {
+		response = await runner.llmCall({
+			name: "infer_intent",
+			stepType: "routing",
+			maxTokens: 16,
+			instructions: systemContext,
+			input: message,
+		});
+	} catch (error) {
+		console.error("Intent inference failed; asking for clarification:", error);
+		return { type: "clarify" as const, message };
+	}
 
 	const normalized = response.trim().toLowerCase();
 
@@ -215,6 +236,9 @@ export async function inferFromRaw(
 	if (normalized.includes("answer")) {
 		return { type: "answer" as const, message };
 	}
+	if (normalized.includes("chat")) {
+		return { type: "chat" as const, message };
+	}
 
-	return { type: "chat" as const, message };
+	return { type: "clarify" as const, message };
 }

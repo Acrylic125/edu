@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
 	createAgentRun: vi.fn(),
 	loadChatContext: vi.fn(),
 	maybeScheduleSummaryUpdate: vi.fn(),
+	enrichChatContextWithMemory: vi.fn(),
+	captureConversationMemory: vi.fn(),
 }));
 
 vi.mock("../agents/runner", () => ({
@@ -21,6 +23,11 @@ vi.mock("./context", async (importOriginal) => {
 		maybeScheduleSummaryUpdate: mocks.maybeScheduleSummaryUpdate,
 	};
 });
+
+vi.mock("../memory/service", () => ({
+	enrichChatContextWithMemory: mocks.enrichChatContextWithMemory,
+	captureConversationMemory: mocks.captureConversationMemory,
+}));
 
 import { handleChat } from "./route";
 
@@ -44,6 +51,7 @@ describe("handleChat end-to-end orchestration", () => {
 			currentMessage: "Why can a DFA only follow one path?",
 		};
 		mocks.loadChatContext.mockResolvedValue(context);
+		mocks.enrichChatContextWithMemory.mockResolvedValue(context);
 
 		const llmCall = vi.fn().mockResolvedValue("chat");
 		const llmStream = vi.fn(async (params: { onChunk: (text: string) => void }) => {
@@ -58,6 +66,8 @@ describe("handleChat end-to-end orchestration", () => {
 			llmCall,
 			llmStream,
 			recordRoutingStep: vi.fn(),
+			recordStep: vi.fn(),
+			addRetrievedImages: vi.fn(),
 			withTrace: vi.fn((fn: () => Promise<object>) => fn()),
 		};
 		mocks.createAgentRun.mockResolvedValue(runner);

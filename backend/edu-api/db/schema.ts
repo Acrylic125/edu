@@ -127,6 +127,55 @@ export const topicMessage = sqliteTable(
 );
 
 // ─────────────────────────────────────────────
+// Conversation Memories
+// ─────────────────────────────────────────────
+
+export const conversationMemory = sqliteTable(
+	'conversation_memory',
+	{
+		id: text('id').primaryKey(),
+
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+
+		topicId: text('topic_id').references(() => topic.id, {
+			onDelete: 'set null',
+		}),
+
+		userMessageId: text('user_message_id').notNull(),
+
+		agentMessageId: text('agent_message_id').notNull(),
+
+		intent: text('intent'),
+
+		summary: text('summary').notNull(),
+
+		keywords: text('keywords', { mode: 'json' }).notNull(),
+
+		imageAssetIds: text('image_asset_ids', { mode: 'json' }).notNull(),
+
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+	},
+	(table) => [
+		uniqueIndex('conversation_memory_user_message_uidx').on(
+			table.userMessageId,
+		),
+		index('conversation_memory_user_created_idx').on(
+			table.userId,
+			table.createdAt,
+		),
+		index('conversation_memory_user_topic_created_idx').on(
+			table.userId,
+			table.topicId,
+			table.createdAt,
+		),
+	],
+);
+
+// ─────────────────────────────────────────────
 // Agent Runs
 // ─────────────────────────────────────────────
 

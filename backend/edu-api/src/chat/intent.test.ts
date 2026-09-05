@@ -6,7 +6,9 @@ import {
 	lastPracticeQuestion,
 	looksLikeStudentWork,
 	parseExplicitCommand,
+	inferFromRaw,
 } from "./intent";
+import type { AgentRunner } from "../agents/runner";
 import type { AgentContext } from "./context";
 import type { PersistedTopicMessage } from "../messages/schema";
 
@@ -156,6 +158,21 @@ describe("lastPracticeQuestion", () => {
 	});
 });
 
+describe("looksLikeStudentWork", () => {
+	it("recognizes numbered validity judgements with explanatory text", () => {
+		const answer =
+			"1. True, 6 mod 2 == 0, therefore any multiple of 6 is a multiple of 2.\n2. True, 14 mod 2 == 0\n3. False";
+
+		expect(looksLikeStudentWork(answer)).toBe(true);
+		expect(
+			deduceObviousIntent(
+				answer,
+				contextWith([agentMessage("q1", "Practice Question\nEvaluate this argument.")]),
+			),
+		).toEqual({ type: "answer", message: answer });
+	});
+});
+
 
 describe("looksLikeNextWithinTopic", () => {
 	it("matches next-topic phrasing", () => {
@@ -176,5 +193,22 @@ describe("deduceObviousIntent next within topic", () => {
 			topic: null,
 		};
 		expect(deduceObviousIntent("whats the next topic?", empty)).toBeNull();
+	});
+});
+
+describe("intent inference fallback", () => {
+	it("does not silently treat an unclassified request as chat", async () => {
+		const runner = {
+			llmCall: async () => {
+				throw new Error("empty intent response");
+			},
+		} as Pick<AgentRunner, "llmCall"> as AgentRunner;
+		const result = await inferFromRaw(
+			"I am not sure",
+			contextWith([]),
+			runner,
+		);
+
+		expect(result.type).toBe("clarify");
 	});
 });

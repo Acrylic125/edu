@@ -7,6 +7,10 @@ import {
 } from "../messages/persistence";
 import { getCurrentTopic } from "../topics/repository";
 import type { AgentRunner } from "../agents/runner";
+import type {
+	RetrievedExchange,
+	RetrievedMemory,
+} from "../memory/schema";
 
 export type AgentContext = {
 	userId: string;
@@ -18,6 +22,8 @@ export type AgentContext = {
 	} | null;
 	recentMessages: PersistedTopicMessage[];
 	currentMessage: string;
+	memorySummaries?: RetrievedMemory[];
+	retrievedExchanges?: RetrievedExchange[];
 };
 
 export async function loadChatContext(
@@ -83,6 +89,35 @@ export function buildSystemContext(context: AgentContext) {
 	if (context.recentMessages.length > 0) {
 		sections.push("Recent conversation:");
 		sections.push(formatMessagesForModel(context.recentMessages));
+	}
+
+	if (context.memorySummaries && context.memorySummaries.length > 0) {
+		sections.push("Retrieved conversation-memory index:");
+		sections.push(
+			context.memorySummaries
+				.map((memory) => `- [${memory.id}] ${memory.summary}`)
+				.join("\n"),
+		);
+	}
+
+	if (context.retrievedExchanges && context.retrievedExchanges.length > 0) {
+		sections.push("Selected earlier exchanges:");
+		sections.push(
+			context.retrievedExchanges
+				.map((exchange) => {
+					const imageNote = exchange.images.length > 0
+						? `\nAttached images: ${exchange.images
+								.map((image) => image.filename ?? image.id)
+								.join(", ")}`
+						: "";
+					return [
+						`Memory ${exchange.memoryId}`,
+						`user: ${exchange.request}`,
+						`agent: ${exchange.response}${imageNote}`,
+					].join("\n");
+				})
+				.join("\n\n"),
+		);
 	}
 
 	return sections.join("\n\n");

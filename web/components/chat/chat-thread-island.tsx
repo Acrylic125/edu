@@ -13,6 +13,7 @@ export function ChatThreadIsland({
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
   const phase = useChatStore(selectShellPhase)
+  const runStatus = useChatStore((state) => state.run.status)
   const catalog = useChatStore((state) => state.catalog)
   const topicEntry = useChatStore((state) => state.topicEntry)
 
@@ -20,14 +21,19 @@ export function ChatThreadIsland({
     return null
   }
 
-  const previous = resolvePreviousTopic(catalog, phase.topicId)
+  const previous =
+    resolvePreviousTopic(catalog, phase.topicId) ?? phase.handoff
   const next = resolveNextTopic(catalog, phase.topicId)
+  const lastMessage = phase.messages.at(-1)
+  const canShowNextTopic =
+    runStatus === "idle" &&
+    (lastMessage === undefined || lastMessage.role === "assistant")
   const header =
     previous !== null ? (
       <TopicNavButton target={previous} direction="previous" />
     ) : null
   const footer =
-    next !== null ? (
+    canShowNextTopic && next !== null ? (
       <TopicNavButton target={next} direction="next" />
     ) : null
 
