@@ -25,6 +25,19 @@ function getServerDarkModeSnapshot() {
   return false
 }
 
+function isMermaidErrorSvg(svg: string) {
+  return /syntax error in text|mermaid version/i.test(svg)
+}
+
+function getCachedSvg(key: string) {
+  const cached = mermaidSvgCache.get(key)
+  if (cached !== undefined && isMermaidErrorSvg(cached)) {
+    mermaidSvgCache.delete(key)
+    return null
+  }
+  return cached ?? null
+}
+
 function getSvgAspectRatio(svg: string) {
   const viewBox = svg.match(
     /\bviewBox=["']\s*[^\s"']+\s+[^\s"']+\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*["']/i
@@ -58,14 +71,14 @@ export function MermaidDiagram({
   )
   const renderKey = `${dark}:${renderScope}:${definition}`
   const [result, setResult] = useState(() => {
-    const cachedSvg = mermaidSvgCache.get(renderKey) ?? null
+    const cachedSvg = getCachedSvg(renderKey)
     return {
       key: cachedSvg == null ? "" : renderKey,
       svg: cachedSvg,
       error: false,
     }
   })
-  const cachedSvg = mermaidSvgCache.get(renderKey) ?? null
+  const cachedSvg = getCachedSvg(renderKey)
   const svg = result.key === renderKey ? result.svg : cachedSvg
   const renderError = result.key === renderKey && result.error
 
@@ -86,6 +99,9 @@ export function MermaidDiagram({
         })
         const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`
         const rendered = await mermaid.render(id, definition)
+        if (isMermaidErrorSvg(rendered.svg)) {
+          throw new Error("Mermaid returned an error diagram")
+        }
         if (active) {
           mermaidSvgCache.set(renderKey, rendered.svg)
           setResult({ key: renderKey, svg: rendered.svg, error: false })
