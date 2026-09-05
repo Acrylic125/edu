@@ -16,6 +16,7 @@ import {
   handoffFromSession,
   NEW_CHAT_TITLE,
   reduceSession,
+  titleFromContent,
   topicIdFromWs,
 } from "./session-reduce"
 import {
@@ -34,7 +35,7 @@ import type {
   TopicListing,
   TopicTransitionDirection,
 } from "./types"
-import type { WsServerMessage } from "./ws-schema"
+import type { MessagePart, WsServerMessage } from "./ws-schema"
 
 export type ChatStore = ChatStoreState & {
   applyWs: (message: WsServerMessage) => void
@@ -44,6 +45,13 @@ export type ChatStore = ChatStoreState & {
     content: string,
     attachments: ChatMessageAttachment[]
   ) => void
+  stageNewTopic: (
+    messageId: MessageId,
+    content: string,
+    attachments: ChatMessageAttachment[],
+    parts: MessagePart[]
+  ) => void
+  retryNewTopic: (messageId: MessageId) => void
   stopLocal: () => void
   beginSwitch: (
     topicId: TopicId,
@@ -78,6 +86,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     topicEntry: null,
     revealed: false,
     topicBornRefresh: null,
+    topicCreation: null,
 
     applyWs: (message) => {
       if (message.type === "ready") {
@@ -92,10 +101,29 @@ export function createChatStore(bootstrap: ChatBootstrap) {
 
       if (message.type === "error") {
         if (message.runId) {
-          set({ run: { status: "idle" } })
+          set((state) => ({
+            run: { status: "idle" },
+            topicCreation: state.topicCreation
+              ? {
+                  ...state.topicCreation,
+                  status: "failed",
+                  error: message.message,
+                }
+              : null,
+          }))
           return
         }
         set((state) => {
+          if (state.topicCreation) {
+            return {
+              run: { status: "idle" },
+              topicCreation: {
+                ...state.topicCreation,
+                status: "failed",
+                error: message.message,
+              },
+            }
+          }
           if (state.revealed) {
             return {
               socket: { status: "error", message: message.message },
@@ -116,32 +144,63 @@ export function createChatStore(bootstrap: ChatBootstrap) {
       let run = state.run
       let catalog = state.catalog
       let topicBornRefresh = state.topicBornRefresh
+      let topicCreation = state.topicCreation
 
       if (bornTopicId) {
+        const previousTopicId =
+          session.kind === "topic" ? session.handoff?.topicId : null
+        if (
+          topicCreation !== null &&
+          message.type === "run.ended" &&
+          bornTopicId === previousTopicId
+        ) {
+          topicCreation = {
+            ...topicCreation,
+            status: "failed",
+            error: "The topic wasn't created. Please retry.",
+          }
+        }
         const currentId =
           session.kind === "topic" ? session.topicId : null
         const isBirth =
-          currentId === null ||
-          currentId === "" ||
-          currentId !== bornTopicId
+          (topicCreation === null || message.type === "run.ended") &&
+          bornTopicId !== previousTopicId &&
+          (currentId === null || currentId === "" || currentId !== bornTopicId)
 
         if (isBirth) {
           const previous = handoffFromSession(session)
-          const born = reduceSession(session, run, {
-            type: "topic_born",
-            topicId: bornTopicId,
-            previous,
-          })
-          session = born.session
-          run = born.run
+          if (topicCreation !== null && session.kind === "topic") {
+            session = { ...session, topicId: bornTopicId }
+          } else {
+            const born = reduceSession(session, run, {
+              type: "topic_born",
+              topicId: bornTopicId,
+              previous,
+            })
+            session = born.session
+            run = born.run
+          }
           catalog = upsertListingInCatalog(catalog, {
             id: bornTopicId,
-            title: NEW_CHAT_TITLE,
+            title: session.kind === "topic" ? session.title : NEW_CHAT_TITLE,
             summary: "",
             createdAt: "",
             updatedAt: "",
           })
           topicBornRefresh = bornTopicId
+          topicCreation = null
+        }
+      }
+
+      if (
+        topicCreation !== null &&
+        message.type === "run.ended" &&
+        !message.topicId
+      ) {
+        topicCreation = {
+          ...topicCreation,
+          status: "failed",
+          error: "The topic wasn't created. Please retry.",
         }
       }
 
@@ -155,6 +214,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         run: reduced.run,
         catalog,
         topicBornRefresh,
+        topicCreation,
       })
     },
 
@@ -163,10 +223,19 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         const reduced = reduceSession(state.session, state.run, {
           type: "socket_closed",
         })
+        let topicCreation = state.topicCreation
+        if (topicCreation) {
+          topicCreation = {
+            ...topicCreation,
+            status: "failed",
+            error: "The connection closed before the topic was created. Please retry.",
+          }
+        }
         return {
           socket: { status: "connecting" },
           session: reduced.session,
           run: reduced.run,
+          topicCreation,
         }
       })
     },
@@ -186,8 +255,65 @@ export function createChatStore(bootstrap: ChatBootstrap) {
       })
     },
 
+    stageNewTopic: (messageId, content, attachments, parts) => {
+      set((state) => {
+        const previous = handoffFromSession(state.session)
+        const started = reduceSession(
+          { kind: "none" },
+          state.run,
+          { type: "user_sent", messageId, content, attachments }
+        )
+        if (started.session.kind !== "topic") {
+          return state
+        }
+        return {
+          session: {
+            ...started.session,
+            title: titleFromContent(
+              content.trim().replace(/^\/new(?:\s+|$)/, "")
+            ),
+            handoff: previous,
+          },
+          run: started.run,
+          topicEntry: { topicId: "", direction: "down" },
+          topicCreation: { status: "creating", parts, error: null },
+        }
+      })
+    },
+
+    retryNewTopic: (messageId) => {
+      set((state) => {
+        if (!state.topicCreation || state.session.kind !== "topic") {
+          return state
+        }
+        return {
+          topicCreation: {
+            ...state.topicCreation,
+            status: "creating",
+            error: null,
+          },
+          session: {
+            ...state.session,
+            messages: state.session.messages
+              .filter((message) => message.role === "user")
+              .map((message) => ({ ...message, id: messageId })),
+          },
+          run: { status: "running", runId: "", messageId: "" },
+        }
+      })
+    },
+
     stopLocal: () => {
-      set({ run: { status: "idle" } })
+      set((state) => ({
+        run: { status: "idle" },
+        topicCreation: state.topicCreation
+          ? {
+              ...state.topicCreation,
+              status: "failed",
+              error: "The topic wasn't created. Please retry.",
+            }
+          : null,
+      }))
     },
 
     beginSwitch: (topicId, direction) => {

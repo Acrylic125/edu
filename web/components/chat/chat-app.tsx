@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect } from "react"
+
 import { ChatComposerIsland } from "@/components/chat/chat-composer-island"
 import { ChatFrame, ChatFrameStatus } from "@/components/chat/chat-frame"
 import {
@@ -8,6 +10,8 @@ import {
 } from "@/components/chat/chat-socket-island"
 import { ChatThreadIsland } from "@/components/chat/chat-thread-island"
 import { MessageSkeletons } from "@/components/chat/message-skeletons"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import { clientMessageId } from "@/lib/chat/ids"
 import { activeTopicIdForSend } from "@/lib/chat/active-topic"
 import {
@@ -38,7 +42,23 @@ function ChatAppShell() {
   const phase = useChatStore(selectShellPhase)
   const status = useChatStore(headerStatusSelector)
   const store = useChatStoreApi()
+  const topicCreation = useChatStore((state) => state.topicCreation)
   const { sendJsonMessage } = useChatSend()
+
+  useEffect(() => {
+    if (topicCreation === null) {
+      return
+    }
+    function warnBeforeLeaving(event: BeforeUnloadEvent) {
+      event.preventDefault()
+      event.returnValue =
+        "This topic wasn't created. Leaving will lose the pending topic creation."
+    }
+    window.addEventListener("beforeunload", warnBeforeLeaving)
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeLeaving)
+    }
+  }, [topicCreation])
 
   let title = "Chat"
   if (phase.show === "thread" && phase.title) {
@@ -138,6 +158,35 @@ function ChatAppShell() {
               </div>
 
               <div className="pointer-events-auto w-full max-w-3xl">
+                {topicCreation?.status === "failed" ? (
+                  <Alert variant="destructive" className="mb-3 bg-background/95">
+                    <AlertDescription className="flex items-center justify-between gap-3">
+                      <span>
+                        {topicCreation.error ??
+                          "The topic wasn't created. Please retry."}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => {
+                          const messageId = clientMessageId()
+                          store.getState().retryNewTopic(messageId)
+                          sendJsonMessage(
+                            WsChatClientMessageSchema.parse({
+                              type: "message",
+                              message: messageId,
+                              parts: topicCreation.parts,
+                            })
+                          )
+                        }}
+                      >
+                        Retry
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
                 <ChatComposerIsland />
               </div>
             </div>

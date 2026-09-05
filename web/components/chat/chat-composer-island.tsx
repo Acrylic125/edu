@@ -41,13 +41,17 @@ export function ChatComposerIsland({ className }: { className?: string }) {
           return
         }
         const messageId = clientMessageId()
-        state.stageUserMessage(messageId, text, attachments)
         const parts: MessagePart[] = []
         if (text.length > 0) {
           parts.push({ type: "text", content: text })
         }
         for (const attachment of attachments) {
           parts.push({ type: "attachment", ref: attachment.id })
+        }
+        if (/^\/new(?:\s|$)/.test(text)) {
+          state.stageNewTopic(messageId, text, attachments, parts)
+        } else {
+          state.stageUserMessage(messageId, text, attachments)
         }
         try {
           const topicId = activeTopicIdForSend(state.session)

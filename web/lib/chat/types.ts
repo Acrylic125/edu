@@ -83,6 +83,11 @@ export type ChatStoreState = {
     direction: TopicTransitionDirection
   }
   revealed: boolean
+  topicCreation: null | {
+    status: "creating" | "failed"
+    parts: MessagePart[]
+    error: string | null
+  }
 }
 
 export type ShellPhase =
