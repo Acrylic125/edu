@@ -17,6 +17,7 @@ import {
 import { createLangtraceExporter } from "./langtrace-exporter";
 
 export const DEFAULT_MODEL = "openai/gpt-5.6-luna";
+const DEFAULT_MAX_TOKENS = 4096;
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 export type LlmEnv = {
@@ -234,7 +235,7 @@ function usageFromText(
 }
 
 export async function callLlm(env: LlmEnv, params: LlmCallParams) {
-	const maxTokens = params.maxTokens ?? 1024;
+	const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 	const chat = createChatModel(env, maxTokens, false);
 	const invokeOptions = params.signal ? { signal: params.signal } : undefined;
 
@@ -256,7 +257,7 @@ export async function callLlm(env: LlmEnv, params: LlmCallParams) {
 }
 
 export async function streamLlm(env: LlmEnv, params: StreamLlmParams) {
-	const maxTokens = params.maxTokens ?? 1024;
+	const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 	const chat = createChatModel(env, maxTokens, true);
 	const streamOptions = params.signal ? { signal: params.signal } : undefined;
 

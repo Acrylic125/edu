@@ -120,7 +120,7 @@ export async function executeExplanation(
 	const diagramRequest = looksLikeDiagramRequest(message);
 	const responseText = await runner.llmStream({
 		name: "generate_response",
-		maxTokens: diagramRequest ? 640 : undefined,
+		maxTokens: diagramRequest ? 2048 : undefined,
 		instructions: [
 			systemContext,
 			"",
