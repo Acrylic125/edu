@@ -48,6 +48,8 @@ export function sessionFromCurrentMessages(payload: CurrentMessagesPayload) {
     title: payload.topic.title,
     messages: payload.messages,
     handoff: null,
+    part: payload.topic.part,
+    currentStepId: payload.topic.currentStepId,
   }
 }
 

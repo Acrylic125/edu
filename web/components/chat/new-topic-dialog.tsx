@@ -7,6 +7,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 import { PaperclipIcon, PlusIcon } from "lucide-react"
 
@@ -29,11 +30,21 @@ import {
 
 export function NewTopicDialog({
   onCreate,
+  prominent = false,
+  disabled = false,
+  initialTopic = "",
+  triggerContent,
+  triggerClassName,
 }: {
   onCreate: (topic: string, files: File[]) => void
+  prominent?: boolean
+  disabled?: boolean
+  initialTopic?: string
+  triggerContent?: ReactNode
+  triggerClassName?: string
 }) {
   const [open, setOpen] = useState(false)
-  const [topic, setTopic] = useState("")
+  const [topic, setTopic] = useState(initialTopic)
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -43,7 +54,7 @@ export function NewTopicDialog({
     for (const image of images) {
       revokeComposerImageAttachment(image)
     }
-    setTopic("")
+    setTopic(initialTopic)
     setImages([])
     setAttachmentError(null)
     setIsDragOver(false)
@@ -70,6 +81,9 @@ export function NewTopicDialog({
   }
 
   function createTopic() {
+    if (disabled) {
+      return
+    }
     const trimmedTopic = topic.trim()
     if (trimmedTopic === "") {
       return
@@ -138,6 +152,25 @@ export function NewTopicDialog({
     addImageFiles(Array.from(event.dataTransfer.files))
   }
 
+  let trigger = (
+    <Button
+      type="button"
+      variant={prominent ? "default" : "ghost"}
+      size="sm"
+      className={prominent ? undefined : "px-2"}
+      disabled={disabled}
+    />
+  )
+  if (triggerContent) {
+    trigger = (
+      <button
+        type="button"
+        className={triggerClassName}
+        disabled={disabled}
+      />
+    )
+  }
+
   return (
     <Dialog
       open={open}
@@ -148,13 +181,13 @@ export function NewTopicDialog({
         }
       }}
     >
-      <DialogTrigger
-        render={
-          <Button type="button" variant="ghost" size="sm" className="px-2" />
-        }
-      >
-        <PlusIcon />
-        New Topic
+      <DialogTrigger render={trigger}>
+        {triggerContent ?? (
+          <>
+            <PlusIcon />
+            {prominent ? "Create Topic" : "New Topic"}
+          </>
+        )}
       </DialogTrigger>
       <DialogContent className="max-h-[calc(100dvh-2rem)] gap-3 overflow-y-auto bg-transparent p-0 ring-0 sm:max-w-lg">
         <DialogHeader className="px-4 py-2 pr-12">
@@ -223,7 +256,10 @@ export function NewTopicDialog({
               >
                 <PaperclipIcon />
               </Button>
-              <Button type="submit" disabled={topic.trim() === ""}>
+              <Button
+                type="submit"
+                disabled={disabled || topic.trim() === ""}
+              >
                 Create
               </Button>
             </div>

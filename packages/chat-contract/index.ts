@@ -22,6 +22,46 @@ export const OptionsPartSchema = z.object({
   options: z.array(OptionItemSchema),
 });
 
+export const TopicPlanStepSchema = z.object({
+  id: z.string().min(1).max(128),
+  label: z.string().min(1).max(120),
+  summary: z.string().min(1).max(4000),
+  parent: z.string().min(1).max(128).nullable(),
+});
+
+export const PlanPartSchema = z.object({
+  type: z.literal("plan"),
+  steps: z.array(TopicPlanStepSchema).min(1).max(32),
+});
+
+export const TopicPlanSchema = z.array(TopicPlanStepSchema).min(1).max(32).superRefine((steps, ctx) => {
+  const ids = new Set<string>();
+  for (const [index, step] of steps.entries()) {
+    if (ids.has(step.id)) ctx.addIssue({ code: "custom", path: [index, "id"], message: "Step ids must be unique" });
+    ids.add(step.id);
+  }
+  for (const [index, step] of steps.entries()) {
+    if (step.parent === step.id || (step.parent !== null && !ids.has(step.parent))) {
+      ctx.addIssue({ code: "custom", path: [index, "parent"], message: "Parent must reference another step" });
+    }
+  }
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  for (const [index, step] of steps.entries()) {
+    const seen = new Set<string>();
+    let cursor = step.parent;
+    while (cursor !== null) {
+      if (seen.has(cursor)) {
+        ctx.addIssue({ code: "custom", path: [index, "parent"], message: "Plan hierarchy cannot contain cycles" });
+        break;
+      }
+      seen.add(cursor);
+      cursor = byId.get(cursor)?.parent ?? null;
+    }
+  }
+});
+
+export type TopicPlanStep = z.infer<typeof TopicPlanStepSchema>;
+
 const TopicPlanItemBaseSchema = z.object({
   sourceIndex: z.number().int().min(0).max(31).optional(),
   title: z.string().min(1).max(120),
@@ -53,7 +93,8 @@ export type TopicPlanItem = z.infer<typeof TopicPlanItemSchema>;
 
 export const CreateTopicProposalSchema = z.object({
   kind: z.literal("create-topic"),
-  plan: z.array(TopicPlanItemSchema).min(1).max(32).optional(),
+  plan: TopicPlanSchema.optional(),
+  legacyPlan: z.array(TopicPlanItemSchema).optional(),
   title: z.string().min(1).max(120),
   summary: z.string().min(1).max(4000),
   part: z.string().min(1).max(120),
@@ -83,6 +124,7 @@ export const MessagePartSchema = z.discriminatedUnion("type", [
   TextPartSchema,
   AttachmentPartSchema,
   OptionsPartSchema,
+  PlanPartSchema,
   ProposalPartSchema,
 ]);
 
@@ -221,6 +263,8 @@ export const CurrentTopicMessagesSchema = z.object({
     .object({
       id: z.string(),
       title: z.string(),
+      part: z.string().nullable().optional(),
+      currentStepId: z.string().nullable().optional(),
     })
     .nullable(),
   messages: z.array(ResponseMessageSchema),
@@ -266,6 +310,9 @@ export function partsToText(parts: MessagePart[]) {
     }
     if (part.type === "options") {
       lines.push(part.options.map((option) => option.label).join(", "));
+    }
+    if (part.type === "plan") {
+      lines.push(part.steps.map((step) => `${step.label}: ${step.summary}`).join("\n"));
     }
     if (part.type === "proposal") {
       lines.push(part.prompt);

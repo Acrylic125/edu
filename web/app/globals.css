@@ -190,6 +190,14 @@
   color: inherit;
 }
 
+.empty-state-grid {
+  background-image:
+    linear-gradient(to right, var(--border) 2px, transparent 2px),
+    linear-gradient(to bottom, var(--border) 2px, transparent 2px);
+  background-size: 5rem 5rem;
+  opacity: 0.36;
+}
+
 .katex * {
   border-color: currentColor;
   outline: none;

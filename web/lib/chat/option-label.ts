@@ -12,7 +12,7 @@ const OPTION_PREFIXES = [
 ]
 
 export function shortFocus(text: string) {
-  const trimmed = text.trim()
+  const trimmed = text.trim().replace(/^\d+(?:\.\d+)*\s+/, "")
   if (trimmed.length === 0) {
     return "this topic"
   }

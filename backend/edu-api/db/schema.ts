@@ -1,4 +1,5 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import type { TopicPlanStep } from '@edu/chat-contract';
 
 // ─────────────────────────────────────────────
 // Better Auth
@@ -80,6 +81,8 @@ export const topic = sqliteTable(
 
 		summary: text('summary').notNull(),
 
+		plan: text('plan', { mode: 'json' }).$type<TopicPlanStep[]>().notNull().default([]),
+
 		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
 
 		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
@@ -97,6 +100,8 @@ export const userCurrentTopic = sqliteTable('user_current_topic', {
 		.references(() => topic.id, { onDelete: 'cascade' }),
 
 	part: text('part'),
+
+	currentStepId: text('current_step_id'),
 
 	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
 });

@@ -39,6 +39,8 @@ export type ChatSession =
       title: string
       messages: ChatMessage[]
       handoff: TopicHandoff | null
+      part?: string | null
+      currentStepId?: string | null
     }
 
 export type SocketFact =
@@ -54,7 +56,12 @@ export type RunFact =
 export type Gate = "blocked" | "send" | "stop"
 
 export type CurrentMessagesPayload = {
-  topic: { id: TopicId; title: string } | null
+  topic: {
+    id: TopicId
+    title: string
+    part?: string | null
+    currentStepId?: string | null
+  } | null
   messages: ChatMessage[]
 }
 
@@ -79,6 +86,10 @@ export type ChatStoreState = {
     status: "creating" | "failed"
     parts: MessagePart[]
     error: string | null
+  }
+  optionState: null | {
+    messageId: MessageId
+    status: "pending" | "failed"
   }
 }
 

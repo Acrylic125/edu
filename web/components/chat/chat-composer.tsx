@@ -3,13 +3,20 @@
 import {
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react"
-import { AlertCircleIcon, ArrowUpIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react"
+import {
+  AlertCircleIcon,
+  ArrowUpIcon,
+  PaperclipIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react"
 
 import { useSession } from "@/lib/auth-client"
 import {
@@ -50,6 +57,7 @@ type ChatComposerProps = {
   run: RunFact
   footerStart?: ReactNode
   className?: string
+  emptyState?: boolean
 }
 
 const COMPOSER_INPUT_CLASS =
@@ -58,6 +66,65 @@ const COMPOSER_INPUT_CLASS =
 const COMPOSER_MIRROR_CLASS =
   "pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 
+const subscribeToHydration = () => () => {}
+
+const TOPIC_EXAMPLES = [
+  {
+    title: "Learn Calculus",
+    sections: [
+      ["Limits & Continuity", "Continuity · Infinite limits"],
+      ["Derivatives", "Rules · Applications"],
+      ["Integrals", "Techniques · Fundamental theorem"],
+    ],
+    prompt: `Learn Calculus
+Limits & Continuity
+- Continuity
+- Infinite Limits
+Derivatives
+- Rules of Derivatives
+- Applications
+Integrals
+- Integration Techniques
+- Fundamental Theorem of Calculus`,
+  },
+  {
+    title: "Master Data Structures",
+    sections: [
+      ["Arrays & Lists", "Storage · Linked lists"],
+      ["Trees & Graphs", "Traversal · Search"],
+      ["Algorithms", "Sorting · Complexity"],
+    ],
+    prompt: `Master Data Structures
+Arrays & Lists
+- Array Storage
+- Linked Lists
+Trees & Graphs
+- Tree Traversal
+- Graph Search
+Algorithms
+- Sorting
+- Time Complexity`,
+  },
+  {
+    title: "Learn Computer Architecture",
+    sections: [
+      ["Data Representation", "Binary arithmetic · Encoding"],
+      ["CPU & Instructions", "ISA · Datapath"],
+      ["Memory Systems", "Caches · Virtual memory"],
+    ],
+    prompt: `Learn Computer Architecture
+Data Representation
+- Binary Arithmetic
+- Data Encoding
+CPU & Instructions
+- Instruction Set Architecture
+- Processor Datapath
+Memory Systems
+- Caches
+- Virtual Memory`,
+  },
+] as const
+
 export function ChatComposer({
   onSend,
   onStop,
@@ -65,6 +132,7 @@ export function ChatComposer({
   run,
   footerStart,
   className,
+  emptyState = false,
 }: ChatComposerProps) {
   const session = useSession()
   const [draft, setDraft] = useState("")
@@ -75,6 +143,11 @@ export function ChatComposer({
   )
   const [isDragOver, setIsDragOver] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const hydrated = useSyncExternalStore(
+    subscribeToHydration,
+    () => true,
+    () => false,
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mirrorRef = useRef<HTMLDivElement>(null)
   const previewsRef = useRef(createComposerPreviewRegistry())
@@ -88,6 +161,8 @@ export function ChatComposer({
     composerImagesReady(images) && !isSubmitting
   )
   const canSend = gate === "send"
+  const newTopicDisabled =
+    !hydrated || socket.status !== "ready" || isSubmitting
 
   function patchImage(
     imageId: string,
@@ -323,6 +398,58 @@ export function ChatComposer({
     event.preventDefault()
     setIsDragOver(false)
     addImageFiles(Array.from(event.dataTransfer.files))
+  }
+
+  if (emptyState) {
+    return (
+      <section className="grid w-full max-w-5xl items-center gap-12 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] md:gap-16">
+        <div className="flex flex-col items-start">
+          <h2 className="max-w-sm text-4xl leading-[1.08] font-medium tracking-tight sm:text-5xl">
+            What would you like to learn?
+          </h2>
+          <NewTopicDialog
+            disabled={newTopicDisabled}
+            onCreate={createTopic}
+            triggerClassName="mt-8 inline-flex h-12 items-center justify-center border border-primary bg-primary px-6 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-wait disabled:opacity-50"
+            triggerContent="New Learning Plan"
+          />
+        </div>
+
+        <div className="space-y-4">
+          {TOPIC_EXAMPLES.map((example) => {
+            return (
+              <NewTopicDialog
+                key={example.title}
+                initialTopic={example.prompt}
+                disabled={newTopicDisabled}
+                onCreate={createTopic}
+                triggerClassName="group w-full cursor-pointer border border-border bg-card p-0 text-left text-card-foreground outline-none transition-colors hover:border-primary/40 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-wait disabled:opacity-50"
+                triggerContent={
+                  <div className="flex min-h-28 flex-col justify-center px-6 py-5 sm:min-h-32 sm:px-8 sm:py-6">
+                    <p className="text-xl leading-tight font-medium sm:text-2xl">
+                      {example.title}
+                    </p>
+                    <p className="mt-3 text-sm text-muted-foreground sm:text-base">
+                      {example.sections.map(([title], sectionIndex) => (
+                        <span key={title}>
+                          {sectionIndex > 0 ? " > " : null}
+                          {title}
+                        </span>
+                      ))}
+                    </p>
+                  </div>
+                }
+              />
+            )
+          })}
+        </div>
+        {attachmentError ? (
+          <p role="alert" className="mt-4 text-sm text-destructive">
+            {attachmentError}
+          </p>
+        ) : null}
+      </section>
+    )
   }
 
   return (

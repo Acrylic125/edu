@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 
 import { ChatComposerIsland } from "@/components/chat/chat-composer-island"
 import { ChatFrame, ChatFrameStatus } from "@/components/chat/chat-frame"
@@ -28,6 +28,17 @@ import {
 } from "@/lib/chat/ws-schema"
 import { cn } from "@/lib/utils"
 
+const GRID_ORB_POSITIONS = [
+  { x: "10%", y: "14%" },
+  { x: "52%", y: "12%" },
+  { x: "90%", y: "18%" },
+  { x: "82%", y: "52%" },
+  { x: "88%", y: "86%" },
+  { x: "50%", y: "78%" },
+  { x: "14%", y: "84%" },
+  { x: "12%", y: "50%" },
+] as const
+
 export function ChatApp({ bootstrap }: { bootstrap: ChatBootstrap }) {
   return (
     <ChatStoreProvider bootstrap={bootstrap}>
@@ -39,12 +50,43 @@ export function ChatApp({ bootstrap }: { bootstrap: ChatBootstrap }) {
 }
 
 function ChatAppShell() {
+  const [gridOrbPosition, setGridOrbPosition] = useState<number | null>(null)
   const phase = useChatStore(selectShellPhase)
   const status = useChatStore(headerStatusSelector)
+  const session = useChatStore((state) => state.session)
+  const hasNoTopics = useChatStore(
+    (state) =>
+      state.catalog.order.length === 0 &&
+      state.session.kind === "none" &&
+      state.switch === null,
+  )
   const store = useChatStoreApi()
   const error = useChatStore((state) => state.error)
   const topicCreation = useChatStore((state) => state.topicCreation)
   const { sendJsonMessage } = useChatSend()
+
+  useEffect(() => {
+    let timerId = 0
+    let previousPosition = -1
+
+    function revealOrb() {
+      let nextPosition = Math.floor(Math.random() * GRID_ORB_POSITIONS.length)
+      if (nextPosition === previousPosition) {
+        nextPosition = (nextPosition + 1) % GRID_ORB_POSITIONS.length
+      }
+      previousPosition = nextPosition
+      setGridOrbPosition(nextPosition)
+      timerId = window.setTimeout(() => {
+        setGridOrbPosition(null)
+        timerId = window.setTimeout(revealOrb, 1400)
+      }, 6500 + Math.floor(Math.random() * 2500))
+    }
+
+    timerId = window.setTimeout(revealOrb, 700)
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [])
 
   const hasPendingTopic = topicCreation !== null
   useEffect(() => {
@@ -68,9 +110,11 @@ function ChatAppShell() {
   }
 
   const isEmptyThread = phase.show === "thread" && phase.empty
-  const showComposer = phase.show !== "error"
+  const showComposer = phase.show !== "error" && !hasNoTopics
+  const gridOrb =
+    gridOrbPosition === null ? null : GRID_ORB_POSITIONS[gridOrbPosition]
 
-  function sendUserText(content: string) {
+  function sendUserText(content: string, optionMessageId?: string) {
     const state = store.getState()
     if (state.sendGate(content, false, true) !== "send") {
       return
@@ -81,6 +125,9 @@ function ChatAppShell() {
     }
     const messageId = clientMessageId()
     state.stageUserMessage(messageId, text, [])
+    if (optionMessageId) {
+      state.setOptionPending(optionMessageId)
+    }
     const topicId = activeTopicIdForSend(state.session)
     sendJsonMessage(
       WsChatClientMessageSchema.parse({
@@ -93,7 +140,74 @@ function ChatAppShell() {
   }
 
   let body = null
-  if (phase.show === "skeleton") {
+  if (hasNoTopics && phase.show !== "error") {
+    body = (
+      <div className="relative h-full min-h-0 overflow-hidden">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+        >
+          <div className="empty-state-grid absolute inset-0" />
+          <svg
+            className="absolute inset-0 size-full text-primary"
+            aria-hidden="true"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <pattern
+                id="empty-state-highlight-grid"
+                width="80"
+                height="80"
+                patternUnits="userSpaceOnUse"
+              >
+                <path
+                  d="M 0 0 H 80 M 0 0 V 80"
+                  fill="none"
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              </pattern>
+              <mask
+                id="empty-state-highlight-mask"
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+                maskUnits="userSpaceOnUse"
+                maskContentUnits="userSpaceOnUse"
+              >
+                <rect
+                  width="100%"
+                  height="100%"
+                  fill="url(#empty-state-highlight-grid)"
+                />
+              </mask>
+              <radialGradient id="empty-state-highlight-color">
+                <stop offset="0" stopColor="currentColor" stopOpacity="0.3" />
+                <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            <circle
+              cx={gridOrb?.x ?? "50%"}
+              cy={gridOrb?.y ?? "50%"}
+              r="46%"
+              fill="url(#empty-state-highlight-color)"
+              mask="url(#empty-state-highlight-mask)"
+              className={cn(
+                "transition-opacity duration-1000 ease-in-out motion-reduce:transition-none",
+                gridOrb ? "opacity-100" : "opacity-0",
+              )}
+            />
+          </svg>
+        </div>
+        <div className="relative h-full overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center px-6 py-10">
+            <ChatComposerIsland emptyState />
+          </div>
+        </div>
+      </div>
+    )
+  } else if (phase.show === "skeleton") {
     body = <MessageSkeletons />
   } else if (phase.show === "error") {
     body = (
@@ -105,8 +219,8 @@ function ChatAppShell() {
     body = (
       <div className="absolute inset-0 min-h-0 overflow-hidden">
         <ChatThreadIsland
-          onOption={(label) => {
-            sendUserText(label)
+          onOption={(messageId, label) => {
+            sendUserText(label, messageId)
           }}
           onDecision={(proposalId, decision) => {
             const state = store.getState()
@@ -131,8 +245,10 @@ function ChatAppShell() {
 
   return (
     <ChatFrame
+      hideHeader={hasNoTopics && phase.show !== "error"}
       titleSlot={<span className="truncate">{title}</span>}
       statusSlot={<ChatFrameStatus label={status.label} tone={status.tone} />}
+      planSession={session}
       body={
         <>
           {body}
@@ -148,7 +264,7 @@ function ChatAppShell() {
               <div
                 className={cn(
                   "overflow-hidden text-center transition-all duration-300 ease-out",
-                  isEmptyThread
+                  isEmptyThread && !hasNoTopics
                     ? "mb-8 max-h-24 translate-y-0 opacity-100"
                     : "mb-0 max-h-0 -translate-y-2 opacity-0",
                 )}
@@ -197,7 +313,7 @@ function ChatAppShell() {
                     </AlertDescription>
                   </Alert>
                 ) : null}
-                <ChatComposerIsland />
+                <ChatComposerIsland emptyState={hasNoTopics} />
               </div>
             </div>
           ) : null}

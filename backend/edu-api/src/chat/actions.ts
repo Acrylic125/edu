@@ -5,7 +5,7 @@ import type { ChatRunIo } from './route';
 import type { Proposal, ChatRequest } from '../messages/schema';
 import { linkAssetsToMessage } from '../assets/repository';
 import { createTopicMessage, reassignTopicMessage } from '../messages/persistence';
-import { textPart, optionsPart } from '../messages/parts';
+import { textPart, optionsPart, planPart } from '../messages/parts';
 import { createTopic, setCurrentTopic } from '../topics/repository';
 import { shortFocus, optionLabel } from './option-label';
 import { formatTopicPlanMarkdown } from './new-topic';
@@ -21,15 +21,28 @@ export async function acceptProposal(
 	io.signal.throwIfAborted();
 	switch (proposal.kind) {
 		case 'create-topic': {
-			const reflectsLearnerPlan = proposal.plan?.some((item) => item.sourceIndex !== undefined) ?? false;
-			const part = shortFocus(proposal.part);
+			const plan = proposal.plan ?? [{ id: 'focus', label: proposal.part, summary: proposal.summary, parent: null }];
+			let part = shortFocus(proposal.part);
+			if (proposal.legacyPlan) {
+				const suppliedContext = proposal.legacyPlan.find(
+					(item) => item.role !== 'section' && shortFocus(item.title).toLowerCase() === part.toLowerCase(),
+				);
+				const firstSection = proposal.legacyPlan.find((item) => item.role === 'section' && item.depth === 0);
+				if (suppliedContext && firstSection) part = shortFocus(firstSection.title);
+			} else if (proposal.plan) {
+				const matchingStep = proposal.plan.find((step) => shortFocus(step.label).toLowerCase() === part.toLowerCase());
+				const firstRootStep = proposal.plan.find((step) => step.parent === null);
+				if (!matchingStep && firstRootStep) part = shortFocus(firstRootStep.label);
+			}
+			const currentStep = plan.find((step) => shortFocus(step.label).toLowerCase() === part.toLowerCase());
 			const topic = await createTopic(db, {
 				userId: context.userId,
 				title: proposal.title,
 				summary: proposal.summary,
 				part,
+				plan,
 			});
-			await setCurrentTopic(db, context.userId, topic.id, part);
+			await setCurrentTopic(db, context.userId, topic.id, part, currentStep?.id ?? plan[0]?.id ?? null);
 			if (context.topic) {
 				await reassignTopicMessage(db, request.messageId, context.topic.id, topic.id);
 			} else {
@@ -44,16 +57,15 @@ export async function acceptProposal(
 					});
 			}
 
-			const plan = formatTopicPlanMarkdown(
-				proposal.plan ?? [{ title: proposal.part, role: 'section', depth: 0 }],
-				reflectsLearnerPlan,
-			);
-			io.onDelta(0, plan);
+			const planText = proposal.legacyPlan
+				? formatTopicPlanMarkdown(proposal.legacyPlan, true)
+				: formatTopicPlanMarkdown(plan);
+			io.onDelta(0, planText);
 			let optionLabels = [optionLabel("What's", proposal.part) + '?', optionLabel('Test me on', proposal.title)];
-			if (reflectsLearnerPlan) {
-				optionLabels = [optionLabel('Explain', proposal.part), optionLabel('Practice', proposal.part)];
+			if (proposal.plan) {
+				optionLabels = [optionLabel('Explain', part), optionLabel('Practice', part)];
 			}
-			const parts = [textPart(plan), optionsPart(optionLabels)];
+			const parts = [textPart(planText), planPart(plan), optionsPart(optionLabels)];
 			return {
 				parts,
 				committed: true as const,

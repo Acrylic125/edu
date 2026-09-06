@@ -1,4 +1,4 @@
-import type { TopicPlanItem } from '../messages/schema';
+import type { TopicPlanItem, TopicPlanStep } from '../messages/schema';
 
 function withoutNewCommand(message: string) {
 	let content = message.trim();
@@ -52,7 +52,17 @@ function formatPlan(items: TopicPlanItem[], intro: string) {
 	return blocks.join('\n\n');
 }
 
-export function formatTopicPlanMarkdown(plan: TopicPlanItem[], reflectsLearnerPlan = false) {
-	if (reflectsLearnerPlan) return formatPlan(plan, "I'll use the plan you provided:");
-	return formatPlan(plan, "Here's the plan");
+function formatStructuredPlan(steps: TopicPlanStep[]) {
+	const lines = ["Here's the plan", ''];
+	for (const step of steps) {
+		const depth = step.parent === null ? 0 : 1;
+		lines.push(`${'  '.repeat(depth)}- **${step.label}** — ${step.summary}`);
+	}
+	return lines.join('\n');
+}
+
+export function formatTopicPlanMarkdown(plan: TopicPlanItem[] | TopicPlanStep[], reflectsLearnerPlan = false) {
+	if (plan.length > 0 && 'label' in plan[0]) return formatStructuredPlan(plan as TopicPlanStep[]);
+	if (reflectsLearnerPlan) return formatPlan(plan as TopicPlanItem[], "I'll use the plan you provided:");
+	return formatPlan(plan as TopicPlanItem[], "Here's the plan");
 }

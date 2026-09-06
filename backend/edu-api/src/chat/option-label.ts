@@ -10,7 +10,7 @@ export const TOPIC_PART_RULE =
 	'"part" is a 1-4 word focus label (e.g. "Vectors"), never a sentence or paragraph.';
 
 export function shortFocus(text: string) {
-	const trimmed = text.trim();
+	const trimmed = text.trim().replace(/^\d+(?:\.\d+)*\s+/, '');
 	if (trimmed.length === 0) {
 		return "this topic";
 	}

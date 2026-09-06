@@ -3,12 +3,14 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { Db } from '../../db/client';
 import { topic, userCurrentTopic } from '../../db/schema';
 import { nanoid } from 'nanoid';
+import type { TopicPlanStep } from '../messages/schema';
 
 export type TopicRecord = {
 	id: string;
 	userId: string;
 	title: string;
 	summary: string;
+	plan: TopicPlanStep[];
 	createdAt: Date;
 	updatedAt: Date;
 };
@@ -16,6 +18,7 @@ export type TopicRecord = {
 export type CurrentTopicContext = {
 	topic: TopicRecord;
 	part: string | null;
+	currentStepId: string | null;
 };
 
 export async function getCurrentTopic(db: Db, userId: string): Promise<CurrentTopicContext | null> {
@@ -25,9 +28,11 @@ export async function getCurrentTopic(db: Db, userId: string): Promise<CurrentTo
 			userId: topic.userId,
 			title: topic.title,
 			summary: topic.summary,
+		plan: topic.plan,
 			createdAt: topic.createdAt,
 			updatedAt: topic.updatedAt,
 			part: userCurrentTopic.part,
+			currentStepId: userCurrentTopic.currentStepId,
 		})
 		.from(userCurrentTopic)
 		.innerJoin(topic, eq(userCurrentTopic.topicId, topic.id))
@@ -47,8 +52,10 @@ export async function getCurrentTopic(db: Db, userId: string): Promise<CurrentTo
 			summary: row.summary,
 			createdAt: row.createdAt,
 			updatedAt: row.updatedAt,
+			plan: row.plan,
 		},
 		part: row.part,
+		currentStepId: row.currentStepId,
 	};
 }
 
@@ -74,6 +81,7 @@ export async function createTopic(
 		title: string;
 		summary: string;
 		part: string;
+		plan?: TopicPlanStep[];
 	},
 ): Promise<TopicRecord> {
 	const id = `topic_${nanoid()}`;
@@ -84,6 +92,7 @@ export async function createTopic(
 		userId: params.userId,
 		title: params.title,
 		summary: params.summary,
+		plan: params.plan ?? [],
 		createdAt: now,
 		updatedAt: now,
 	});
@@ -93,6 +102,7 @@ export async function createTopic(
 		userId: params.userId,
 		title: params.title,
 		summary: params.summary,
+		plan: params.plan ?? [],
 		createdAt: now,
 		updatedAt: now,
 	};
@@ -113,7 +123,7 @@ export async function updateTopicState(
 		.where(eq(topic.id, topicId));
 }
 
-export async function setCurrentTopic(db: Db, userId: string, topicId: string, part: string | null): Promise<void> {
+export async function setCurrentTopic(db: Db, userId: string, topicId: string, part: string | null, currentStepId: string | null = null): Promise<void> {
 	const now = new Date();
 
 	const existing = await db
@@ -123,15 +133,20 @@ export async function setCurrentTopic(db: Db, userId: string, topicId: string, p
 		.limit(1);
 
 	if (existing[0]) {
-		await db.update(userCurrentTopic).set({ topicId, part, updatedAt: now }).where(eq(userCurrentTopic.userId, userId));
+			await db.update(userCurrentTopic).set({ topicId, part, currentStepId, updatedAt: now }).where(eq(userCurrentTopic.userId, userId));
 	} else {
 		await db.insert(userCurrentTopic).values({
 			userId,
 			topicId,
 			part,
+			currentStepId,
 			updatedAt: now,
 		});
 	}
+}
+
+export async function updateCurrentStep(db: Db, userId: string, topicId: string, stepId: string): Promise<void> {
+	await db.update(userCurrentTopic).set({ currentStepId: stepId, updatedAt: new Date() }).where(and(eq(userCurrentTopic.userId, userId), eq(userCurrentTopic.topicId, topicId)));
 }
 
 export async function updateCurrentPart(db: Db, userId: string, part: string, topicId: string): Promise<void> {

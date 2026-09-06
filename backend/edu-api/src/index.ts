@@ -141,6 +141,8 @@ export default {
 					topic: {
 						id: current.topic.id,
 						title: current.topic.title,
+						part: current.part,
+						currentStepId: current.currentStepId,
 					},
 					messages: hydrated,
 				}),

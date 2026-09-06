@@ -147,6 +147,35 @@ describe('Tutor orchestration with real tool dispatch', () => {
 			expect.objectContaining({ id: 'msg_u', parts: [{ type: 'text', content: '/new vectors' }] }),
 		);
 	});
+	it('uses the first plan step when the proposed focus is only a course label', async () => {
+		const coursePlan = {
+			title: 'CS2100: Data Representation and Number Systems',
+			summary: 'Computer representation of numbers and text',
+			part: 'CS2100',
+			plan: [
+				{ id: 'data-representation', label: 'Data Representation', summary: 'How computers encode data', parent: null },
+				{ id: 'number-systems', label: 'Number Systems', summary: 'Binary, octal, and hexadecimal', parent: null },
+				{ id: 'ascii', label: 'ASCII Code', summary: 'Representing characters as numbers', parent: null },
+			],
+		};
+		const { send } = setup([call('create_topic', coursePlan)], null);
+		const result = await send('/new CS2100\n\nLecture #3: Data Representation and Number Systems');
+		expect(mocks.createTopic).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ part: 'Data Representation' }),
+		);
+		expect(mocks.setCurrentTopic).toHaveBeenCalledWith(
+			expect.anything(),
+			'user_1',
+			'topic_new',
+			'Data Representation',
+			'data-representation',
+		);
+		expect(result.parts).toContainEqual({
+			type: 'options',
+			options: [{ label: 'Explain Data Representation' }, { label: 'Practice Data Representation' }],
+		});
+	});
 	it('does not let an explicit creation command finish without creating the topic', async () => {
 		const { send, io } = setup([response({ content: 'Your topic is ready.' })], null);
 		await expect(send('/new vectors')).rejects.toThrow('did not apply');

@@ -4,6 +4,7 @@ import { countTopicMessages, formatMessageForModel, loadRecentMessages } from '.
 import { getCurrentTopic, getTopicForUser } from '../topics/repository';
 import type { AgentRunner } from '../agents/runner';
 import type { RetrievedExchange, RetrievedMemory } from '../memory/schema';
+import type { TopicPlanStep } from '../messages/schema';
 
 export type AgentContext = {
 	userId: string;
@@ -12,6 +13,8 @@ export type AgentContext = {
 		title: string;
 		summary: string;
 		part: string | null;
+		plan?: TopicPlanStep[];
+		currentStepId?: string | null;
 	} | null;
 	recentMessages: PersistedTopicMessage[];
 	currentMessage: string;
@@ -25,7 +28,7 @@ export async function loadChatContext(db: Db, userId: string, currentMessage: st
 	else if (topicId && topicId !== current?.topic.id) {
 		const topic = await getTopicForUser(db, topicId, userId);
 		if (!topic) throw new Error('Topic not found');
-		current = { topic, part: null };
+		current = { topic, part: null, currentStepId: null };
 	}
 
 	if (!current) {
@@ -38,6 +41,11 @@ export async function loadChatContext(db: Db, userId: string, currentMessage: st
 	}
 
 	const recentMessages = await loadRecentMessages(db, current.topic.id, 8);
+	let currentStep = current.topic.plan?.find((step) => step.id === current.currentStepId);
+	if (!currentStep && current.topic.plan && current.part) {
+		const sectionNumber = /^\d+$/.exec(current.part)?.[0];
+		if (sectionNumber) currentStep = current.topic.plan[Number(sectionNumber) - 1];
+	}
 
 	return {
 		userId,
@@ -45,7 +53,9 @@ export async function loadChatContext(db: Db, userId: string, currentMessage: st
 			id: current.topic.id,
 			title: current.topic.title,
 			summary: current.topic.summary,
-			part: current.part,
+			part: currentStep?.label ?? current.part,
+			plan: current.topic.plan,
+			currentStepId: current.currentStepId,
 		},
 		recentMessages,
 		currentMessage,
@@ -75,6 +85,10 @@ export function buildSystemContext(context: AgentContext) {
 		sections.push(`Summary: ${context.topic.summary}`);
 		if (context.topic.part) {
 			sections.push(`Current focus: ${context.topic.part}`);
+		}
+		if (context.topic.plan && context.topic.plan.length > 0) {
+			sections.push(`Plan: ${JSON.stringify(context.topic.plan)}`);
+			sections.push(`Current step id: ${context.topic.currentStepId ?? 'none'}`);
 		}
 	}
 

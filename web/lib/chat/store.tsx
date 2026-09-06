@@ -47,6 +47,7 @@ export type ChatStore = ChatStoreState & {
     parts: MessagePart[],
   ) => void
   retryNewTopic: (messageId: MessageId) => void
+  setOptionPending: (messageId: MessageId) => void
   stopLocal: () => void
   beginSwitch: (topicId: TopicId, direction: TopicTransitionDirection) => void
   commitSwitch: (payload: CurrentMessagesPayload) => void
@@ -79,6 +80,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     revealed: false,
     topicBornRefresh: null,
     topicCreation: null,
+    optionState: null,
     error: null,
 
     applyWs: (message) => {
@@ -102,6 +104,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           return
         set({
           error: message.message,
+          optionState: current.optionState
+            ? { ...current.optionState, status: "failed" }
+            : null,
           run:
             current.run.status === "running" && current.run.runId !== ""
               ? current.run
@@ -140,6 +145,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
       let catalog = state.catalog
       let topicBornRefresh = state.topicBornRefresh
       let topicCreation = state.topicCreation
+      let optionState = state.optionState
 
       if (bornTopicId) {
         const previousTopicId =
@@ -203,12 +209,37 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         message,
       })
 
+      session = reduced.session
+      if (optionState !== null && message.type === "run.ended") {
+        const optionMessageId = optionState.messageId
+        if (message.status === "completed") {
+          if (session.kind === "topic") {
+            session = {
+              ...session,
+              messages: session.messages.map((item) => {
+                if (item.id !== optionMessageId) {
+                  return item
+                }
+                return {
+                  ...item,
+                  parts: item.parts.filter((part) => part.type !== "options"),
+                }
+              }),
+            }
+          }
+          optionState = null
+        } else {
+          optionState = { ...optionState, status: "failed" }
+        }
+      }
+
       set({
-        session: reduced.session,
+        session,
         run: reduced.run,
         catalog,
         topicBornRefresh,
         topicCreation,
+        optionState,
       })
     },
 
@@ -231,6 +262,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           session: reduced.session,
           run: reduced.run,
           topicCreation,
+          optionState: state.optionState
+            ? { ...state.optionState, status: "failed" }
+            : null,
         }
       })
     },
@@ -247,8 +281,13 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         return {
           session: reduced.session,
           run: reduced.run,
+          optionState: null,
         }
       })
+    },
+
+    setOptionPending: (messageId) => {
+      set({ optionState: { messageId, status: "pending" } })
     },
 
     stageNewTopic: (messageId, content, attachments, parts) => {
@@ -274,6 +313,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           run: started.run,
           topicEntry: { topicId: "", direction: "down" },
           topicCreation: { status: "creating", parts, error: null },
+          optionState: null,
         }
       })
     },
@@ -303,6 +343,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     stopLocal: () => {
       set((state) => ({
         run: { status: "idle" },
+        optionState: state.optionState
+          ? { ...state.optionState, status: "failed" }
+          : null,
         topicCreation: state.topicCreation
           ? {
               ...state.topicCreation,
@@ -314,7 +357,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
     },
 
     beginSwitch: (topicId, direction) => {
-      set({ switch: { topicId, direction }, topicEntry: null })
+      set({ switch: { topicId, direction }, topicEntry: null, optionState: null })
     },
 
     commitSwitch: (payload) => {
@@ -363,6 +406,8 @@ export function createChatStore(bootstrap: ChatBootstrap) {
               title: payload.topic.title,
               messages: payload.messages,
               handoff: null,
+              part: payload.topic.part,
+              currentStepId: payload.topic.currentStepId,
             },
             topicBornRefresh: null,
           }
@@ -375,6 +420,8 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             ...state.session,
             title: payload.topic.title,
             messages: payload.messages,
+            part: payload.topic.part,
+            currentStepId: payload.topic.currentStepId,
           },
           topicBornRefresh: null,
         }
@@ -423,6 +470,8 @@ function sessionFromPayload(payload: CurrentMessagesPayload) {
     title: payload.topic.title,
     messages: payload.messages,
     handoff: null,
+    part: payload.topic.part,
+    currentStepId: payload.topic.currentStepId,
   }
 }
 

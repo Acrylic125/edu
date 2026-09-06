@@ -4,6 +4,7 @@ import {
   LegendList,
   type LegendListRenderItemProps,
 } from "@legendapp/list/react"
+import { CheckIcon, CopyIcon } from "lucide-react"
 import { memo, useCallback, useState } from "react"
 
 import { AssistantMarkdown } from "@/components/chat/assistant-markdown"
@@ -14,7 +15,7 @@ import {
 import { SkillInlineText } from "@/components/chat/skill-inline-text"
 import { Button } from "@/components/ui/button"
 import { isLatestChatMessage } from "@/lib/chat/latest-message"
-import { shortOptionLabel } from "@/lib/chat/option-label"
+import { shortFocus, shortOptionLabel } from "@/lib/chat/option-label"
 import { CHAT_COMMANDS } from "@/lib/chat/skills"
 import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/types"
 import type { MessagePart } from "@/lib/chat/ws-schema"
@@ -25,7 +26,9 @@ type MessageListProps = {
   messages: ChatMessage[]
   header?: ReactNode
   footer?: ReactNode
-  onOption: (label: string) => void
+  optionState: { messageId: string; status: "pending" | "failed" } | null
+  currentStepId: string | null
+  onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }
 
@@ -42,17 +45,92 @@ function textFromParts(parts: MessagePart[]) {
   return lines.join("\n")
 }
 
+function planFromMessages(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    const plan = message?.parts.find((part) => part.type === "plan")
+    if (plan?.type === "plan") {
+      return plan.steps
+    }
+  }
+  return null
+}
+
+function visibleOptionLabel(
+  label: string,
+  plan: Extract<MessagePart, { type: "plan" }>['steps'] | null,
+  currentStepId: string | null,
+) {
+  const visible = shortOptionLabel(label)
+  if (!plan) {
+    return visible
+  }
+  const match = /^(Explain|Practice|What's) (Continue after )?(\d+)\??$/i.exec(visible)
+  if (!match) {
+    return visible
+  }
+  let step = null
+  if (match[2] && currentStepId) {
+    step = plan.find((item) => item.id === currentStepId) ?? null
+  }
+  if (!step) {
+    step = plan[Number(match[3]) - 1] ?? null
+  }
+  if (!step) {
+    return visible
+  }
+  const focus = shortFocus(step.label)
+  if (match[1].toLowerCase() === "what's") {
+    return `What's ${focus}?`
+  }
+  return `${match[1]} ${focus}`
+}
+
+function CopyMessageButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  if (text.trim() === "") {
+    return null
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label={copied ? "Copied" : "Copy message"}
+      className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true)
+          window.setTimeout(() => {
+            setCopied(false)
+          }, 1500)
+        })
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </Button>
+  )
+}
+
 const MessageRow = memo(function MessageRow({
   message,
   isLatest,
   onExpandImage,
   onOption,
   onDecision,
+  optionState,
+  plan,
+  currentStepId,
 }: {
   message: ChatMessage
   isLatest: boolean
   onExpandImage: (image: ChatMessageAttachment) => void
-  onOption: (label: string) => void
+  optionState: { messageId: string; status: "pending" | "failed" } | null
+  plan: Extract<MessagePart, { type: "plan" }>['steps'] | null
+  currentStepId: string | null
+  onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
   const attachments: ChatMessageAttachment[] = []
@@ -70,7 +148,7 @@ const MessageRow = memo(function MessageRow({
     case "user": {
       const text = textFromParts(message.parts)
       return (
-        <div className="flex justify-end py-2">
+        <div className="group flex flex-col items-end py-2">
           <div className="w-fit max-w-[85%] rounded-2xl bg-secondary px-3 py-2 text-sm">
             <MessageImageGrid images={attachments} onExpand={onExpandImage} />
             {text.length > 0 ? (
@@ -84,6 +162,7 @@ const MessageRow = memo(function MessageRow({
               </p>
             ) : null}
           </div>
+          <CopyMessageButton text={text} />
         </div>
       )
     }
@@ -91,14 +170,16 @@ const MessageRow = memo(function MessageRow({
       const enableRichContent =
         message.status !== "streaming" && message.status !== "cancelled"
       const progress = message.progress ?? []
+      const hasPlan = message.parts.some((part) => part.type === "plan")
       const hasMermaid = message.parts.some(
         (part) =>
           part.type === "text" && /```mermaid(?:\s|$)/i.test(part.content),
       )
       return (
-        <div className="flex justify-start py-2">
+        <div className="group flex flex-col items-end py-2">
           <div
             className={cn(
+              "self-start",
               "flex flex-col gap-2 text-sm",
               hasMermaid ? "w-full" : "max-w-[85%]",
             )}
@@ -114,18 +195,28 @@ const MessageRow = memo(function MessageRow({
             {message.status === "cancelled" ? (
               <p className="text-muted-foreground text-xs">Response stopped.</p>
             ) : null}
-            {message.parts.map((part, index) => (
-              <PartView
-                key={`${message.id}-${index}`}
-                part={part}
-                renderScope={`${message.id}-${index}`}
-                enableRichContent={enableRichContent}
-                actionsEnabled={isLatest}
-                onOption={onOption}
-                onDecision={onDecision}
-              />
-            ))}
+            {message.parts.map((part, index) => {
+              if (hasPlan && part.type === "text" && /^(Here's the plan|I'll use the plan you provided:)/.test(part.content)) {
+                return null
+              }
+              return (
+                <PartView
+                  key={`${message.id}-${index}`}
+                  part={part}
+                  messageId={message.id}
+                  plan={plan}
+                  currentStepId={currentStepId}
+                  renderScope={`${message.id}-${index}`}
+                  enableRichContent={enableRichContent}
+                  actionsEnabled={isLatest || optionState?.messageId === message.id}
+                  optionsDisabled={optionState?.messageId === message.id && optionState.status === "pending"}
+                  onOption={onOption}
+                  onDecision={onDecision}
+                />
+              )
+            })}
           </div>
+          <CopyMessageButton text={textFromParts(message.parts)} />
         </div>
       )
     }
@@ -167,19 +258,44 @@ function ThinkingStatus({ steps }: { steps: string[] }) {
   )
 }
 
+function planStepDepths(steps: Extract<MessagePart, { type: "plan" }>["steps"]) {
+  const byId = new Map(steps.map((step) => [step.id, step]))
+  const depths = new Map<string, number>()
+  function depth(id: string, seen = new Set<string>()): number {
+    const cached = depths.get(id)
+    if (cached !== undefined) return cached
+    const step = byId.get(id)
+    if (!step || step.parent === null || seen.has(id)) return 0
+    seen.add(id)
+    const value = depth(step.parent, seen) + 1
+    depths.set(id, value)
+    return value
+  }
+  for (const step of steps) depth(step.id)
+  return depths
+}
+
 function PartView({
   part,
+  messageId,
+  plan,
+  currentStepId,
   renderScope,
   enableRichContent,
   actionsEnabled,
+  optionsDisabled,
   onOption,
   onDecision,
 }: {
   part: MessagePart
+  messageId: string
+  plan: Extract<MessagePart, { type: "plan" }>['steps'] | null
+  currentStepId: string | null
   renderScope: string
   enableRichContent: boolean
   actionsEnabled: boolean
-  onOption: (label: string) => void
+  optionsDisabled: boolean
+  onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
   if (part.type === "text") {
@@ -194,13 +310,28 @@ function PartView({
   if (part.type === "attachment") {
     return <p className="text-muted-foreground text-xs">{part.ref}</p>
   }
+  if (part.type === "plan") {
+    const depths = planStepDepths(part.steps)
+    return (
+      <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+        <ol className="space-y-2">
+          {part.steps.map((step) => (
+            <li key={step.id} style={{ marginLeft: `${(depths.get(step.id) ?? 0) * 1.25}rem` }}>
+              <p className="font-medium">{step.label}</p>
+              <p className="text-muted-foreground text-xs">{step.summary}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
+    )
+  }
   if (part.type === "options") {
     if (!actionsEnabled) {
       return null
     }
     const options: Array<{ key: string; label: string }> = []
     for (const option of part.options) {
-      const label = shortOptionLabel(option.label)
+      const label = visibleOptionLabel(option.label, plan, currentStepId)
       if (/hint/i.test(label)) {
         continue
       }
@@ -214,10 +345,15 @@ function PartView({
             type="button"
             variant="outline"
             size="sm"
-            className="max-w-full"
+            className={cn(
+              "max-w-full",
+              optionsDisabled &&
+                "cursor-not-allowed border-border/60 bg-muted text-muted-foreground opacity-60",
+            )}
             onClick={() => {
-              onOption(option.key)
+              onOption(messageId, option.key)
             }}
+            disabled={optionsDisabled}
           >
             {option.label}
           </Button>
@@ -265,12 +401,15 @@ export function MessageList({
   messages,
   header,
   footer,
+  optionState,
+  currentStepId,
   onOption,
   onDecision,
 }: MessageListProps) {
   const [expandedImage, setExpandedImage] =
     useState<ChatMessageAttachment | null>(null)
   const lastMessageId = messages.at(-1)?.id
+  const plan = planFromMessages(messages)
 
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<ChatMessage>) => {
@@ -280,6 +419,9 @@ export function MessageList({
           <MessageRow
             message={item}
             isLatest={isLatest}
+            optionState={optionState}
+            plan={plan}
+            currentStepId={currentStepId}
             onExpandImage={setExpandedImage}
             onOption={onOption}
             onDecision={onDecision}
@@ -287,7 +429,7 @@ export function MessageList({
         </div>
       )
     },
-    [lastMessageId, onDecision, onOption],
+    [lastMessageId, onDecision, onOption, optionState, plan, currentStepId],
   )
 
   return (

@@ -118,8 +118,12 @@ export class ChatDurableObject extends DurableObject<Env> {
 			if (!(await getTopicForUser(db, frame.topicId, userId))) throw new Error('Topic not found');
 			const previous = await getCurrentTopic(db, userId);
 			let part: string | null = null;
-			if (previous?.topic.id === frame.topicId) part = previous.part;
-			await setCurrentTopic(db, userId, frame.topicId, part);
+			let currentStepId: string | null = null;
+			if (previous?.topic.id === frame.topicId) {
+				part = previous.part;
+				currentStepId = previous.currentStepId;
+			}
+			await setCurrentTopic(db, userId, frame.topicId, part, currentStepId);
 		}
 		const current = await getCurrentTopic(db, userId);
 		let stored: z.infer<typeof StoredProposalSchema> | null = null;

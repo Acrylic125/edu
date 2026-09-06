@@ -9,11 +9,15 @@ export function ChatThreadIsland({
   onOption,
   onDecision,
 }: {
-  onOption: (label: string) => void
+  onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
   const phase = useChatStore(selectShellPhase)
   const runStatus = useChatStore((state) => state.run.status)
+  const optionState = useChatStore((state) => state.optionState)
+  const currentStepId = useChatStore((state) =>
+    state.session.kind === "topic" ? state.session.currentStepId ?? null : null,
+  )
   const catalog = useChatStore((state) => state.catalog)
   const topicEntry = useChatStore((state) => state.topicEntry)
 
@@ -55,6 +59,8 @@ export function ChatThreadIsland({
         messages={phase.messages}
         header={header}
         footer={footer}
+        optionState={optionState}
+        currentStepId={currentStepId}
         onOption={onOption}
         onDecision={onDecision}
       />

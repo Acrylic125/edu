@@ -13,7 +13,13 @@ import {
   type MessagePart,
 } from "@/lib/chat/ws-schema"
 
-export function ChatComposerIsland({ className }: { className?: string }) {
+export function ChatComposerIsland({
+  className,
+  emptyState = false,
+}: {
+  className?: string
+  emptyState?: boolean
+}) {
   const store = useChatStoreApi()
   const socket = useChatStore((state) => state.socket)
   const run = useChatStore((state) => state.run)
@@ -22,6 +28,7 @@ export function ChatComposerIsland({ className }: { className?: string }) {
   return (
     <ChatComposer
       className={className}
+      emptyState={emptyState}
       socket={socket}
       run={run}
       footerStart={<TopicMenu />}

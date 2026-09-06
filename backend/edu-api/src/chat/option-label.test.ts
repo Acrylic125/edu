@@ -7,6 +7,10 @@ describe("shortFocus", () => {
 		expect(shortFocus("Vectors")).toBe("Vectors");
 	});
 
+	it("removes numbering from syllabus section labels", () => {
+		expect(shortFocus("5.1 Repeated Division-by-2")).toBe("Repeated Division-by-2");
+	});
+
 	it("pulls a noun from a plan paragraph", () => {
 		expect(
 			shortFocus(
