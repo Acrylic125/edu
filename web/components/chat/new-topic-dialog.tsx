@@ -27,6 +27,7 @@ import {
   revokeComposerImageAttachment,
   type ComposerImageAttachment,
 } from "@/lib/chat/composer-images"
+import { cn } from "@/lib/utils"
 
 export function NewTopicDialog({
   onCreate,
@@ -35,6 +36,8 @@ export function NewTopicDialog({
   initialTopic = "",
   triggerContent,
   triggerClassName,
+  triggerVariant = prominent ? "default" : "ghost",
+  triggerSize = prominent ? "default" : "sm",
 }: {
   onCreate: (topic: string, files: File[]) => void
   prominent?: boolean
@@ -42,8 +45,10 @@ export function NewTopicDialog({
   initialTopic?: string
   triggerContent?: ReactNode
   triggerClassName?: string
+  triggerVariant?: "default" | "outline" | "secondary" | "ghost"
+  triggerSize?: "default" | "sm" | "lg"
 }) {
-  const [open, setOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(false)
   const [topic, setTopic] = useState(initialTopic)
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
@@ -94,7 +99,7 @@ export function NewTopicDialog({
       images.map((image) => image.file)
     )
     reset()
-    setOpen(false)
+    setIsOpen(false)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -152,44 +157,43 @@ export function NewTopicDialog({
     addImageFiles(Array.from(event.dataTransfer.files))
   }
 
-  let trigger = (
+  const trigger = (
     <Button
       type="button"
-      variant={prominent ? "default" : "ghost"}
-      size="sm"
-      className={prominent ? undefined : "px-2"}
+      variant={triggerVariant}
+      size={triggerSize}
+      className={cn(prominent ? undefined : "px-2", triggerClassName)}
       disabled={disabled}
-    />
+    >
+      {triggerContent ?? (
+        <>
+          <PlusIcon />
+          {prominent ? "Create Topic" : "New Topic"}
+        </>
+      )}
+    </Button>
   )
-  if (triggerContent) {
-    trigger = (
-      <button
-        type="button"
-        className={triggerClassName}
-        disabled={disabled}
-      />
-    )
-  }
 
   return (
     <Dialog
-      open={open}
+      open={isOpen}
       onOpenChange={(nextOpen) => {
-        setOpen(nextOpen)
+        setIsOpen(nextOpen)
         if (!nextOpen) {
           reset()
         }
       }}
     >
-      <DialogTrigger render={trigger}>
-        {triggerContent ?? (
-          <>
-            <PlusIcon />
-            {prominent ? "Create Topic" : "New Topic"}
-          </>
+      <DialogTrigger render={trigger} />
+      <DialogContent
+        keepMounted
+        className={cn(
+          "max-h-[calc(100dvh-2rem)] gap-3 overflow-y-auto bg-transparent p-0 ring-0 sm:max-w-lg",
+          isOpen
+            ? "scale-100 opacity-100"
+            : "pointer-events-none scale-[0.97] opacity-0",
         )}
-      </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] gap-3 overflow-y-auto bg-transparent p-0 ring-0 sm:max-w-lg">
+      >
         <DialogHeader className="px-4 py-2 pr-12">
           <DialogTitle>What do you want to learn about?</DialogTitle>
         </DialogHeader>
@@ -227,7 +231,7 @@ export function NewTopicDialog({
               }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder="Describe a topic you want to learn about"
+              placeholder="Paste / type your syllabus summary here"
               rows={3}
               className="min-h-24 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-4 pt-3 pb-2 text-sm leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent"
             />

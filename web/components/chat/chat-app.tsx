@@ -51,6 +51,7 @@ export function ChatApp({ bootstrap }: { bootstrap: ChatBootstrap }) {
 
 function ChatAppShell() {
   const [gridOrbPosition, setGridOrbPosition] = useState<number | null>(null)
+  const [gridOrbVisible, setGridOrbVisible] = useState(false)
   const phase = useChatStore(selectShellPhase)
   const status = useChatStore(headerStatusSelector)
   const session = useChatStore((state) => state.session)
@@ -76,10 +77,14 @@ function ChatAppShell() {
       }
       previousPosition = nextPosition
       setGridOrbPosition(nextPosition)
+      setGridOrbVisible(true)
       timerId = window.setTimeout(() => {
-        setGridOrbPosition(null)
-        timerId = window.setTimeout(revealOrb, 1400)
-      }, 6500 + Math.floor(Math.random() * 2500))
+        setGridOrbVisible(false)
+        timerId = window.setTimeout(() => {
+          setGridOrbPosition(null)
+          timerId = window.setTimeout(revealOrb, 800)
+        }, 1000)
+      }, 5000 + Math.floor(Math.random() * 2000))
     }
 
     timerId = window.setTimeout(revealOrb, 700)
@@ -195,7 +200,7 @@ function ChatAppShell() {
               mask="url(#empty-state-highlight-mask)"
               className={cn(
                 "transition-opacity duration-1000 ease-in-out motion-reduce:transition-none",
-                gridOrb ? "opacity-100" : "opacity-0",
+                gridOrbVisible ? "opacity-100" : "opacity-0",
               )}
             />
           </svg>
@@ -247,7 +252,13 @@ function ChatAppShell() {
     <ChatFrame
       hideHeader={hasNoTopics && phase.show !== "error"}
       titleSlot={<span className="truncate">{title}</span>}
-      statusSlot={<ChatFrameStatus label={status.label} tone={status.tone} />}
+      statusSlot={
+        status.label === "Online" ? null : (
+          <div className="shrink-0 text-xs">
+            <ChatFrameStatus label={status.label} tone={status.tone} />
+          </div>
+        )
+      }
       planSession={session}
       body={
         <>

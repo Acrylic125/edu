@@ -18,17 +18,19 @@ export function AppearanceSettings() {
   const { mode, setMode } = useThemeMode()
 
   return (
-    <section className="space-y-6">
-      <div className="space-y-1">
-        <h2 className="text-base font-medium">Appearance</h2>
+    <section className="space-y-4">
+      <div className="space-y-1 border-b border-border/70 pb-3">
+        <h2 className="text-xl font-semibold tracking-tight">Appearance</h2>
         <p className="text-sm text-muted-foreground">
           Control how Edu looks on this device.
         </p>
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-card p-3.5 shadow-xs sm:flex-row sm:items-center sm:justify-between sm:p-4">
         <div className="space-y-1">
-          <Label htmlFor="theme-mode-trigger">Theme</Label>
+          <Label htmlFor="theme-mode-trigger" className="font-medium">
+            Theme
+          </Label>
           <p className="text-sm text-muted-foreground">
             Light, dark, or match your system setting.
           </p>
@@ -40,7 +42,7 @@ export function AppearanceSettings() {
             render={
               <Button
                 variant="outline"
-                className="w-full justify-between sm:w-44"
+                className="h-8 w-full justify-between bg-background sm:w-40"
               />
             }
           >

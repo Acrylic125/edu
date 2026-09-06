@@ -19,6 +19,13 @@ function selectTopicUrl(topicId: TopicId) {
   )
 }
 
+function selectTopicStepUrl(topicId: TopicId, stepId: string) {
+  return new URL(
+    `/topics/${encodeURIComponent(topicId)}/steps/${encodeURIComponent(stepId)}/select`,
+    env.NEXT_PUBLIC_API_URL,
+  )
+}
+
 export function parseTopicsResponse(json: unknown): TopicCatalog {
   const parsed = TopicsListSchema.safeParse(json)
   if (!parsed.success) {
@@ -84,5 +91,19 @@ export async function postSelectTopic(token: string, topicId: TopicId) {
   })
   if (!response.ok) {
     throw new Error("Could not switch topic")
+  }
+}
+
+export async function postSelectTopicStep(
+  token: string,
+  topicId: TopicId,
+  stepId: string,
+) {
+  const response = await fetch(selectTopicStepUrl(topicId, stepId), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error("Could not select plan step")
   }
 }

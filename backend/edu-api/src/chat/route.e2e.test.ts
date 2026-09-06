@@ -106,6 +106,17 @@ describe('Tutor orchestration with real tool dispatch', () => {
 		expect(mocks.listRecentConversationMemories).not.toHaveBeenCalled();
 		expect(io.onDelta).toHaveBeenCalledWith(0, 'A vector has magnitude and direction.');
 	});
+	it('normalizes malformed math after a generic response', async () => {
+		const malformed = "\\quad\\Longrightarrow\\quad F'(x)=2x\\cos(x^6).$$";
+		const { send, runner } = setup([response({ content: malformed })]);
+		const result = await send('What topic are we at?');
+
+		expect(result.parts).toContainEqual({
+			type: 'text',
+			content: "$$\\quad\\Longrightarrow\\quad F'(x)=2x\\cos(x^6).$$",
+		});
+		expect(runner.llmCall).not.toHaveBeenCalled();
+	});
 	it('loads a skill, verifies an answer, and feeds both tool results back to the Tutor', async () => {
 		const { send, runner } = setup([
 			call('load_skill', { name: 'assess' }),

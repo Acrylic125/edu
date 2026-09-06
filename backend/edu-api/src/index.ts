@@ -2,10 +2,11 @@ import { ChatDurableObject, EDU_USER_ID_HEADER, EDU_SESSION_EXPIRES_HEADER } fro
 import { createDb } from '../db/client';
 import { handleAssetRequest } from './assets/http';
 import { hydrateAttachmentParts } from './assets/load';
-import { selectTopic } from './chat/select-topic';
+import { selectTopic, selectTopicStep } from './chat/select-topic';
 import { requireUser } from './lib/auth-middleware';
 import { loadAllMessages, toResponseMessage } from './messages/persistence';
 import { getCurrentTopic, listUserTopics } from './topics/repository';
+import { getUserUsage } from './usage/service';
 
 export { ChatDurableObject };
 
@@ -105,6 +106,28 @@ export default {
 			}
 
 			return withCors(env, request, jsonResponse({ success: true, topicId }));
+		}
+
+		const selectStepMatch = url.pathname.match(/^\/topics\/([^/]+)\/steps\/([^/]+)\/select\/?$/);
+		if (selectStepMatch && request.method === 'POST') {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) {
+				return withCors(env, request, authResult);
+			}
+
+			const topicId = decodeURIComponent(selectStepMatch[1] ?? '');
+			const stepId = decodeURIComponent(selectStepMatch[2] ?? '');
+			if (!env.DB) {
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
+			}
+
+			const db = createDb(env.DB);
+			const result = await selectTopicStep(db, authResult.userId, topicId, stepId);
+			if (!result.success) {
+				return withCors(env, request, jsonResponse({ error: result.error ?? 'Not found' }, 404));
+			}
+
+			return withCors(env, request, jsonResponse({ success: true, topicId, stepId }));
 		}
 
 		if (url.pathname === '/topics/current/messages' && request.method === 'GET') {

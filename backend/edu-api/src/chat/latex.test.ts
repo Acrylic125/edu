@@ -4,6 +4,7 @@ import type { AgentRunner } from "../agents/runner";
 import {
 	extractLatexBlocks,
 	findInvalidLatex,
+	normalizeResponseMath,
 	repairInvalidResponseMarkup,
 } from "./latex";
 
@@ -38,8 +39,33 @@ describe("LaTeX response validation", () => {
 		);
 	});
 
+	it("normalizes malformed trailing display delimiters", () => {
+		const malformed = "\\quad\\Longrightarrow\\quad F'(x)=2x\\cos(x^6).$$";
+		const normalized = "$$\\quad\\Longrightarrow\\quad F'(x)=2x\\cos(x^6).$$";
+		expect(normalizeResponseMath(malformed)).toBe(normalized);
+		expect(findInvalidLatex(normalized)).toEqual([]);
+	});
+
 	it("ignores dollar signs inside non-LaTeX code fences", () => {
 		expect(findInvalidLatex("```sh\necho $HOME\n```")).toEqual([]);
+	});
+
+	it("does not normalize math-like text inside code fences", () => {
+		const markdown = [
+			"Before \\(x^2\\)",
+			"```text",
+			"\\[not rendered\\]",
+			"\\quad example$$",
+			"```",
+		].join("\n");
+
+		expect(normalizeResponseMath(markdown)).toBe([
+			"Before $x^2$",
+			"```text",
+			"\\[not rendered\\]",
+			"\\quad example$$",
+			"```",
+		].join("\n"));
 	});
 
 	it("repairs invalid text parts with one LLM call", async () => {

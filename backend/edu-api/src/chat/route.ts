@@ -58,8 +58,8 @@ export async function handleChat(db: Db, llmEnv: LlmEnv, userId: string, body: o
 			runner.announce('Thinking');
 			const result = await runTutor(db, runner, context, request, io);
 			if (!result.committed) io.signal.throwIfAborted();
-			const parts = result.committed ? result.parts : await repairInvalidResponseMarkup(runner, result.parts);
-			if (!result.committed) io.signal.throwIfAborted();
+			const parts = await repairInvalidResponseMarkup(runner, result.parts);
+			io.signal.throwIfAborted();
 			await runner.complete();
 			// Memory indexing is optional background work, not part of response latency.
 			if (io.defer)

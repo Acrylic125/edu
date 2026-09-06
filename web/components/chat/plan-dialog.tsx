@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { CheckIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -12,6 +11,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { useSession } from "@/lib/auth-client"
+import { postSelectTopicStep } from "@/lib/chat/http"
+import { useOptionalChatStoreApi } from "@/lib/chat/store"
 import type { ChatMessage, ChatSession } from "@/lib/chat/types"
 import { cn } from "@/lib/utils"
 
@@ -73,6 +75,9 @@ function planStepDepths(steps: NonNullable<ReturnType<typeof topicStructuredPlan
 
 export function PlanDialog({ session }: { session: ChatSession | null }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [isSelectingStep, setIsSelectingStep] = useState(false)
+  const authSession = useSession()
+  const store = useOptionalChatStoreApi()
   const hasTopic = session !== null && session.kind === "topic"
   const steps = hasTopic ? topicStructuredPlanFromMessages(session.messages) : null
   const depths = steps ? planStepDepths(steps) : null
@@ -82,6 +87,26 @@ export function PlanDialog({ session }: { session: ChatSession | null }) {
     currentStepId = currentPlanStepId(session.messages, steps)
     if (storedStepExists && session.currentStepId) {
       currentStepId = session.currentStepId
+    }
+  }
+
+  async function selectStep(stepId: string) {
+    if (
+      !authSession.data ||
+      !store ||
+      !hasTopic ||
+      isSelectingStep ||
+      stepId === currentStepId
+    ) {
+      return
+    }
+
+    setIsSelectingStep(true)
+    try {
+      await postSelectTopicStep(authSession.data.session.token, session.topicId, stepId)
+      store.getState().setCurrentStep(stepId)
+    } finally {
+      setIsSelectingStep(false)
     }
   }
   const currentStepIndex = steps?.findIndex((step) => step.id === currentStepId) ?? -1
@@ -146,49 +171,44 @@ export function PlanDialog({ session }: { session: ChatSession | null }) {
             <ol className="space-y-1">
               {steps.map((step, index) => {
                 const isCurrent = step.id === currentStepId
-                const isComplete = currentStepIndex >= 0 && index < currentStepIndex
                 const depth = Math.min(depths?.get(step.id) ?? 0, 3)
                 return (
                   <li
                     key={step.id}
-                    className={cn(
-                      "grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 rounded-xl px-3 py-3 transition-colors",
-                      isCurrent && "bg-primary/8 ring-1 ring-primary/25",
-                    )}
                     style={{ marginLeft: `${depth * 1.25}rem` }}
                   >
-                    <span
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={isSelectingStep}
+                      aria-pressed={isCurrent}
                       className={cn(
-                        "mt-0.5 flex size-7 items-center justify-center rounded-full border text-xs font-medium",
-                        isComplete && "border-primary/30 bg-primary/12 text-primary",
-                        isCurrent && "border-primary bg-primary text-primary-foreground",
-                        !isComplete && !isCurrent && "border-border bg-background text-muted-foreground",
+                        "h-auto min-h-20 w-full justify-start gap-3 whitespace-normal rounded-xl px-3 py-3 text-left",
+                        isCurrent &&
+                          "bg-primary/8 text-primary ring-1 ring-primary/25 hover:bg-primary/12",
                       )}
-                      aria-hidden="true"
+                      onClick={() => {
+                        void selectStep(step.id)
+                      }}
                     >
-                      {isComplete ? <CheckIcon className="size-3.5" /> : index + 1}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p
-                          className={cn(
-                            "font-medium",
-                            isComplete && "text-muted-foreground",
-                            isCurrent && "text-primary",
-                          )}
-                        >
-                          {step.label}
+                      <span
+                        className={cn(
+                          "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-medium",
+                          isCurrent
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background text-muted-foreground",
+                        )}
+                        aria-hidden="true"
+                      >
+                        {index + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-medium">{step.label}</p>
+                        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                          {step.summary}
                         </p>
-                        {isCurrent ? (
-                          <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary">
-                            Current
-                          </span>
-                        ) : null}
                       </div>
-                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                        {step.summary}
-                      </p>
-                    </div>
+                    </Button>
                   </li>
                 )
               })}

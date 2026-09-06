@@ -1,9 +1,13 @@
-import { betterAuth } from "better-auth"
+import { APIError, betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 
 import db from "@/db/db"
 import * as schema from "@/db/schema"
 import { env } from "@/env"
+import {
+  isSchoolEmail,
+  SCHOOL_EMAIL_ERROR_MESSAGE,
+} from "@/lib/auth-email-whitelist"
 
 export const auth = betterAuth({
   baseURL: env.NEXT_PUBLIC_BACKEND_URL,
@@ -15,6 +19,36 @@ export const auth = betterAuth({
     accountLinking: {
       enabled: true,
       trustedProviders: ["microsoft"],
+    },
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user) => {
+          if (!isSchoolEmail(user.email)) {
+            throw new APIError("FORBIDDEN", {
+              code: "school_email_required",
+              message: SCHOOL_EMAIL_ERROR_MESSAGE,
+            })
+          }
+        },
+      },
+    },
+    session: {
+      create: {
+        before: async (session, context) => {
+          const user = await context?.context.internalAdapter.findUserById(
+            session.userId,
+          )
+
+          if (!user || !isSchoolEmail(user.email)) {
+            throw new APIError("FORBIDDEN", {
+              code: "school_email_required",
+              message: SCHOOL_EMAIL_ERROR_MESSAGE,
+            })
+          }
+        },
+      },
     },
   },
   database: drizzleAdapter(db, {

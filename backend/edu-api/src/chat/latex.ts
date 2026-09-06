@@ -11,6 +11,40 @@ type LatexBlock = {
 
 const FENCED_LATEX_RE = /```(?:latex|tex)\s*\n([\s\S]*?)```/gi;
 const FENCED_CODE_RE = /```[^\n]*\n[\s\S]*?```/g;
+const FENCED_CODE_SEGMENT_RE = /```[^\n]*(?:\n[\s\S]*?```|$)/g;
+
+function normalizeUnfencedMath(markdown: string) {
+	return markdown
+		.replace(/\\\[([\s\S]*?)\\\]/g, (_match, body: string) => `$$${body}$$`)
+		.replace(/\\\(([\s\S]*?)\\\)/g, (_match, body: string) => `$${body}$`)
+		.split("\n")
+		.map((line) => {
+			const leadingWhitespace = line.match(/^\s*/)?.[0] ?? "";
+			const content = line.trim();
+			if (content.startsWith("$") && !content.startsWith("$$") && content.endsWith("$$")) {
+				return `${leadingWhitespace}$$${content.slice(1, -2)}$$`;
+			}
+			if (/^\\[a-zA-Z]+/.test(content) && content.endsWith("$$")) {
+				return `${leadingWhitespace}$$${content.slice(0, -2)}$$`;
+			}
+			return line;
+		})
+		.join("\n");
+}
+
+export function normalizeResponseMath(markdown: string) {
+	let normalized = "";
+	let cursor = 0;
+
+	for (const match of markdown.matchAll(FENCED_CODE_SEGMENT_RE)) {
+		const start = match.index;
+		normalized += normalizeUnfencedMath(markdown.slice(cursor, start));
+		normalized += match[0];
+		cursor = start + match[0].length;
+	}
+
+	return normalized + normalizeUnfencedMath(markdown.slice(cursor));
+}
 
 function isEscaped(value: string, index: number) {
 	let backslashes = 0;
@@ -126,12 +160,13 @@ export async function repairInvalidResponseMarkup(
 			continue;
 		}
 
+		const normalized = normalizeResponseMath(part.content);
 		const errors = [
-			...findInvalidLatex(part.content),
-			...findInvalidMermaid(part.content),
+			...findInvalidLatex(normalized),
+			...findInvalidMermaid(normalized),
 		];
 		if (errors.length === 0) {
-			repairedParts.push(part);
+			repairedParts.push({ ...part, content: normalized });
 			continue;
 		}
 
@@ -147,7 +182,7 @@ export async function repairInvalidResponseMarkup(
 				"Do not wrap the complete response in a code fence.",
 				"Return only the complete corrected response.",
 			].join("\n"),
-			input: JSON.stringify({ response: part.content, errors }),
+			input: JSON.stringify({ response: normalized, errors }),
 		});
 
 		const correctedErrors = [

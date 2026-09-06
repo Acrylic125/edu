@@ -410,6 +410,12 @@ export function MessageList({
     useState<ChatMessageAttachment | null>(null)
   const lastMessageId = messages.at(-1)?.id
   const plan = planFromMessages(messages)
+  const listRenderVersion = [
+    lastMessageId,
+    optionState?.messageId,
+    optionState?.status,
+    currentStepId,
+  ].join(":")
 
   const renderItem = useCallback(
     ({ item }: LegendListRenderItemProps<ChatMessage>) => {
@@ -439,6 +445,7 @@ export function MessageList({
         style={{ height: "100%" }}
         contentContainerStyle={messageListContentStyle}
         data={messages}
+        extraData={listRenderVersion}
         renderItem={renderItem}
         keyExtractor={(message) => message.id}
         getItemType={(item) => {

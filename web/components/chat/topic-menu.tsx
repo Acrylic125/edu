@@ -36,7 +36,7 @@ export function TopicMenu() {
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             size="sm"
             className="max-w-48 gap-1 px-2 text-xs font-normal"
           />

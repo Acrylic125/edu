@@ -71,4 +71,74 @@ describe("chat run events", () => {
       messages: session.messages,
     })
   })
+
+  it("removes options from previous responses when a new run starts", () => {
+    const withOptions: ChatSession = {
+      kind: "topic",
+      topicId: "t1",
+      title: "Vectors",
+      handoff: null,
+      messages: [
+        {
+          id: "old",
+          role: "assistant",
+          parts: [
+            { type: "text", content: "Previous response" },
+            { type: "options", options: [{ label: "Continue" }] },
+          ],
+          status: "complete",
+        },
+      ],
+    }
+
+    const result = reduceSession(withOptions, { status: "idle" }, {
+      type: "ws",
+      message: {
+        type: "run.started",
+        runId: "r2",
+        messageId: "new",
+      },
+    })
+
+    expect(result.session).toMatchObject({
+      messages: [
+        { id: "old", parts: [{ type: "text", content: "Previous response" }] },
+        { id: "new", status: "streaming" },
+      ],
+    })
+  })
+
+  it("removes previous options as soon as the user sends a message", () => {
+    const withOptions: ChatSession = {
+      kind: "topic",
+      topicId: "t1",
+      title: "Vectors",
+      handoff: null,
+      messages: [
+        {
+          id: "old",
+          role: "assistant",
+          parts: [
+            { type: "text", content: "Previous response" },
+            { type: "options", options: [{ label: "Continue" }] },
+          ],
+          status: "complete",
+        },
+      ],
+    }
+
+    const result = reduceSession(withOptions, { status: "idle" }, {
+      type: "user_sent",
+      messageId: "question",
+      content: "What topic are we at?",
+      attachments: [],
+    })
+
+    expect(result.session).toMatchObject({
+      messages: [
+        { id: "old", parts: [{ type: "text", content: "Previous response" }] },
+        { id: "question", role: "user" },
+      ],
+    })
+  })
 })

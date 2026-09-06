@@ -3,7 +3,6 @@
 import {
   useRef,
   useState,
-  useSyncExternalStore,
   type ClipboardEvent,
   type DragEvent,
   type FormEvent,
@@ -65,8 +64,6 @@ const COMPOSER_INPUT_CLASS =
 
 const COMPOSER_MIRROR_CLASS =
   "pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-
-const subscribeToHydration = () => () => {}
 
 const TOPIC_EXAMPLES = [
   {
@@ -143,11 +140,6 @@ export function ChatComposer({
   )
   const [isDragOver, setIsDragOver] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const hydrated = useSyncExternalStore(
-    subscribeToHydration,
-    () => true,
-    () => false,
-  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   const mirrorRef = useRef<HTMLDivElement>(null)
   const previewsRef = useRef(createComposerPreviewRegistry())
@@ -161,8 +153,7 @@ export function ChatComposer({
     composerImagesReady(images) && !isSubmitting
   )
   const canSend = gate === "send"
-  const newTopicDisabled =
-    !hydrated || socket.status !== "ready" || isSubmitting
+  const newTopicDisabled = socket.status !== "ready" || isSubmitting
 
   function patchImage(
     imageId: string,
@@ -410,8 +401,10 @@ export function ChatComposer({
           <NewTopicDialog
             disabled={newTopicDisabled}
             onCreate={createTopic}
-            triggerClassName="mt-8 inline-flex h-12 items-center justify-center border border-primary bg-primary px-6 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/80 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-wait disabled:opacity-50"
+            triggerClassName="mt-8 h-12 rounded-xl px-6"
             triggerContent="New Learning Plan"
+            triggerSize="lg"
+            triggerVariant="default"
           />
         </div>
 
@@ -423,7 +416,7 @@ export function ChatComposer({
                 initialTopic={example.prompt}
                 disabled={newTopicDisabled}
                 onCreate={createTopic}
-                triggerClassName="group w-full cursor-pointer border border-border bg-card p-0 text-left text-card-foreground outline-none transition-colors hover:border-primary/40 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-wait disabled:opacity-50"
+                triggerClassName="group h-auto min-h-28 w-full justify-start rounded-xl bg-background p-0 text-left hover:bg-card focus-visible:bg-card sm:min-h-32"
                 triggerContent={
                   <div className="flex min-h-28 flex-col justify-center px-6 py-5 sm:min-h-32 sm:px-8 sm:py-6">
                     <p className="text-xl leading-tight font-medium sm:text-2xl">
@@ -439,6 +432,7 @@ export function ChatComposer({
                     </p>
                   </div>
                 }
+                triggerVariant="outline"
               />
             )
           })}
@@ -576,6 +570,7 @@ export function ChatComposer({
               onCreate={(topic, files) => {
                 createTopic(topic, files)
               }}
+              triggerVariant="outline"
             />
           </div>
 
@@ -611,14 +606,16 @@ function ComposerActionButton({
 }) {
   if (gate === "stop") {
     return (
-      <button
+      <Button
         type="button"
+        variant="destructive"
+        size="icon-sm"
+        className="rounded-full"
         aria-label="Stop"
         onClick={onStop}
-        className={cn(buttonVariants({ size: "icon-sm" }), "rounded-full")}
       >
-        <SquareIcon />
-      </button>
+        <SquareIcon className="size-3 fill-white" />
+      </Button>
     )
   }
 

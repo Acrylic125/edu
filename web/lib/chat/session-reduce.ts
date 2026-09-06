@@ -102,7 +102,7 @@ function applyUserSent(
     session: {
       ...session,
       title,
-      messages: [...session.messages, user],
+      messages: [...removeAssistantOptions(session.messages), user],
     },
     run: nextRun,
   }
@@ -193,14 +193,20 @@ function applyRunStarted(
     (item) => item.id === message.messageId,
   )
   if (existing) {
-    return { session, run: nextRun }
+    return {
+      session: {
+        ...session,
+        messages: removeAssistantOptions(session.messages),
+      },
+      run: nextRun,
+    }
   }
 
   return {
     session: {
       ...session,
       messages: [
-        ...session.messages,
+        ...removeAssistantOptions(session.messages),
         {
           id: message.messageId,
           role: "assistant" as const,
@@ -212,6 +218,18 @@ function applyRunStarted(
     },
     run: nextRun,
   }
+}
+
+function removeAssistantOptions(messages: ChatMessage[]) {
+  return messages.map((item) => {
+    if (item.role !== "assistant") {
+      return item
+    }
+    return {
+      ...item,
+      parts: item.parts.filter((part) => part.type !== "options"),
+    }
+  })
 }
 
 function applyRunDelta(

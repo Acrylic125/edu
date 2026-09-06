@@ -53,6 +53,7 @@ export type ChatStore = ChatStoreState & {
   commitSwitch: (payload: CurrentMessagesPayload) => void
   failSwitch: (message: string) => void
   replaceCurrentMessages: (payload: CurrentMessagesPayload) => void
+  setCurrentStep: (stepId: string) => void
   upsertListing: (listing: TopicListing) => void
   replaceCatalog: (catalog: TopicCatalog) => void
   sendGate: (
@@ -427,6 +428,19 @@ export function createChatStore(bootstrap: ChatBootstrap) {
         }
       })
     },
+    setCurrentStep: (stepId) => {
+      set((state) => {
+        if (state.session.kind !== "topic") {
+          return state
+        }
+        return {
+          session: {
+            ...state.session,
+            currentStepId: stepId,
+          },
+        }
+      })
+    },
 
     upsertListing: (listing) => {
       set((state) => ({
@@ -506,6 +520,10 @@ export function useChatStoreApi() {
     throw new Error("useChatStoreApi must be used within ChatStoreProvider")
   }
   return store
+}
+
+export function useOptionalChatStoreApi() {
+  return useContext(ChatStoreContext)
 }
 
 export function selectShellPhase(state: ChatStoreState) {
