@@ -17,14 +17,19 @@
       "name": "edu-web-production-ben",
       "routes": [
         {
-          "pattern": "benapps.dev",
+          "pattern": "edu.benapps.dev",
           "custom_domain": true
         }
       ],
       "vars": {
         "NEXTJS_ENV": "production",
         "NEXT_PUBLIC_API_URL": "https://edu-api.benapps.dev",
-        "NEXT_PUBLIC_BACKEND_URL": "https://benapps.dev"
+        "NEXT_PUBLIC_BACKEND_URL": "https://edu.benapps.dev",
+        "CLOUDFLARE_ACCOUNT_ID": "cea74c56c18a082fab52ca288c594c10",
+        "CLOUDFLARE_DATABASE_ID": "16cc2e87-d2b9-4a65-bf36-c236864c91e6",
+        "GOOGLE_CLIENT_ID": "664204232722-ihg82jvsle0hf3di7upoo3dt8mqkbeh9.apps.googleusercontent.com",
+        "MICROSOFT_CLIENT_ID": "c27cd5f4-dbea-47cb-b5e6-63a16e715898",
+        "MICROSOFT_TENANT_ID": "common"
       }
     }
   }

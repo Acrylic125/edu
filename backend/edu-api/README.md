@@ -60,7 +60,7 @@ pnpx wrangler r2 bucket cors set edu-assets --file /dev/stdin <<'EOF'
   "rules": [
     {
       "allowed": {
-        "origins": ["http://localhost:3000", "https://benapps.dev"],
+        "origins": ["http://localhost:3000", "https://edu.benapps.dev"],
         "methods": ["GET", "PUT", "HEAD"],
         "headers": ["Content-Type"]
       },

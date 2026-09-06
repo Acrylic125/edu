@@ -53,7 +53,7 @@ pnpm run deploy:production-ben
 ### 2. Deploy the web worker
 
 The web worker is configured in [`wrangler.jsonc`](./wrangler.jsonc) and
-routes `benapps.dev` to `edu-web-production-ben`.
+routes `edu.benapps.dev` to `edu-web-production-ben`.
 
 ```bash
 cd ../../web
@@ -78,7 +78,7 @@ CLOUDFLARE_TOKEN
 
 The production deploy script sets `NEXT_PUBLIC_API_URL` to
 `https://edu-api.benapps.dev` and `NEXT_PUBLIC_BACKEND_URL` to
-`https://benapps.dev` before building the OpenNext bundle.
+`https://edu.benapps.dev` before building the OpenNext bundle.
 
 For a local Worker-runtime preview:
 

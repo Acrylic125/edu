@@ -4,7 +4,7 @@
 interface __BaseEnv_Env {
 	ASSETS: R2Bucket;
 	DB: D1Database;
-	WEB_ORIGIN: "https://benapps.dev" | "http://localhost:3000";
+	WEB_ORIGIN: "https://edu.benapps.dev" | "http://localhost:3000";
 	ASSET_READ_MODE: "presign" | "worker";
 	R2_ACCOUNT_ID: "cea74c56c18a082fab52ca288c594c10";
 	R2_BUCKET_NAME: "edu-assets";
@@ -22,7 +22,7 @@ declare namespace Cloudflare {
 	interface ProductionBenEnv {
 		ASSETS: R2Bucket;
 		DB: D1Database;
-		WEB_ORIGIN: "https://benapps.dev";
+		WEB_ORIGIN: "https://edu.benapps.dev";
 		ASSET_READ_MODE: "presign";
 		R2_ACCOUNT_ID: "cea74c56c18a082fab52ca288c594c10";
 		R2_BUCKET_NAME: "edu-assets";

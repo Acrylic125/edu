@@ -9,7 +9,7 @@
  * must be declared per environment. Secrets live in .dev.vars / `wrangler secret put`.
  *
  * R2 CORS for shared bucket `edu-assets`: see README.md
- * (origins localhost:3000 + https://benapps.dev; GET/PUT/HEAD; Content-Type; maxAge 3600).
+ * (origins localhost:3000 + https://edu.benapps.dev; GET/PUT/HEAD; Content-Type; maxAge 3600).
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -68,7 +68,7 @@
 			],
 			"vars": {
 				// Production web origin (CORS / Better Auth baseURL).
-				"WEB_ORIGIN": "https://benapps.dev",
+                "WEB_ORIGIN": "https://edu.benapps.dev",
 				"ASSET_READ_MODE": "presign",
 				"R2_ACCOUNT_ID": "cea74c56c18a082fab52ca288c594c10",
 				"R2_BUCKET_NAME": "edu-assets",

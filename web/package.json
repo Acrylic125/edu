@@ -7,7 +7,7 @@
     "build": "node scripts/build-next.mjs",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "deploy:production-ben": "NEXT_PUBLIC_API_URL=https://edu-api.benapps.dev NEXT_PUBLIC_BACKEND_URL=https://benapps.dev opennextjs-cloudflare build && opennextjs-cloudflare deploy --env production-ben",
+    "deploy:production-ben": "NEXT_PUBLIC_API_URL=https://edu-api.benapps.dev NEXT_PUBLIC_BACKEND_URL=https://edu.benapps.dev opennextjs-cloudflare build && opennextjs-cloudflare deploy --env production-ben",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "start": "next start",
