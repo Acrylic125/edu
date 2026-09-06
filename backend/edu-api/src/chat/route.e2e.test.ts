@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
 	captureConversationMemory: vi.fn(),
 	createTopic: vi.fn(),
 	setCurrentTopic: vi.fn(),
+	updateCurrentPart: vi.fn(),
+	updateTopicState: vi.fn(),
 	createTopicMessage: vi.fn(),
 	reassignTopicMessage: vi.fn(),
 	linkAssetsToMessage: vi.fn(),
@@ -25,7 +27,12 @@ vi.mock('../memory/service', async (original) => ({
 	...(await original<typeof import('../memory/service')>()),
 	captureConversationMemory: mocks.captureConversationMemory,
 }));
-vi.mock('../topics/repository', () => ({ createTopic: mocks.createTopic, setCurrentTopic: mocks.setCurrentTopic }));
+vi.mock('../topics/repository', () => ({
+	createTopic: mocks.createTopic,
+	setCurrentTopic: mocks.setCurrentTopic,
+	updateCurrentPart: mocks.updateCurrentPart,
+	updateTopicState: mocks.updateTopicState,
+}));
 vi.mock('../messages/persistence', () => ({
 	createTopicMessage: mocks.createTopicMessage,
 	reassignTopicMessage: mocks.reassignTopicMessage,
@@ -50,7 +57,7 @@ function setup(
 		recordStep: vi.fn(),
 		llmCall: vi.fn().mockResolvedValue('{"correct":true,"partiallyCorrect":false,"feedback":"Correct","errors":[]}'),
 		withTrace: (fn: () => Promise<object>) => fn(),
-		toolTurn: vi.fn(async (params: { messages: object[]; onDelta: (text: string) => void }) => {
+		toolTurn: vi.fn(async (params: { messages: object[]; tools: object[]; onDelta: (text: string) => void }) => {
 			const next = responses.shift() ?? response({ content: 'Done.' });
 			if (typeof next.content === 'string') params.onDelta(next.content);
 			return next;
@@ -77,10 +84,10 @@ const plan = {
 	title: 'Vectors',
 	summary: 'Vector arithmetic',
 	part: 'Addition',
-	chapters: [
-		{ chapter: 'Basics', whatIsCovered: 'Notation' },
-		{ chapter: 'Addition', whatIsCovered: 'Add vectors' },
-		{ chapter: 'Products', whatIsCovered: 'Dot products' },
+	plan: [
+		{ title: 'Basics', role: 'section', depth: 0 },
+		{ title: 'Addition', role: 'section', depth: 0 },
+		{ title: 'Products', role: 'section', depth: 0 },
 	],
 };
 
@@ -92,7 +99,8 @@ describe('Tutor orchestration with real tool dispatch', () => {
 	it('answers directly with one model turn and no mandatory retrieval', async () => {
 		const { send, runner, io } = setup([response({ content: 'A vector has magnitude and direction.' })]);
 		const result = await send();
-		expect(result.parts).toEqual([{ type: 'text', content: 'A vector has magnitude and direction.' }]);
+		expect(result.parts).toContainEqual({ type: 'text', content: 'A vector has magnitude and direction.' });
+		expect(result.parts).toContainEqual(expect.objectContaining({ type: 'options' }));
 		expect(runner.toolTurn).toHaveBeenCalledOnce();
 		expect(runner.llmCall).not.toHaveBeenCalled();
 		expect(mocks.listRecentConversationMemories).not.toHaveBeenCalled();
@@ -104,14 +112,22 @@ describe('Tutor orchestration with real tool dispatch', () => {
 			call('verify_answer', { question: '1+1?', solution: '2' }),
 			response({ content: 'Correct: 1 + 1 = 2.' }),
 		]);
-		await send('/ans 2');
+		const result = await send('/ans 2');
 		expect(runner.llmCall).toHaveBeenCalledWith(expect.objectContaining({ name: 'verify_solution' }));
 		expect(runner.recordStep).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool', name: 'verify_answer' }));
 		expect(runner.toolTurn.mock.calls.at(-1)?.[0].messages).toHaveLength(6);
+		expect(result.parts).toContainEqual({
+			type: 'options',
+			options: [
+				{ label: 'Try another question' },
+				{ label: 'Explain Addition' },
+				{ label: 'Continue to next topic' },
+			],
+		});
 	});
 	it('validates model arguments before executing a mutation', async () => {
-		const { send } = setup([call('create_topic', { ...plan, chapters: [] }), response({ content: 'Please clarify the plan.' })], null);
-		await send('/new vectors');
+		const { send } = setup([call('create_topic', { ...plan, plan: [] }), response({ content: 'Please clarify the plan.' })], null);
+		await expect(send('/new vectors')).rejects.toThrow('did not apply');
 		expect(mocks.createTopic).not.toHaveBeenCalled();
 	});
 	it('proposes natural-language plan creation without mutating the DB', async () => {
@@ -121,17 +137,103 @@ describe('Tutor orchestration with real tool dispatch', () => {
 		expect(mocks.createTopic).not.toHaveBeenCalled();
 	});
 	it('preserves the triggering text when /new creates the first topic', async () => {
-		const { send } = setup([call('create_topic', plan)], null);
+		const { send, runner } = setup([call('create_topic', plan)], null);
 		expect((await send('/new vectors')).topicId).toBe('topic_new');
+		expect(runner.toolTurn).toHaveBeenCalledWith(
+			expect.objectContaining({ toolChoice: { type: 'function', function: { name: 'create_topic' } } }),
+		);
 		expect(mocks.createTopicMessage).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({ id: 'msg_u', parts: [{ type: 'text', content: '/new vectors' }] }),
 		);
 	});
+	it('does not let an explicit creation command finish without creating the topic', async () => {
+		const { send, io } = setup([response({ content: 'Your topic is ready.' })], null);
+		await expect(send('/new vectors')).rejects.toThrow('did not apply');
+		expect(mocks.createTopic).not.toHaveBeenCalled();
+		expect(io.onDelta).not.toHaveBeenCalled();
+	});
+	it('creates a classified explicit outline in one model turn', async () => {
+		const explicit = {
+			title: 'CS2100: Data Representation and Number Systems',
+			summary: 'Data representation',
+			part: 'Data Representation',
+			plan: [
+				{ sourceIndex: 0, title: 'CS2100', role: 'context' },
+				{
+					sourceIndex: 1,
+					title: 'Lecture #3: Data Representation and Number Systems',
+					role: 'header',
+				},
+				{
+					sourceIndex: 2,
+					title: 'Data Representation',
+					role: 'section',
+					depth: 0,
+				},
+				{
+					sourceIndex: 3,
+					title: 'Repeated Division-by-2',
+					role: 'section',
+					depth: 1,
+				},
+				{
+					sourceIndex: 4,
+					title: 'ASCII Code',
+					role: 'section',
+					depth: 0,
+				},
+			],
+		};
+		const { send, runner } = setup([call('create_topic', explicit)], null);
+		const result = await send(`/new CS2100
+
+Lecture #3: Data Representation and Number Systems
+Data Representation
+5.1 Repeated Division-by-2
+ASCII Code`);
+		expect(runner.toolTurn).toHaveBeenCalledOnce();
+		expect(runner.toolTurn.mock.calls[0]?.[0].tools).toHaveLength(1);
+		expect(mocks.createTopic).toHaveBeenCalledOnce();
+		expect(mocks.createTopic).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ title: 'CS2100: Data Representation and Number Systems', part: 'Data Representation' }),
+		);
+		const planText = result.parts.find((part) => part.type === 'text')?.content;
+		expect(planText).toContain("I'll use the plan you provided:");
+		expect(planText).toContain('### Lecture #3: Data Representation and Number Systems');
+		expect(planText).toContain('- **Data Representation**');
+		expect(planText).toContain('  - Repeated Division-by-2');
+		expect(planText).toContain('- **ASCII Code**');
+		expect(planText).not.toContain('| Section |');
+		expect(planText).not.toContain('Representation overview');
+		expect(result.parts).toContainEqual({
+			type: 'options',
+			options: [{ label: 'Explain Data Representation' }, { label: 'Practice Data Representation' }],
+		});
+	});
 	it('does not let the model switch an active subject without /new', async () => {
 		const { send } = setup([call('create_topic', plan), response({ content: 'Use /new to change subjects.' })]);
 		await send();
 		expect(mocks.createTopic).not.toHaveBeenCalled();
+	});
+	it('advances immediately when the learner explicitly asks for the next topic', async () => {
+		const { send } = setup([call('update_topic', { part: 'ASCII representation' })]);
+		const result = await send('Continue to next topic');
+		expect(result.pendingProposal).toBeNull();
+		expect(mocks.updateCurrentPart).toHaveBeenCalledWith(expect.anything(), 'user_1', 'ASCII representation', 'topic_1');
+	});
+	it('adds next-step options to a direct completed answer', async () => {
+		const { send } = setup([response({ content: 'Correct. A is 65 and B is 66.' })]);
+		const result = await send('65 66');
+		expect(result.parts).toContainEqual({
+			type: 'options',
+			options: [
+				{ label: 'Practice Addition' },
+				{ label: 'Explain Addition' },
+				{ label: 'Continue to next topic' },
+			],
+		});
 	});
 	it('rejects a proposal after switching topics', async () => {
 		const { io } = setup([]);

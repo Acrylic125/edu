@@ -11,14 +11,23 @@ export async function runToolLoop(params: {
 	signal: AbortSignal;
 	onDelta: (text: string) => void;
 	isFinished: () => boolean;
+	requiredToolName?: string;
+	maxTokens?: number;
 }) {
 	const messages = [...params.messages];
+	let availableTools = params.tools;
+	if (params.requiredToolName) {
+		availableTools = params.tools.filter((candidate) => candidate.name === params.requiredToolName);
+		if (availableTools.length !== 1) throw new Error(`Required tool is unavailable: ${params.requiredToolName}`);
+	}
 	let text = '';
 	for (let turn = 0; turn < MAX_TUTOR_TURNS; turn++) {
 		params.signal.throwIfAborted();
 		const response = await params.runner.toolTurn({
 			messages: [...messages],
-			tools: params.tools.map((tool) => tool.definition),
+			tools: availableTools.map((tool) => tool.definition),
+			toolChoice: params.requiredToolName ? { type: 'function', function: { name: params.requiredToolName } } : undefined,
+			maxTokens: params.maxTokens,
 			onDelta: (delta) => {
 				text += delta;
 				params.onDelta(delta);
@@ -35,7 +44,10 @@ export async function runToolLoop(params: {
 		if (calls.length !== 1) throw new Error('Tutor must call one tool at a time');
 		const call = calls[0];
 		if (call.type !== 'function') throw new Error('Unsupported tool call type');
-		const selected = params.tools.find((candidate) => candidate.name === call.function.name);
+		if (params.requiredToolName && call.function.name !== params.requiredToolName) {
+			throw new Error(`Tutor must call ${params.requiredToolName}`);
+		}
+		const selected = availableTools.find((candidate) => candidate.name === call.function.name);
 		if (!selected || !call.id) throw new Error('Unsupported tool call');
 		params.signal.throwIfAborted();
 		const result = await selected.invoke(call);

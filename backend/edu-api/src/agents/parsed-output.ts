@@ -6,13 +6,6 @@ export const TopicGenerationSchema = z.object({
 	part: z.string(),
 });
 
-export const TopicPlanChapterSchema = z.object({
-	chapter: z.string(),
-	whatIsCovered: z.string(),
-});
-
-export const TopicPlanChaptersSchema = z.array(TopicPlanChapterSchema).min(1);
-
 export const QuestionIdentificationSchema = z.object({
 	found: z.boolean(),
 	question: z.string().default(""),
@@ -42,13 +35,12 @@ export const TopicUpdateSchema = z.object({
 
 export type TopicUpdate = z.infer<typeof TopicUpdateSchema>;
 export type ProposedUpdate = z.infer<typeof ProposedUpdateSchema>;
-export type TopicPlanChapter = z.infer<typeof TopicPlanChapterSchema>;
 
 export function parseJsonFromLlm<T extends z.ZodType>(
 	schema: T,
 	response: string,
 ) {
-	// Prefer array candidates first so chapter plans parse as a whole list,
+	// Prefer array candidates first so list responses parse as a whole,
 	// not as the first nested object inside that list.
 	const candidates = [
 		response.match(/\[[\s\S]*\]/)?.[0],

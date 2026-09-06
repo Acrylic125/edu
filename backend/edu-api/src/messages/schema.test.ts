@@ -7,7 +7,24 @@ import {
 	WsChatClientMessageSchema,
 	WsClientEnvelopeSchema,
 	WsServerMessageSchema,
+	TopicPlanItemSchema,
 } from './schema';
+
+describe('TopicPlanItemSchema', () => {
+	it('requires depth for sections', () => {
+		expect(TopicPlanItemSchema.safeParse({ title: 'Repeated division', role: 'section' }).success).toBe(false);
+	});
+
+	it('allows headers without format-specific metadata', () => {
+		expect(
+			TopicPlanItemSchema.parse({
+				sourceIndex: 1,
+				title: 'Lecture #3: Data Representation',
+				role: 'header',
+			}),
+		).toMatchObject({ role: 'header' });
+	});
+});
 
 describe('MessagePartSchema', () => {
 	it('accepts text parts', () => {

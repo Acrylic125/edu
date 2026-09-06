@@ -188,18 +188,25 @@ export function ChatComposer({
     } satisfies ChatMessageAttachment
   }
 
-  async function submit() {
-    if (gate !== "send" || isSubmitting) {
+  async function submit(content = draft, imageSnapshot = images) {
+    const submitGate = sendGate(
+      socket,
+      run,
+      content,
+      imageSnapshot.length > 0,
+      composerImagesReady(imageSnapshot) && !isSubmitting,
+    )
+    if (submitGate !== "send" || isSubmitting) {
       return
     }
 
-    const text = draft.trim()
-    if (text === "" && images.length === 0) {
+    const text = content.trim()
+    if (text === "" && imageSnapshot.length === 0) {
       return
     }
 
     const token = session.data?.session.token
-    if (images.length > 0 && !token) {
+    if (imageSnapshot.length > 0 && !token) {
       setAttachmentError("Sign in to upload images.")
       return
     }
@@ -208,7 +215,7 @@ export function ChatComposer({
     setAttachmentError(null)
     const controller = new AbortController()
     submitAbortRef.current = controller
-    const snapshot = images
+    const snapshot = imageSnapshot
 
     try {
       const attachments: ChatMessageAttachment[] = []
@@ -244,6 +251,27 @@ export function ChatComposer({
       }
       setIsSubmitting(false)
     }
+  }
+
+  function createTopic(topic: string, files: File[]) {
+    let nextImages = images
+    if (files.length > 0) {
+      const result = ingestComposerImageFiles(files, images)
+      for (const image of result.added) {
+        previewsRef.current.track(image)
+      }
+      nextImages = result.nextImages
+      setImages(nextImages)
+      setAttachmentError(result.error)
+      if (result.error && result.added.length === 0) {
+        return
+      }
+    }
+    const topicRequest = topic.replace(/^(?:\/new(?:\s+|$))+/i, "").trim()
+    if (topicRequest === "") {
+      return
+    }
+    void submit(`/new ${topicRequest}`, nextImages)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -419,8 +447,7 @@ export function ChatComposer({
             {footerStart}
             <NewTopicDialog
               onCreate={(topic, files) => {
-                setDraft(`/new ${topic}`)
-                addImageFiles(files)
+                createTopic(topic, files)
               }}
             />
           </div>

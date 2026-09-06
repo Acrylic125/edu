@@ -4,7 +4,7 @@ const LEAD_IN =
 const STOP = new Set(["and", "then", "as", "or", "with", "for"]);
 
 export const MATH_MARKDOWN_RULE =
-	"Write math in markdown: $x$ for inline, $$...$$ for display (including matrices). Do not use \\[ \\] or \\( \\).";
+	"Write math in markdown: $x$ for inline, $$...$$ for display (including matrices). Do not use \\[ \\], \\( \\), or \\boxed; use \\mathbf to emphasize a result.";
 
 export const TOPIC_PART_RULE =
 	'"part" is a 1-4 word focus label (e.g. "Vectors"), never a sentence or paragraph.';

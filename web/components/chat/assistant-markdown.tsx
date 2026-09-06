@@ -12,6 +12,13 @@ import { MermaidDiagram } from "@/components/chat/mermaid-diagram"
 
 import "katex/dist/katex.min.css"
 
+const katexOptions = {
+  throwOnError: false,
+  output: "html" as const,
+  // KaTeX draws boxes as an overlay that can collapse inside the chat layout.
+  macros: { "\\boxed": "\\mathbf{#1}" },
+}
+
 const baseAssistantMarkdownComponents: Components = {
   p: ({ children }) => (
     <div className="mb-2 last:mb-0">{children}</div>
@@ -120,9 +127,7 @@ export function AssistantMarkdown({
     return (
       <Markdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[
-          [rehypeKatex, { throwOnError: false, output: "html" }],
-        ]}
+        rehypePlugins={[[rehypeKatex, katexOptions]]}
         components={components}
       >
         {normalizeAssistantMath(text)}

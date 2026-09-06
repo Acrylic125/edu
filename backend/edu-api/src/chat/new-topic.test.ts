@@ -1,40 +1,80 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
+import { extractSuppliedPlanLines, formatTopicPlanMarkdown } from './new-topic';
 
-import { formatTopicPlanMarkdown } from "./new-topic";
-
-describe("formatTopicPlanMarkdown", () => {
-	it("renders a markdown table under Here's the plan", () => {
+describe('formatTopicPlanMarkdown', () => {
+	it('renders a generated plan as a list', () => {
 		const markdown = formatTopicPlanMarkdown([
-			{
-				chapter: "Basics",
-				whatIsCovered: "Rates of change",
-			},
-			{
-				chapter: "Product rule",
-				whatIsCovered: "Differentiate products",
-			},
+			{ title: 'Basics', role: 'section', depth: 0 },
+			{ title: 'Product rule', role: 'section', depth: 0 },
 		]);
 
-		expect(markdown).toBe(
-			[
-				"Here's the plan",
-				"",
-				"| Chapter | What is covered |",
-				"| --- | --- |",
-				"| Basics | Rates of change |",
-				"| Product rule | Differentiate products |",
-			].join("\n"),
-		);
+		expect(markdown).toBe(["Here's the plan", '', '- **Basics**', '- **Product rule**'].join('\n'));
 	});
 
-	it("escapes pipes in cell text", () => {
-		const markdown = formatTopicPlanMarkdown([
-			{
-				chapter: "A|B",
-				whatIsCovered: "one|two",
-			},
-		]);
+	it('renders the semantic structure supplied by the Tutor', () => {
+		const markdown = formatTopicPlanMarkdown(
+			[
+				{ sourceIndex: 0, title: 'CS2100', role: 'context' },
+				{
+					sourceIndex: 1,
+					title: 'Lecture #3: Data Representation and Number Systems',
+					role: 'header',
+				},
+				{ sourceIndex: 2, title: 'Data Representation', role: 'section', depth: 0 },
+				{
+					sourceIndex: 3,
+					title: 'Decimal to Binary Conversion',
+					role: 'section',
+					depth: 0,
+				},
+				{
+					sourceIndex: 4,
+					title: 'Repeated Division-by-2',
+					role: 'section',
+					depth: 1,
+				},
+				{
+					sourceIndex: 5,
+					title: 'Worked Examples',
+					role: 'section',
+					depth: 2,
+				},
+			],
+			true,
+		);
 
-		expect(markdown).toContain("| A\\|B | one\\|two |");
+		expect(markdown).toContain('**CS2100**');
+		expect(markdown).toContain('### Lecture #3: Data Representation and Number Systems');
+		expect(markdown).toContain('- **Data Representation**');
+		expect(markdown).toContain('- **Decimal to Binary Conversion**');
+		expect(markdown).toContain('  - Repeated Division-by-2');
+		expect(markdown).toContain('    - Worked Examples');
+		expect(markdown).not.toContain('| Section |');
+		expect(markdown).not.toContain('Overview');
+	});
+});
+
+describe('explicit topic plans', () => {
+	it('preserves every nonblank source line without interpreting its format', () => {
+		expect(
+			extractSuppliedPlanLines(`/new /new CS2100
+
+Lecture #3\tData Representation and Number Systems
+Data Representation
+5.1 Repeated Division-by-2
+ASCII Code`),
+		).toEqual({
+			sourceLines: [
+				'CS2100',
+				'Lecture #3\tData Representation and Number Systems',
+				'Data Representation',
+				'5.1 Repeated Division-by-2',
+				'ASCII Code',
+			],
+		});
+	});
+
+	it('does not treat a normal multiline request as an explicit plan', () => {
+		expect(extractSuppliedPlanLines('/new Explain vectors\nwith examples')).toBeNull();
 	});
 });

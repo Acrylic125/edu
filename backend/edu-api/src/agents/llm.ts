@@ -2,11 +2,13 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import type {
 	ChatCompletion,
+	ChatCompletionCreateParams,
 	ChatCompletionMessageParam,
 	ChatCompletionTool,
+	ChatCompletionToolChoiceOption,
 	ChatCompletionUserMessageParam,
 } from 'openai/resources/chat/completions';
-import { context, trace, SpanStatusCode } from '@opentelemetry/api';
+import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { createLangtraceExporter } from './langtrace-exporter';
@@ -43,6 +45,61 @@ function initializeLangtrace(env: LlmEnv) {
 	langtraceTracer = trace.getTracer('edu-api');
 	langtraceInitialized = true;
 }
+
+async function traceChatCompletion(
+	env: LlmEnv,
+	request: ChatCompletionCreateParams,
+	call: () => Promise<ChatCompletion>,
+) {
+	initializeLangtrace(env);
+	if (!langtraceInitialized) return call();
+
+	const span = langtraceTracer.startSpan(
+		'openai.chat.completions',
+		{
+			kind: SpanKind.CLIENT,
+			attributes: {
+				'langtrace.service.name': 'openai',
+				'langtrace.service.type': 'llm',
+				'gen_ai.operation.name': 'chat',
+				'gen_ai.request.model': request.model,
+				'gen_ai.request.stream': request.stream ?? false,
+				...(request.max_tokens == null ? {} : { 'gen_ai.request.max_tokens': request.max_tokens }),
+				...(request.tools ? { 'gen_ai.request.tools': JSON.stringify(request.tools) } : {}),
+				'url.full': 'https://openrouter.ai/api/v1',
+				'url.path': '/chat/completions',
+			},
+		},
+		context.active(),
+	);
+	span.addEvent('gen_ai.prompt', { 'gen_ai.prompt': JSON.stringify(request.messages) });
+
+	return context.with(trace.setSpan(context.active(), span), async () => {
+		try {
+			const completion = await call();
+			const responses = completion.choices.map((choice) => ({
+				role: choice.message.role,
+				content: choice.message.content ?? JSON.stringify(choice.message.tool_calls),
+			}));
+			span.addEvent('gen_ai.completion', { 'gen_ai.completion': JSON.stringify(responses) });
+			span.setAttributes({
+				'gen_ai.response.model': completion.model,
+				'gen_ai.usage.input_tokens': completion.usage?.prompt_tokens ?? 0,
+				'gen_ai.usage.output_tokens': completion.usage?.completion_tokens ?? 0,
+				'gen_ai.usage.total_tokens': completion.usage?.total_tokens ?? 0,
+			});
+			span.setStatus({ code: SpanStatusCode.OK });
+			return completion;
+		} catch (error) {
+			span.recordException(error instanceof Error ? error : String(error));
+			span.setStatus({ code: SpanStatusCode.ERROR });
+			throw error;
+		} finally {
+			span.end();
+		}
+	});
+}
+
 export async function withLlmTrace<T>(env: LlmEnv, runId: string, fn: () => Promise<T>) {
 	initializeLangtrace(env);
 	if (!langtraceInitialized) {
@@ -101,13 +158,13 @@ function modelUsage(env: LlmEnv, completion: ChatCompletion, input: string) {
 
 export async function callLlm(env: LlmEnv, params: LlmCallParams) {
 	params.signal?.throwIfAborted();
-	const completion = await createClient(env).chat.completions.create(
-		{
-			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-			max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
-			messages: [{ role: 'system', content: params.instructions }, humanMessage(params.input, params.images)],
-		},
-		{ signal: params.signal },
+	const request = {
+		model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
+		max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+		messages: [{ role: 'system', content: params.instructions }, humanMessage(params.input, params.images)],
+	} satisfies ChatCompletionCreateParams;
+	const completion = await traceChatCompletion(env, request, () =>
+		createClient(env).chat.completions.create(request, { signal: params.signal }),
 	);
 	const result = modelUsage(env, completion, params.instructions + params.input);
 	if (!result.text) throw new Error('No response from model');
@@ -119,29 +176,32 @@ export async function streamToolModel(
 	params: {
 		messages: ChatCompletionMessageParam[];
 		tools?: ChatCompletionTool[];
+		toolChoice?: ChatCompletionToolChoiceOption;
 		signal?: AbortSignal;
 		maxTokens?: number;
 		onDelta: (text: string) => void | Promise<void>;
 	},
 ) {
 	params.signal?.throwIfAborted();
-	const stream = createClient(env).chat.completions.stream(
-		{
-			model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-			max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
-			messages: params.messages,
-			tools: params.tools,
-			...(params.tools ? { parallel_tool_calls: false } : {}),
-			stream_options: { include_usage: true },
-		},
-		{ signal: params.signal },
-	);
-	for await (const chunk of stream) {
-		params.signal?.throwIfAborted();
-		const text = chunk.choices[0]?.delta.content;
-		if (text) await params.onDelta(text);
-	}
-	const completion = await stream.finalChatCompletion();
+	const request = {
+		model: env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
+		max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+		messages: params.messages,
+		tools: params.tools,
+		tool_choice: params.toolChoice,
+		...(params.tools ? { parallel_tool_calls: false } : {}),
+		stream: true,
+		stream_options: { include_usage: true },
+	} satisfies ChatCompletionCreateParams;
+	const completion = await traceChatCompletion(env, request, async () => {
+		const stream = createClient(env).chat.completions.stream(request, { signal: params.signal });
+		for await (const chunk of stream) {
+			params.signal?.throwIfAborted();
+			const text = chunk.choices[0]?.delta.content;
+			if (text) await params.onDelta(text);
+		}
+		return stream.finalChatCompletion();
+	});
 	const response = completion.choices[0]?.message;
 	if (!response) throw new Error('No response from model');
 	return { ...modelUsage(env, completion, JSON.stringify(params.messages)), response };

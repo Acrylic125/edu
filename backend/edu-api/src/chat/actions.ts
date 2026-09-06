@@ -21,6 +21,7 @@ export async function acceptProposal(
 	io.signal.throwIfAborted();
 	switch (proposal.kind) {
 		case 'create-topic': {
+			const reflectsLearnerPlan = proposal.plan?.some((item) => item.sourceIndex !== undefined) ?? false;
 			const part = shortFocus(proposal.part);
 			const topic = await createTopic(db, {
 				userId: context.userId,
@@ -43,9 +44,16 @@ export async function acceptProposal(
 					});
 			}
 
-			const plan = formatTopicPlanMarkdown(proposal.chapters ?? [{ chapter: proposal.part, whatIsCovered: proposal.summary }]);
+			const plan = formatTopicPlanMarkdown(
+				proposal.plan ?? [{ title: proposal.part, role: 'section', depth: 0 }],
+				reflectsLearnerPlan,
+			);
 			io.onDelta(0, plan);
-			const parts = [textPart(plan), optionsPart([optionLabel("What's", proposal.part) + '?', optionLabel('Test me on', proposal.title)])];
+			let optionLabels = [optionLabel("What's", proposal.part) + '?', optionLabel('Test me on', proposal.title)];
+			if (reflectsLearnerPlan) {
+				optionLabels = [optionLabel('Explain', proposal.part), optionLabel('Practice', proposal.part)];
+			}
+			const parts = [textPart(plan), optionsPart(optionLabels)];
 			return {
 				parts,
 				committed: true as const,

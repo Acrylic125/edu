@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseExplicitCommand } from './intent';
+import { isExplicitAdvanceRequest, parseExplicitCommand } from './intent';
 
 describe('parseExplicitCommand', () => {
 	it('parses /new command', () => {
@@ -46,5 +46,16 @@ describe('parseExplicitCommand', () => {
 
 	it('returns null for natural language', () => {
 		expect(parseExplicitCommand('Why is this O(n log n)?')).toBeNull();
+	});
+});
+
+describe('isExplicitAdvanceRequest', () => {
+	it('treats an unambiguous continuation request as authorization', () => {
+		expect(isExplicitAdvanceRequest('Continue to next topic')).toBe(true);
+		expect(isExplicitAdvanceRequest('Move on to the next topic!')).toBe(true);
+	});
+
+	it('does not authorize an ambiguous mention of another topic', () => {
+		expect(isExplicitAdvanceRequest('What is the next topic?')).toBe(false);
 	});
 });

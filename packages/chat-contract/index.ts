@@ -22,18 +22,38 @@ export const OptionsPartSchema = z.object({
   options: z.array(OptionItemSchema),
 });
 
+const TopicPlanItemBaseSchema = z.object({
+  sourceIndex: z.number().int().min(0).max(31).optional(),
+  title: z.string().min(1).max(120),
+});
+
+export const TopicPlanItemSchema = z.discriminatedUnion("role", [
+  TopicPlanItemBaseSchema.extend({ role: z.literal("context") }),
+  TopicPlanItemBaseSchema.extend({ role: z.literal("header") }),
+  TopicPlanItemBaseSchema.extend({
+    role: z.literal("section"),
+    depth: z.number().int().min(0).max(4),
+  }),
+]);
+
+const SuppliedTopicPlanItemBaseSchema = TopicPlanItemBaseSchema.required({
+  sourceIndex: true,
+});
+
+export const SuppliedTopicPlanItemSchema = z.discriminatedUnion("role", [
+  SuppliedTopicPlanItemBaseSchema.extend({ role: z.literal("context") }),
+  SuppliedTopicPlanItemBaseSchema.extend({ role: z.literal("header") }),
+  SuppliedTopicPlanItemBaseSchema.extend({
+    role: z.literal("section"),
+    depth: z.number().int().min(0).max(4),
+  }),
+]);
+
+export type TopicPlanItem = z.infer<typeof TopicPlanItemSchema>;
+
 export const CreateTopicProposalSchema = z.object({
   kind: z.literal("create-topic"),
-  chapters: z
-    .array(
-      z.object({
-        chapter: z.string().min(1).max(120),
-        whatIsCovered: z.string().min(1).max(1000),
-      }),
-    )
-    .min(1)
-    .max(8)
-    .optional(),
+  plan: z.array(TopicPlanItemSchema).min(1).max(32).optional(),
   title: z.string().min(1).max(120),
   summary: z.string().min(1).max(4000),
   part: z.string().min(1).max(120),

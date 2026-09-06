@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamToolModel } from './llm';
+import { callLlm, streamToolModel, withLlmTrace } from './llm';
 
 afterEach(() => vi.unstubAllGlobals());
 describe('native provider streaming contract', () => {
@@ -65,5 +65,30 @@ describe('native provider streaming contract', () => {
 			streamToolModel({ OPENROUTER_API_KEY: 'test' }, { messages: [], signal: AbortSignal.abort(), onDelta: vi.fn() }),
 		).rejects.toThrow();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+	it('exports model calls and the chat run', async () => {
+		const traceHost = 'https://trace.test';
+		const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+			if (String(input) === traceHost) return new Response(null, { status: 200 });
+			return Response.json({
+				id: 'completion-1',
+				model: 'test-model',
+				object: 'chat.completion',
+				created: 1,
+				choices: [{ index: 0, finish_reason: 'stop', logprobs: null, message: { role: 'assistant', content: 'Hello' } }],
+				usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const env = { OPENROUTER_API_KEY: 'test', LANGTRACE_API_HOST: traceHost };
+
+		await withLlmTrace(env, 'run_trace', () => callLlm(env, { instructions: 'Reply briefly.', input: 'Hello' }));
+		await vi.waitFor(() => {
+			const exports = fetchMock.mock.calls.filter(([input]) => String(input) === traceHost);
+			expect(exports).toHaveLength(2);
+			const payloads = exports.map(([, init]) => String(init?.body)).join('\n');
+			expect(payloads).toContain('openai.chat.completions');
+			expect(payloads).toContain('chat.run');
+		});
 	});
 });

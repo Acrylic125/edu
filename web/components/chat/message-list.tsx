@@ -30,7 +30,7 @@ type MessageListProps = {
 }
 
 // LegendList snapshots this prop by identity, so it must stay stable across renders.
-const messageListContentStyle = { paddingBottom: 144 } as const
+const messageListContentStyle = { paddingBottom: 240 } as const
 
 function textFromParts(parts: MessagePart[]) {
   const lines: string[] = []
@@ -257,6 +257,10 @@ function ListHeader({ header }: { header: ReactNode }) {
   return <>{header}</>
 }
 
+function ListFooter({ footer }: { footer: ReactNode }) {
+  return <>{footer}</>
+}
+
 export function MessageList({
   messages,
   header,
@@ -272,21 +276,18 @@ export function MessageList({
     ({ item }: LegendListRenderItemProps<ChatMessage>) => {
       const isLatest = isLatestChatMessage(item.id, lastMessageId)
       return (
-        <>
-          <div className="mx-auto w-full max-w-3xl px-4">
-            <MessageRow
-              message={item}
-              isLatest={isLatest}
-              onExpandImage={setExpandedImage}
-              onOption={onOption}
-              onDecision={onDecision}
-            />
-          </div>
-          {isLatest ? footer : null}
-        </>
+        <div className="mx-auto w-full max-w-3xl px-4">
+          <MessageRow
+            message={item}
+            isLatest={isLatest}
+            onExpandImage={setExpandedImage}
+            onOption={onOption}
+            onDecision={onDecision}
+          />
+        </div>
       )
     },
-    [footer, lastMessageId, onDecision, onOption],
+    [lastMessageId, onDecision, onOption],
   )
 
   return (
@@ -314,6 +315,11 @@ export function MessageList({
         recycleItems={false}
         ListHeaderComponent={
           header == null ? undefined : <ListHeader header={header} />
+        }
+        ListFooterComponent={
+          messages.length === 0 || footer == null ? undefined : (
+            <ListFooter footer={footer} />
+          )
         }
         ListEmptyComponent={
           messages.length === 0 && footer != null ? <>{footer}</> : undefined
