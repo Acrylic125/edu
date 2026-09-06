@@ -35,6 +35,6 @@
 		"drizzle-kit": "1.0.0-beta.23",
 		"typescript": "^5.5.2",
 		"vitest": "^3.0.9",
-		"wrangler": "^4.125.0"
+		"wrangler": "^4.129.0"
 	}
 }

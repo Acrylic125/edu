@@ -4,7 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/build-next.mjs",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "deploy:production-ben": "NEXT_PUBLIC_API_URL=https://edu-api.benapps.dev NEXT_PUBLIC_BACKEND_URL=https://benapps.dev opennextjs-cloudflare build && opennextjs-cloudflare deploy --env production-ben",
+    "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -23,11 +28,12 @@
     "lucide-react": "^1.33.0",
     "mermaid": "^11.17.2",
     "nanoid": "^6.0.1",
-    "next": "16.3.2",
+    "next": "16.3.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "^10.1.0",
     "react-use-websocket": "^4.13.0",
+    "recharts": "3.8.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
@@ -37,6 +43,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.6",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^26.4.1",
     "@types/react": "^19",
@@ -45,7 +52,8 @@
     "eslint-config-next": "16.3.2",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wrangler": "4.129.0"
   },
   "packageManager": "pnpm@10.26.0"
 }

@@ -3,3 +3,7 @@ temp
 .DS_Store
 .tmp
 node_modules/
+.next/
+.open-next/
+.wrangler/
+*.tsbuildinfo

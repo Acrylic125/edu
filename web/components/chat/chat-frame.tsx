@@ -29,19 +29,23 @@ export function ChatFrame({
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
       {hideHeader ? null : (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <h1 className="min-w-0 truncate text-sm font-medium">
-              {titleSlot ?? title}
-            </h1>
-            <PlanDialog session={planSession ?? null} />
-          </div>
-          <div className="shrink-0 text-xs">
-            {statusSlot ?? (
-              <span className="text-muted-foreground">{status}</span>
+        <header className="h-12 shrink-0 border-b border-border px-3">
+          <div className="mx-auto flex h-full w-full max-w-6xl items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <h1 className="min-w-0 truncate text-sm font-medium">
+                {titleSlot ?? title}
+              </h1>
+              <PlanDialog session={planSession ?? null} />
+            </div>
+            {statusSlot === undefined ? (
+              <div className="shrink-0 text-xs">
+                <span className="text-muted-foreground">{status}</span>
+              </div>
+            ) : (
+              statusSlot
             )}
+            <AccountMenu />
           </div>
-          <AccountMenu />
         </header>
       )}
 

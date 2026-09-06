@@ -101,6 +101,8 @@ web_modules/
 
 .next
 out
+.wrangler
+.open-next
 
 # Nuxt.js build / generate output
 

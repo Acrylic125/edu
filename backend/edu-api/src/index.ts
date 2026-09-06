@@ -177,6 +177,21 @@ export default {
 			);
 		}
 
+		if (url.pathname === '/usage' && request.method === 'GET') {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) {
+				return withCors(env, request, authResult);
+			}
+
+			if (!env.DB) {
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
+			}
+
+			const db = createDb(env.DB);
+			const usage = await getUserUsage(db, authResult.userId);
+			return withCors(env, request, jsonResponse(usage));
+		}
+
 		return new Response('Not found', { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;
