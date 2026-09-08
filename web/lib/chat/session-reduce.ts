@@ -54,6 +54,9 @@ export function reduceSession(
         kind: "topic" as const,
         topicId: event.topicId,
         title: NEW_CHAT_TITLE,
+        summary: "",
+        plan: [],
+        updatedAt: "",
         messages: session.kind === "topic" ? session.messages : [],
         handoff: event.previous,
       },
@@ -86,6 +89,9 @@ function applyUserSent(
         kind: "topic" as const,
         topicId: "",
         title: titleFromContent(trimmed),
+        summary: "",
+        plan: [],
+        updatedAt: "",
         messages: [user],
         handoff: null,
       },
@@ -339,10 +345,13 @@ function applyRunEnded(
   const hasMessage = session.messages.some(
     (item) => item.id === message.messageId,
   )
+  const planPart = message.parts.find((part) => part.type === "plan")
+  const plan = planPart?.type === "plan" ? planPart.steps : session.plan
   if (!hasMessage) {
     return {
       session: {
         ...session,
+        plan,
         messages: [
           ...session.messages,
           {
@@ -360,6 +369,7 @@ function applyRunEnded(
   return {
     session: {
       ...session,
+      plan,
       messages: session.messages.map((item) => {
         if (item.id !== message.messageId) {
           return item

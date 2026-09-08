@@ -138,7 +138,7 @@ const MessageRow = memo(function MessageRow({
     if (part.type === "attachment" && part.url)
       attachments.push({
         id: part.ref,
-        name: part.filename ?? "Image",
+        name: part.filename ?? (part.mimeType === "application/pdf" ? "Document.pdf" : "Image"),
         mimeType: part.mimeType ?? "image/jpeg",
         previewUrl: part.url,
       })
@@ -148,7 +148,7 @@ const MessageRow = memo(function MessageRow({
     case "user": {
       const text = textFromParts(message.parts)
       return (
-        <div className="group flex flex-col items-end py-2">
+        <div data-message-role="user" className="group flex flex-col items-end py-2">
           <div className="w-fit max-w-[85%] rounded-2xl bg-secondary px-3 py-2 text-sm">
             <MessageImageGrid images={attachments} onExpand={onExpandImage} />
             {text.length > 0 ? (
@@ -158,7 +158,7 @@ const MessageRow = memo(function MessageRow({
             ) : null}
             {text.length === 0 && attachments.length > 0 ? (
               <p className="text-muted-foreground text-xs italic">
-                Attached image
+                Attached file
               </p>
             ) : null}
           </div>
@@ -176,7 +176,7 @@ const MessageRow = memo(function MessageRow({
           part.type === "text" && /```mermaid(?:\s|$)/i.test(part.content),
       )
       return (
-        <div className="group flex flex-col items-end py-2">
+        <div data-message-role="assistant" className="group flex flex-col items-end py-2">
           <div
             className={cn(
               "self-start",
@@ -364,27 +364,45 @@ function PartView({
   if (!actionsEnabled) {
     return null
   }
+  const proposedPlan = part.proposal.kind === "update-topic" ? part.proposal.plan : null
+  const currentIds = new Set(plan?.map((step) => step.id) ?? [])
+  const proposedAdditions = proposedPlan?.filter((step) => !currentIds.has(step.id)) ?? []
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        type="button"
-        size="sm"
-        onClick={() => {
-          onDecision(part.proposalId, "accept")
-        }}
-      >
-        Accept
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          onDecision(part.proposalId, "reject")
-        }}
-      >
-        Reject
-      </Button>
+    <div className="space-y-3 rounded-xl border border-border bg-card p-3">
+      {part.proposal.kind === "update-topic" && part.proposal.explanation ? (
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {part.proposal.explanation}
+        </p>
+      ) : null}
+      {proposedAdditions.length > 0 ? (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">Proposed additions</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
+            {proposedAdditions.map((step) => <li key={step.id}>{step.label}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => {
+            onDecision(part.proposalId, "accept")
+          }}
+        >
+          Accept
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            onDecision(part.proposalId, "reject")
+          }}
+        >
+          Reject
+        </Button>
+      </div>
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { RunBudget } from '../billing/run-budget';
 import { eq } from 'drizzle-orm';
 
 import type { Db } from '../../db/client';
@@ -6,6 +7,7 @@ import { nanoid } from 'nanoid';
 import { callLlm, streamLlm, streamToolModel, withLlmTrace, type LlmEnv } from './llm';
 import { drainWordChunks, flushWords } from '../chat/word-buffer';
 import type { AgentImage } from '../assets/load';
+import type { Context } from '@opentelemetry/api';
 
 const PROVIDER = 'openrouter';
 
@@ -14,8 +16,11 @@ export class AgentRunner {
 	private llmEnv: LlmEnv;
 	readonly runId: string;
 	private topicId: string | null;
+	private userId: string;
 	private signal: AbortSignal | undefined;
 	private sequence = 0;
+	private budget = new RunBudget();
+	private traceContext: Context | undefined;
 
 	private onProgress: ((label: string) => void) | undefined;
 	private images: AgentImage[];
@@ -24,6 +29,7 @@ export class AgentRunner {
 	constructor(options: {
 		db: Db;
 		llmEnv: LlmEnv;
+		userId: string;
 		runId: string;
 		topicId: string | null;
 		signal?: AbortSignal;
@@ -32,6 +38,7 @@ export class AgentRunner {
 	}) {
 		this.db = options.db;
 		this.llmEnv = options.llmEnv;
+		this.userId = options.userId;
 		this.runId = options.runId;
 		this.topicId = options.topicId;
 		this.signal = options.signal;
@@ -50,8 +57,20 @@ export class AgentRunner {
 		this.retrievedImages.push(...images);
 	}
 
-	withTrace<T>(fn: () => Promise<T>) {
-		return withLlmTrace(this.llmEnv, this.runId, fn);
+	withTrace<T>(input: string, fn: () => Promise<T>) {
+		return withLlmTrace(
+			this.llmEnv,
+			{
+				runId: this.runId,
+				sessionId: this.topicId ?? this.runId,
+				userId: this.userId,
+				input,
+			},
+			(traceContext) => {
+				this.traceContext = traceContext;
+				return fn();
+			},
+		);
 	}
 
 	async recordStep(params: { type: string; name: string; input?: object | null; output?: object | null; error?: string }) {
@@ -83,8 +102,12 @@ export class AgentRunner {
 
 	async toolTurn(params: Omit<Parameters<typeof streamToolModel>[1], 'signal'>) {
 		this.signal?.throwIfAborted();
+		// Image payloads have their own byte limits; measure textual context here.
+		const input = JSON.stringify({ messages: params.messages, tools: params.tools }, (key, value) => key === 'image_url' ? '[image]' : value);
+		const maxTokens = this.budget.reserve(input, params.maxTokens);
 		const stepId = await this.recordStep({ type: 'llm', name: 'tutor' });
-		const result = await streamToolModel(this.llmEnv, { ...params, signal: this.signal });
+		const result = await streamToolModel(this.llmEnv, { ...params, maxTokens, signal: this.signal, traceContext: this.traceContext });
+		this.budget.settle(maxTokens, result.outputTokens);
 		if (this.topicId) {
 			await this.db
 				.update(agentStep)
@@ -104,6 +127,7 @@ export class AgentRunner {
 		currentImagesOnly?: boolean;
 	}) {
 		this.signal?.throwIfAborted();
+		const maxTokens = this.budget.reserve(params.instructions + params.input, params.maxTokens);
 		const stepId = await this.recordStep({
 			type: params.stepType ?? 'llm',
 			name: params.name,
@@ -119,10 +143,12 @@ export class AgentRunner {
 				instructions: params.instructions,
 				input: params.input,
 				images,
-				maxTokens: params.maxTokens,
+				maxTokens,
 				signal: this.signal,
+				traceContext: this.traceContext,
 			});
 
+			this.budget.settle(maxTokens, result.outputTokens);
 			await this.db
 				.update(agentStep)
 				.set({ output: { text: result.text } })
@@ -150,6 +176,7 @@ export class AgentRunner {
 		currentImagesOnly?: boolean;
 	}) {
 		this.signal?.throwIfAborted();
+		const maxTokens = this.budget.reserve(params.instructions + params.input, params.maxTokens);
 		const stepId = await this.recordStep({
 			type: params.stepType ?? 'llm',
 			name: params.name,
@@ -166,8 +193,9 @@ export class AgentRunner {
 				instructions: params.instructions,
 				input: params.input,
 				images,
-				maxTokens: params.maxTokens,
+				maxTokens,
 				signal: this.signal,
+				traceContext: this.traceContext,
 				onDelta: async (delta) => {
 					pending = await drainWordChunks(pending, delta, params.onChunk);
 				},
@@ -178,6 +206,7 @@ export class AgentRunner {
 				params.onChunk(remainder.flush);
 			}
 
+			this.budget.settle(maxTokens, result.outputTokens);
 			await this.db
 				.update(agentStep)
 				.set({ output: { text: result.text } })
@@ -249,6 +278,7 @@ export async function createAgentRun(
 	db: Db,
 	llmEnv: LlmEnv,
 	params: {
+		userId: string;
 		runId?: string;
 		topicId: string | null;
 		userMessageId: string;
@@ -274,6 +304,7 @@ export async function createAgentRun(
 	return new AgentRunner({
 		db,
 		llmEnv,
+		userId: params.userId,
 		runId,
 		topicId: params.topicId,
 		signal: params.signal,

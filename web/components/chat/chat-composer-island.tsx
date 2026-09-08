@@ -23,7 +23,7 @@ export function ChatComposerIsland({
   const store = useChatStoreApi()
   const socket = useChatStore((state) => state.socket)
   const run = useChatStore((state) => state.run)
-  const { sendJsonMessage } = useChatSend()
+  const { sendJsonMessage, sendChatRequest } = useChatSend()
 
   return (
     <ChatComposer
@@ -32,10 +32,10 @@ export function ChatComposerIsland({
       socket={socket}
       run={run}
       footerStart={<TopicMenu />}
-      onSend={(content, attachments) => {
+      onSend={async (content, attachments) => {
         const state = store.getState()
         if (state.sendGate(content, attachments.length > 0, true) !== "send") {
-          return
+          throw new Error("The tutor is not ready to receive a request yet.")
         }
         const text = content.trim()
         if (text === "" && attachments.length === 0) {
@@ -56,7 +56,7 @@ export function ChatComposerIsland({
         }
         try {
           const topicId = activeTopicIdForSend(state.session)
-          sendJsonMessage(
+          await sendChatRequest(
             WsChatClientMessageSchema.parse({
               type: "message",
               messageId: messageId,
@@ -64,8 +64,10 @@ export function ChatComposerIsland({
               ...(topicId ? { topicId } : {}),
             }),
           )
-        } catch {
-          store.getState().stopLocal()
+        } catch (error) {
+          const current = store.getState()
+          if (current.run.status === "running" && current.run.runId === "") current.stopLocal()
+          throw error
         }
       }}
       onStop={() => {

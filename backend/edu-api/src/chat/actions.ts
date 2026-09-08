@@ -5,10 +5,10 @@ import type { ChatRunIo } from './route';
 import type { Proposal, ChatRequest } from '../messages/schema';
 import { linkAssetsToMessage } from '../assets/repository';
 import { createTopicMessage, reassignTopicMessage } from '../messages/persistence';
-import { textPart, optionsPart, planPart } from '../messages/parts';
+import { textPart, optionsPart, planPart, partsToText } from '../messages/parts';
 import { createTopic, setCurrentTopic } from '../topics/repository';
 import { shortFocus, optionLabel } from './option-label';
-import { formatTopicPlanMarkdown } from './new-topic';
+import { extractSuppliedPlanLines, formatTopicPlanMarkdown, learningStepsFromPlan } from './new-topic';
 import { applyTopicUpdate } from './update-topic';
 export async function acceptProposal(
 	db: Db,
@@ -21,7 +21,13 @@ export async function acceptProposal(
 	io.signal.throwIfAborted();
 	switch (proposal.kind) {
 		case 'create-topic': {
-			const plan = proposal.plan ?? [{ id: 'focus', label: proposal.part, summary: proposal.summary, parent: null }];
+			let plan = proposal.plan
+				? learningStepsFromPlan(proposal.plan, proposal.title)
+				: [{ id: 'focus', label: proposal.part, summary: proposal.summary, parent: null }];
+			const suppliedTitle = extractSuppliedPlanLines(partsToText(request.parts))?.sourceLines[0];
+			if (proposal.plan && suppliedTitle) {
+				plan = learningStepsFromPlan(plan, suppliedTitle);
+			}
 			let part = shortFocus(proposal.part);
 			if (proposal.legacyPlan) {
 				const suppliedContext = proposal.legacyPlan.find(
@@ -30,8 +36,8 @@ export async function acceptProposal(
 				const firstSection = proposal.legacyPlan.find((item) => item.role === 'section' && item.depth === 0);
 				if (suppliedContext && firstSection) part = shortFocus(firstSection.title);
 			} else if (proposal.plan) {
-				const matchingStep = proposal.plan.find((step) => shortFocus(step.label).toLowerCase() === part.toLowerCase());
-				const firstRootStep = proposal.plan.find((step) => step.parent === null);
+				const matchingStep = plan.find((step) => shortFocus(step.label).toLowerCase() === part.toLowerCase());
+				const firstRootStep = plan.find((step) => step.parent === null);
 				if (!matchingStep && firstRootStep) part = shortFocus(firstRootStep.label);
 			}
 			const currentStep = plan.find((step) => shortFocus(step.label).toLowerCase() === part.toLowerCase());
@@ -85,8 +91,10 @@ export async function acceptProposal(
 				title: proposal.title,
 				summary: proposal.summary,
 				part: proposal.part,
+				plan: proposal.plan,
 			});
-			io.onDelta(0, 'Learning plan updated!');
+			const confirmation = applied.parts[0];
+			io.onDelta(0, confirmation?.type === 'text' ? confirmation.content : 'Learning plan updated!');
 			return {
 				parts: applied.parts,
 				committed: true as const,

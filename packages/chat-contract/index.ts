@@ -29,12 +29,14 @@ export const TopicPlanStepSchema = z.object({
   parent: z.string().min(1).max(128).nullable(),
 });
 
+export const MAX_TOPIC_PLAN_STEPS = 128;
+
 export const PlanPartSchema = z.object({
   type: z.literal("plan"),
-  steps: z.array(TopicPlanStepSchema).min(1).max(32),
+  steps: z.array(TopicPlanStepSchema).min(1).max(MAX_TOPIC_PLAN_STEPS),
 });
 
-export const TopicPlanSchema = z.array(TopicPlanStepSchema).min(1).max(32).superRefine((steps, ctx) => {
+export const TopicPlanSchema = z.array(TopicPlanStepSchema).min(1).max(MAX_TOPIC_PLAN_STEPS).superRefine((steps, ctx) => {
   const ids = new Set<string>();
   for (const [index, step] of steps.entries()) {
     if (ids.has(step.id)) ctx.addIssue({ code: "custom", path: [index, "id"], message: "Step ids must be unique" });
@@ -106,6 +108,29 @@ export const UpdateTopicProposalSchema = z.object({
   summary: z.string().optional(),
   part: z.string().min(1).max(120).optional(),
   explanation: z.string().optional(),
+  intentMatch: z.enum(["aligned", "changes-goal"]).optional(),
+  plan: TopicPlanSchema.optional(),
+});
+
+export const TopicDetailSchema = z.object({
+  id: z.string(),
+  title: z.string().min(1).max(120),
+  summary: z.string().max(4000),
+  plan: z.union([TopicPlanSchema, z.array(TopicPlanStepSchema).length(0)]),
+  part: z.string().nullable(),
+  currentStepId: z.string().nullable(),
+  updatedAt: z.string(),
+});
+
+export const UpdateTopicRequestSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  summary: z.string().trim().max(4000),
+  plan: TopicPlanSchema,
+  expectedUpdatedAt: z.string(),
+});
+
+export const TopicDetailResponseSchema = z.object({
+  topic: TopicDetailSchema,
 });
 
 export const ProposalSchema = z.discriminatedUnion("kind", [
@@ -216,9 +241,17 @@ export const WsErrorMessageSchema = z.object({
   type: z.literal("error"),
   message: z.string(),
   runId: z.string().nullable().optional(),
+  requestId: z.string().optional(),
+  code: z.enum(["limit_exceeded", "already_submitted"]).optional(),
+  metric: z.string().optional(),
+  limit: z.number().optional(),
+  remaining: z.number().optional(),
+  resetAt: z.string().nullable().optional(),
+  retryAfter: z.number().optional(),
 });
 
 export const WsRunStartedMessageSchema = z.object({
+  requestId: z.string().optional(),
   type: z.literal("run.started"),
   runId: z.string(),
   messageId: z.string(),
@@ -259,14 +292,7 @@ export const WsServerMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export const CurrentTopicMessagesSchema = z.object({
-  topic: z
-    .object({
-      id: z.string(),
-      title: z.string(),
-      part: z.string().nullable().optional(),
-      currentStepId: z.string().nullable().optional(),
-    })
-    .nullable(),
+  topic: TopicDetailSchema.nullable(),
   messages: z.array(ResponseMessageSchema),
 });
 
@@ -278,6 +304,8 @@ export type ResponseMessage = z.infer<typeof ResponseMessageSchema>;
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
 export type ChatResponse = z.infer<typeof ChatResponseSchema>;
 export type Proposal = z.infer<typeof ProposalSchema>;
+export type TopicDetail = z.infer<typeof TopicDetailSchema>;
+export type UpdateTopicRequest = z.infer<typeof UpdateTopicRequestSchema>;
 export type WsChatClientMessage = z.infer<typeof WsChatClientMessageSchema>;
 export type WsClientEnvelope = z.infer<typeof WsClientEnvelopeSchema>;
 export type WsServerMessage = z.infer<typeof WsServerMessageSchema>;

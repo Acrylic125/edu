@@ -54,6 +54,7 @@ export type ChatStore = ChatStoreState & {
   failSwitch: (message: string) => void
   replaceCurrentMessages: (payload: CurrentMessagesPayload) => void
   setCurrentStep: (stepId: string) => void
+  setTopicDetails: (topic: NonNullable<CurrentMessagesPayload["topic"]>) => void
   upsertListing: (listing: TopicListing) => void
   replaceCatalog: (catalog: TopicCatalog) => void
   sendGate: (
@@ -103,7 +104,12 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             current.run.runId !== message.runId)
         )
           return
+        let session = current.session
+        if (message.code === "limit_exceeded" && message.requestId && session.kind === "topic") {
+          session = { ...session, messages: session.messages.filter((item) => item.id !== message.requestId) }
+        }
         set({
+          session,
           error: message.message,
           optionState: current.optionState
             ? { ...current.optionState, status: "failed" }
@@ -246,6 +252,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
 
     applySocketClosed: () => {
       set((state) => {
+        if (state.socket.status === "ready") {
+          return state
+        }
         const reduced = reduceSession(state.session, state.run, {
           type: "socket_closed",
         })
@@ -405,6 +414,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
               kind: "topic",
               topicId: payload.topic.id,
               title: payload.topic.title,
+              summary: payload.topic.summary,
+              plan: payload.topic.plan,
+              updatedAt: payload.topic.updatedAt,
               messages: payload.messages,
               handoff: null,
               part: payload.topic.part,
@@ -420,6 +432,9 @@ export function createChatStore(bootstrap: ChatBootstrap) {
           session: {
             ...state.session,
             title: payload.topic.title,
+            summary: payload.topic.summary,
+            plan: payload.topic.plan,
+            updatedAt: payload.topic.updatedAt,
             messages: payload.messages,
             part: payload.topic.part,
             currentStepId: payload.topic.currentStepId,
@@ -438,6 +453,32 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             ...state.session,
             currentStepId: stepId,
           },
+        }
+      })
+    },
+    setTopicDetails: (topic) => {
+      set((state) => {
+        if (state.session.kind !== "topic" || state.session.topicId !== topic.id) {
+          return state
+        }
+        const listing = state.catalog.byId[topic.id]
+        return {
+          session: {
+            ...state.session,
+            title: topic.title,
+            summary: topic.summary,
+            plan: topic.plan,
+            part: topic.part,
+            currentStepId: topic.currentStepId,
+            updatedAt: topic.updatedAt,
+          },
+          catalog: upsertListingInCatalog(state.catalog, {
+            id: topic.id,
+            title: topic.title,
+            summary: topic.summary,
+            createdAt: listing?.createdAt ?? "",
+            updatedAt: topic.updatedAt,
+          }),
         }
       })
     },
@@ -482,6 +523,9 @@ function sessionFromPayload(payload: CurrentMessagesPayload) {
     kind: "topic" as const,
     topicId: payload.topic.id,
     title: payload.topic.title,
+    summary: payload.topic.summary,
+    plan: payload.topic.plan,
+    updatedAt: payload.topic.updatedAt,
     messages: payload.messages,
     handoff: null,
     part: payload.topic.part,

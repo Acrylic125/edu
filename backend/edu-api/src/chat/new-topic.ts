@@ -1,4 +1,4 @@
-import type { TopicPlanItem, TopicPlanStep } from '../messages/schema';
+import { MAX_TOPIC_PLAN_STEPS, type TopicPlanItem, type TopicPlanStep } from '../messages/schema';
 
 function withoutNewCommand(message: string) {
 	let content = message.trim();
@@ -13,10 +13,63 @@ function withoutNewCommand(message: string) {
 export function extractSuppliedPlanLines(message: string) {
 	const sourceLines = withoutNewCommand(message)
 		.split('\n')
-		.map((line) => line.trim())
-		.filter(Boolean);
-	if (sourceLines.length < 4 || sourceLines.length > 32 || sourceLines.some((line) => line.length > 120)) return null;
+		.map((line) => line.replace(/\s+$/, ''))
+		.filter((line) => line.trim().length > 0);
+	if (sourceLines.length < 4 || sourceLines.length > MAX_TOPIC_PLAN_STEPS || sourceLines.some((line) => line.length > 120)) return null;
 	return { sourceLines };
+}
+
+function cleanOutlineLabel(line: string) {
+	return line.replace(/^(?:[-*+]|(?:[IVXLCDM]+|[A-Z]|\d+)[.)])\s+/, '').trim();
+}
+
+function outlineDepth(source: string) {
+	const leading = source.match(/^\s*/)?.[0] ?? '';
+	const spaces = leading.replace(/\t/g, '  ').length;
+	if (/^\s*[-*+]\s+/.test(source)) return Math.max(1, Math.floor(spaces / 2));
+	return Math.floor(spaces / 2);
+}
+
+export function structuredPlanFromSuppliedLines(sourceLines: string[]) {
+	const steps = sourceLines.map((source, index) => {
+		return {
+			index,
+			depth: outlineDepth(source),
+			label: cleanOutlineLabel(source),
+		};
+	});
+	return steps.map((step) => {
+		let parent: string | null = null;
+		for (let index = step.index - 1; index >= 0; index -= 1) {
+			const candidate = steps[index];
+			if (candidate && candidate.depth < step.depth) {
+				parent = `step-${candidate.index + 1}`;
+				break;
+			}
+		}
+		return {
+			id: `step-${step.index + 1}`,
+			label: step.label,
+			summary: step.label,
+			parent,
+		};
+	});
+}
+
+export function learningStepsFromPlan(steps: TopicPlanStep[], title: string) {
+	if (steps.length <= 1) return steps;
+	const normalizedTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+	const titleStep = steps.find((step) => {
+		if (step.parent !== null) return false;
+		return step.label.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === normalizedTitle;
+	});
+	if (!titleStep) return steps;
+	return steps
+		.filter((step) => step.id !== titleStep.id)
+		.map((step) => {
+			if (step.parent !== titleStep.id) return step;
+			return { ...step, parent: null };
+		});
 }
 
 function formatSection(item: Extract<TopicPlanItem, { role: 'section' }>) {

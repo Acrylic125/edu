@@ -15,6 +15,7 @@ export type AgentContext = {
 		part: string | null;
 		plan?: TopicPlanStep[];
 		currentStepId?: string | null;
+		updatedAt?: string;
 	} | null;
 	recentMessages: PersistedTopicMessage[];
 	currentMessage: string;
@@ -56,6 +57,7 @@ export async function loadChatContext(db: Db, userId: string, currentMessage: st
 			part: currentStep?.label ?? current.part,
 			plan: current.topic.plan,
 			currentStepId: current.currentStepId,
+			updatedAt: current.topic.updatedAt.toISOString(),
 		},
 		recentMessages,
 		currentMessage,

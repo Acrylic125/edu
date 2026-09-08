@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, type ReactNode } from "react"
+import { createContext, useContext, useRef, type ReactNode } from "react"
 
 import { useSession } from "@/lib/auth-client"
 import { fetchCurrentMessages, fetchTopics } from "@/lib/chat/http"
@@ -13,6 +13,7 @@ import {
 
 type ChatSendApi = {
   sendJsonMessage: (jsonMessage: WsClientEnvelope) => void
+  sendChatRequest: (jsonMessage: Extract<WsClientEnvelope, { type: "message" }>) => Promise<void>
 }
 
 const ChatSendContext = createContext<ChatSendApi | null>(null)
@@ -20,6 +21,7 @@ const ChatSendContext = createContext<ChatSendApi | null>(null)
 export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
   const session = useSession()
   const store = useChatStoreApi()
+  const submissions = useRef(new Map<string, { resolve: () => void; reject: (error: Error) => void }>())
 
   let socketUrl: string | null = null
   if (session.data) {
@@ -48,6 +50,12 @@ export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
           return
         }
         store.getState().applyWs(parsed.data)
+        const message = parsed.data
+        if ((message.type === "run.started" || message.type === "error") && message.requestId) {
+          const pending = submissions.current.get(message.requestId)
+          if (message.type === "error") pending?.reject(new Error(message.message))
+          else pending?.resolve()
+        }
         const bornId = store.getState().takeTopicBornRefresh()
         if (bornId && session.data) {
           const token = session.data.session.token
@@ -59,11 +67,38 @@ export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
     },
     onClose: () => {
       store.getState().applySocketClosed()
+      for (const pending of submissions.current.values()) pending.reject(new Error("Connection lost before confirmation. Check the conversation before retrying."))
     },
   })
 
+  function sendChatRequest(message: Extract<WsClientEnvelope, { type: "message" }>) {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        submissions.current.delete(message.messageId)
+        reject(new Error("Confirmation timed out. Check the conversation before retrying."))
+      }, 30_000)
+      submissions.current.set(message.messageId, {
+        resolve: () => {
+          clearTimeout(timer)
+          submissions.current.delete(message.messageId)
+          resolve()
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          submissions.current.delete(message.messageId)
+          reject(error)
+        },
+      })
+      try {
+        sendJsonMessage(message, false)
+      } catch {
+        submissions.current.get(message.messageId)?.reject(new Error("Could not send the request."))
+      }
+    })
+  }
+
   return (
-    <ChatSendContext.Provider value={{ sendJsonMessage }}>
+    <ChatSendContext.Provider value={{ sendJsonMessage, sendChatRequest }}>
       {children}
     </ChatSendContext.Provider>
   )

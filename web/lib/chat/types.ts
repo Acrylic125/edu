@@ -1,5 +1,5 @@
 import type { TopicId, MessageId } from "./ids"
-import type { MessagePart, ResponseMessage } from "./ws-schema"
+import type { MessagePart, ResponseMessage, TopicPlanStep } from "./ws-schema"
 
 export type { TopicId, MessageId }
 
@@ -37,6 +37,9 @@ export type ChatSession =
       kind: "topic"
       topicId: TopicId
       title: string
+      summary: string
+      plan: TopicPlanStep[]
+      updatedAt: string
       messages: ChatMessage[]
       handoff: TopicHandoff | null
       part?: string | null
@@ -59,6 +62,9 @@ export type CurrentMessagesPayload = {
   topic: {
     id: TopicId
     title: string
+    summary: string
+    plan: TopicPlanStep[]
+    updatedAt: string
     part?: string | null
     currentStepId?: string | null
   } | null

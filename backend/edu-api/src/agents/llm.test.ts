@@ -82,13 +82,33 @@ describe('native provider streaming contract', () => {
 		vi.stubGlobal('fetch', fetchMock);
 		const env = { OPENROUTER_API_KEY: 'test', LANGTRACE_API_HOST: traceHost };
 
-		await withLlmTrace(env, 'run_trace', () => callLlm(env, { instructions: 'Reply briefly.', input: 'Hello' }));
+		await withLlmTrace(
+			env,
+			{ runId: 'run_trace', sessionId: 'topic_1', userId: 'user_1', input: 'Hello' },
+			(traceContext) =>
+				callLlm(env, {
+					instructions: 'Reply briefly.',
+					input: 'Hello',
+					images: [{ dataUrl: 'data:image/png;base64,c2VjcmV0' }],
+					traceContext,
+				}),
+		);
 		await vi.waitFor(() => {
 			const exports = fetchMock.mock.calls.filter(([input]) => String(input) === traceHost);
 			expect(exports).toHaveLength(2);
-			const payloads = exports.map(([, init]) => String(init?.body)).join('\n');
+			const spans = exports.flatMap(([, init]) => JSON.parse(String(init?.body)));
+			const payloads = JSON.stringify(spans);
 			expect(payloads).toContain('openai.chat.completions');
 			expect(payloads).toContain('chat.run');
+			expect(payloads).toContain('gen_ai.content.prompt');
+			expect(payloads).toContain('gen_ai.content.completion');
+			expect(payloads).toContain('[image omitted]');
+			expect(payloads).not.toContain('c2VjcmV0');
+			const runSpan = spans.find((span) => span.name === 'chat.run');
+			const modelSpan = spans.find((span) => span.name === 'openai.chat.completions');
+			expect(runSpan.attributes).toMatchObject({ 'edu.run.id': 'run_trace', 'session.id': 'topic_1', user_id: 'user_1' });
+			expect(modelSpan.traceId).toBe(runSpan.traceId);
+			expect(modelSpan.parentSpanId).toBe(runSpan.spanId);
 		});
 	});
 });

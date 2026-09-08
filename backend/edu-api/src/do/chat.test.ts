@@ -9,9 +9,11 @@ vi.mock('cloudflare:workers', () => ({
 		) {}
 	},
 }));
-const mocks = vi.hoisted(() => ({ handleChat: vi.fn(), getCurrentTopic: vi.fn(), createTopicMessage: vi.fn() }));
+const mocks = vi.hoisted(() => ({ handleChat: vi.fn(), handleDecision: vi.fn(), getCurrentTopic: vi.fn(), createTopicMessage: vi.fn(), reserve: vi.fn(), settle: vi.fn() }));
+vi.mock('../billing/account', () => ({ getUserPlan: async () => 'free' }));
+vi.mock('../billing/quota', () => ({ QuotaStore: class { reserve = mocks.reserve; settle = mocks.settle; } }));
 vi.mock('../../db/client', () => ({ createDb: () => ({}) }));
-vi.mock('../chat/route', () => ({ handleChat: mocks.handleChat, handleDecision: vi.fn() }));
+vi.mock('../chat/route', () => ({ handleChat: mocks.handleChat, handleDecision: mocks.handleDecision }));
 vi.mock('../topics/repository', () => ({ getCurrentTopic: mocks.getCurrentTopic, getTopicForUser: vi.fn(), setCurrentTopic: vi.fn() }));
 vi.mock('../messages/persistence', () => ({ createTopicMessage: mocks.createTopicMessage }));
 vi.mock('../assets/load', () => ({ loadAttachedImages: async () => [], loadOwnedImagesByIds: async () => [] }));
@@ -47,9 +49,48 @@ const frame = (id: string) => JSON.stringify({ type: 'message', messageId: id, p
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.getCurrentTopic.mockResolvedValue(null);
+	mocks.reserve.mockResolvedValue({ ok: true, duplicate: false });
+	mocks.settle.mockResolvedValue(undefined);
 });
 
 describe('Durable Object run lifecycle', () => {
+	it('allows deterministic confirmations without AI allowance', async () => {
+		mocks.reserve.mockResolvedValue({ ok: false, error: { code: 'limit_exceeded' } });
+		mocks.handleDecision.mockResolvedValue({ parts: [], pendingProposal: null });
+		const { object, socket, records, pending } = setup();
+		records.set('pendingProposal', {
+			proposalId: 'p1', topicId: null, prompt: 'Confirm?',
+			request: { messageId: 'm0', parts: [{ type: 'text', content: 'Create a topic' }] },
+			proposal: { kind: 'create-topic', title: 'Math', summary: 'Learn math', part: 'Algebra' },
+		});
+		await object.webSocketMessage(socket, JSON.stringify({ type: 'decision', proposalId: 'p1', decision: 'accept' }));
+		await Promise.all(pending);
+		expect(mocks.reserve).not.toHaveBeenCalled();
+		expect(mocks.handleDecision).toHaveBeenCalledOnce();
+	});
+	it('refunds a provider failure before useful output', async () => {
+		mocks.handleChat.mockRejectedValueOnce(new Error('Provider unavailable'));
+		const { object, socket, pending } = setup();
+		await object.webSocketMessage(socket, frame('m1'));
+		await Promise.all(pending);
+		expect(mocks.settle).toHaveBeenCalledWith('message:m1', true);
+	});
+	it('rejects exhausted allowance before persisting a message or starting AI', async () => {
+		mocks.reserve.mockResolvedValueOnce({ ok: false, error: { code: 'limit_exceeded', message: 'Daily limit', retryAfter: 60 } });
+		const { object, socket, sent, records } = setup();
+		await object.webSocketMessage(socket, frame('m1'));
+		expect(sent.at(-1)).toMatchObject({ type: 'error', code: 'limit_exceeded', requestId: 'm1' });
+		expect(mocks.createTopicMessage).not.toHaveBeenCalled();
+		expect(mocks.handleChat).not.toHaveBeenCalled();
+		expect(records.has('activeRun')).toBe(false);
+	});
+	it('does not execute a replayed admission', async () => {
+		mocks.reserve.mockResolvedValueOnce({ ok: true, duplicate: true });
+		const { object, socket, sent } = setup();
+		await object.webSocketMessage(socket, frame('m1'));
+		expect(sent.at(-1)).toMatchObject({ code: 'already_submitted' });
+		expect(mocks.handleChat).not.toHaveBeenCalled();
+	});
 	it('reserves submissions before asynchronous topic reads', async () => {
 		let release = () => {};
 		mocks.getCurrentTopic.mockImplementationOnce(
@@ -63,7 +104,7 @@ describe('Durable Object run lifecycle', () => {
 		const first = object.webSocketMessage(socket, frame('m1'));
 		await vi.waitFor(() => expect(mocks.getCurrentTopic).toHaveBeenCalledOnce());
 		await object.webSocketMessage(socket, frame('m2'));
-		expect(sent).toContainEqual({ type: 'error', message: 'Tutor is already running' });
+		expect(sent).toContainEqual(expect.objectContaining({ type: 'error', message: 'Tutor is already running' }));
 		release();
 		await first;
 		await Promise.all(pending);
@@ -89,6 +130,7 @@ describe('Durable Object run lifecycle', () => {
 		rejectRun();
 		await Promise.all(pending);
 		expect(records.has('activeRun')).toBe(false);
+		expect(mocks.settle).toHaveBeenCalledWith('message:m1', false);
 		expect(sent.filter((message) => message.type === 'run.ended')).toEqual([expect.objectContaining({ status: 'cancelled' })]);
 	});
 	it('reports persistence failures as failed, never completed', async () => {

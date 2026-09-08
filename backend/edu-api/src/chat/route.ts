@@ -12,6 +12,8 @@ import { repairInvalidResponseMarkup } from './latex';
 import { runTutor } from './tutor';
 
 export type ChatRunIo = {
+	env?: Env;
+	documents?: Array<{ assetId: string; filename: string | null; status: string; pageCount: number | null; indexedPages: number }>;
 	signal: AbortSignal;
 	topicId?: string | null;
 	runId: string;
@@ -28,6 +30,7 @@ export type StoredProposal = {
 	request: ChatRequest;
 	proposalId: string;
 	topicId: string | null;
+	topicUpdatedAt?: string | null;
 	prompt: string;
 	proposal: Proposal;
 };
@@ -45,6 +48,7 @@ export async function handleChat(db: Db, llmEnv: LlmEnv, userId: string, body: o
 	// The triggering message has already been persisted by the transport.
 	context.recentMessages = context.recentMessages.filter((message) => message.id !== io.userMessageId);
 	const runner = await createAgentRun(db, llmEnv, {
+		userId,
 		runId: io.runId,
 		topicId: context.topic?.id ?? null,
 		userMessageId: io.userMessageId,
@@ -53,7 +57,7 @@ export async function handleChat(db: Db, llmEnv: LlmEnv, userId: string, body: o
 		onProgress: io.onProgress,
 		images: io.images,
 	});
-	return runner.withTrace(async () => {
+	return runner.withTrace(partsToText(request.parts), async () => {
 		try {
 			runner.announce('Thinking');
 			const result = await runTutor(db, runner, context, request, io);
@@ -98,6 +102,17 @@ export async function handleDecision(
 ) {
 	const context = await loadChatContext(db, userId, '', io.topicId);
 	if ((context.topic?.id ?? null) !== stored.topicId) throw new Error('Proposal belongs to a different topic');
+	if (
+		decision === 'accept' &&
+		stored.topicUpdatedAt &&
+		context.topic?.updatedAt !== stored.topicUpdatedAt
+	) {
+		return {
+			parts: [textPart('This plan changed after the proposal was created. Please request the update again.')],
+			topicId: context.topic?.id,
+			pendingProposal: null,
+		};
+	}
 	if (context.topic)
 		await createTopicMessage(db, {
 			id: io.userMessageId,
@@ -106,6 +121,7 @@ export async function handleDecision(
 			parts: [textPart(decision === 'accept' ? 'Confirm' : 'Cancel')],
 		});
 	const runner = await createAgentRun(db, llmEnv, {
+		userId,
 		runId: io.runId,
 		topicId: context.topic?.id ?? null,
 		userMessageId: io.userMessageId,
@@ -113,7 +129,7 @@ export async function handleDecision(
 		signal: io.signal,
 		onProgress: io.onProgress,
 	});
-	return runner.withTrace(async () => {
+	return runner.withTrace(decision === 'accept' ? 'Confirm' : 'Cancel', async () => {
 		try {
 			io.signal.throwIfAborted();
 			let result: ChatTurnResult = { parts: [textPart("Okay, I won't do that.")], topicId: context.topic?.id, pendingProposal: null };

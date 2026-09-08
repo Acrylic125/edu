@@ -43,6 +43,7 @@ export function createLangtraceExporter(apiKey: string, apiHost: string): SpanEx
 					}
 
 					const details = await response.text();
+					console.error(`Failed to export ${spans.length} spans to Langtrace: ${response.status} ${details}`);
 					resultCallback({
 						code: 1,
 						error: new Error(`Failed to export ${spans.length} spans to ${apiHost}: ${response.status} ${details}`),
@@ -50,6 +51,7 @@ export function createLangtraceExporter(apiKey: string, apiHost: string): SpanEx
 				})
 				.catch((error) => {
 					const message = error instanceof Error ? error.message : String(error);
+					console.error(`Failed to export ${spans.length} spans to Langtrace: ${message}`);
 					resultCallback({
 						code: 1,
 						error: new Error(`Failed to export ${spans.length} spans to ${apiHost}: ${message}`),

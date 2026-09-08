@@ -14,12 +14,15 @@ const mocks = vi.hoisted(() => ({
 	createTopic: vi.fn(),
 	setCurrentTopic: vi.fn(),
 	updateCurrentPart: vi.fn(),
+	updateCurrentStep: vi.fn(),
 	updateTopicState: vi.fn(),
 	createTopicMessage: vi.fn(),
 	reassignTopicMessage: vi.fn(),
 	linkAssetsToMessage: vi.fn(),
 	listRecentConversationMemories: vi.fn(),
 	loadConversationExchanges: vi.fn(),
+	readPdfIndex: vi.fn(),
+	readPdfPages: vi.fn(),
 }));
 vi.mock('../agents/runner', () => ({ createAgentRun: mocks.createAgentRun }));
 vi.mock('./context', async (original) => ({ ...(await original<typeof import('./context')>()), loadChatContext: mocks.loadChatContext }));
@@ -31,6 +34,7 @@ vi.mock('../topics/repository', () => ({
 	createTopic: mocks.createTopic,
 	setCurrentTopic: mocks.setCurrentTopic,
 	updateCurrentPart: mocks.updateCurrentPart,
+	updateCurrentStep: mocks.updateCurrentStep,
 	updateTopicState: mocks.updateTopicState,
 }));
 vi.mock('../messages/persistence', () => ({
@@ -42,7 +46,11 @@ vi.mock('../memory/repository', () => ({
 	listRecentConversationMemories: mocks.listRecentConversationMemories,
 	loadConversationExchanges: mocks.loadConversationExchanges,
 }));
-import { handleChat, handleDecision } from './route';
+vi.mock('../documents/read', () => ({
+	readPdfIndex: mocks.readPdfIndex,
+	readPdfPages: mocks.readPdfPages,
+}));
+import { handleChat, handleDecision, type ChatRunIo } from './route';
 
 function setup(
 	responses: ChatCompletionMessage[],
@@ -56,7 +64,7 @@ function setup(
 		fail: vi.fn(),
 		recordStep: vi.fn(),
 		llmCall: vi.fn().mockResolvedValue('{"correct":true,"partiallyCorrect":false,"feedback":"Correct","errors":[]}'),
-		withTrace: (fn: () => Promise<object>) => fn(),
+			withTrace: (_input: string, fn: () => Promise<object>) => fn(),
 		toolTurn: vi.fn(async (params: { messages: object[]; tools: object[]; onDelta: (text: string) => void }) => {
 			const next = responses.shift() ?? response({ content: 'Done.' });
 			if (typeof next.content === 'string') params.onDelta(next.content);
@@ -65,7 +73,8 @@ function setup(
 	};
 	mocks.createAgentRun.mockResolvedValue(runner);
 	const controller = new AbortController();
-	const io = {
+	const io: ChatRunIo = {
+		env: {} as Env,
 		signal: controller.signal,
 		runId: 'run_1',
 		assistantMessageId: 'msg_a',
@@ -136,6 +145,31 @@ describe('Tutor orchestration with real tool dispatch', () => {
 			],
 		});
 	});
+	it('uses a PDF index and reads only selected pages', async () => {
+		mocks.readPdfIndex.mockResolvedValue({
+			document: { filename: 'course.pdf', status: 'ready', pageCount: 80, indexedPages: 80 },
+			pages: [{ pageNumber: 37, preview: 'Cache coherence' }],
+		});
+		mocks.readPdfPages.mockResolvedValue({ pages: [{ pageNumber: 37, text: 'MESI has four states.' }] });
+		const { send, runner, io } = setup([
+			call('load_skill', { name: 'pdf' }),
+			call('read_pdf_index', { assetId: 'ast_pdf', query: 'MESI' }),
+			call('read_pdf_pages', { assetId: 'ast_pdf', pages: [37] }),
+			response({ content: 'MESI has four states (course.pdf, p. 37).' }),
+		]);
+		io.documents = [{ assetId: 'ast_pdf', filename: 'course.pdf', status: 'ready', pageCount: 80, indexedPages: 80 }];
+
+		const result = await send('Explain MESI from the attached PDF');
+
+		expect(mocks.readPdfIndex).toHaveBeenCalledWith(expect.anything(), 'user_1', {
+			assetId: 'ast_pdf',
+			query: 'MESI',
+			cursor: undefined,
+		});
+		expect(mocks.readPdfPages).toHaveBeenCalledWith(expect.anything(), io.env, 'user_1', 'ast_pdf', [37]);
+		expect(result.parts).toContainEqual({ type: 'text', content: 'MESI has four states (course.pdf, p. 37).' });
+		expect(JSON.stringify(runner.toolTurn.mock.calls[0]?.[0].messages)).not.toContain('MESI has four states.');
+	});
 	it('validates model arguments before executing a mutation', async () => {
 		const { send } = setup([call('create_topic', { ...plan, plan: [] }), response({ content: 'Please clarify the plan.' })], null);
 		await expect(send('/new vectors')).rejects.toThrow('did not apply');
@@ -186,6 +220,35 @@ describe('Tutor orchestration with real tool dispatch', () => {
 			type: 'options',
 			options: [{ label: 'Explain Data Representation' }, { label: 'Practice Data Representation' }],
 		});
+	});
+	it('keeps the topic title out of the learnable plan', async () => {
+		const supplied = {
+			title: 'Data Structures Curriculum',
+			summary: 'Learn core data structures',
+			part: 'Master Data Structures',
+			plan: [
+				{ id: 'course', label: 'Master Data Structures', summary: 'Course title', parent: null },
+				{ id: 'arrays', label: 'Arrays & Lists', summary: 'Sequential structures', parent: 'course' },
+				{ id: 'storage', label: 'Array Storage', summary: 'Array representation', parent: 'arrays' },
+				{ id: 'linked', label: 'Linked Lists', summary: 'Linked nodes', parent: 'arrays' },
+				{ id: 'trees', label: 'Trees & Graphs', summary: 'Hierarchical structures', parent: 'course' },
+			],
+		};
+		const { send } = setup([call('create_topic', supplied)], null);
+		await send('/new Master Data Structures\nArrays & Lists\n- Array Storage\n- Linked Lists\nTrees & Graphs');
+
+		expect(mocks.createTopic).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				part: 'Arrays & Lists',
+				plan: [
+					{ id: 'arrays', label: 'Arrays & Lists', summary: 'Sequential structures', parent: null },
+					{ id: 'storage', label: 'Array Storage', summary: 'Array representation', parent: 'arrays' },
+					{ id: 'linked', label: 'Linked Lists', summary: 'Linked nodes', parent: 'arrays' },
+					{ id: 'trees', label: 'Trees & Graphs', summary: 'Hierarchical structures', parent: null },
+				],
+			}),
+		);
 	});
 	it('does not let an explicit creation command finish without creating the topic', async () => {
 		const { send, io } = setup([response({ content: 'Your topic is ready.' })], null);
@@ -258,10 +321,57 @@ ASCII Code`);
 		expect(mocks.createTopic).not.toHaveBeenCalled();
 	});
 	it('advances immediately when the learner explicitly asks for the next topic', async () => {
-		const { send } = setup([call('update_topic', { part: 'ASCII representation' })]);
+		const topic = {
+			id: 'topic_1',
+			title: 'Master Data Structures',
+			summary: 'Learn core data structures',
+			part: 'Arrays & Lists',
+			plan: [
+				{ id: 'arrays', label: 'Arrays & Lists', summary: 'Sequential structures', parent: null },
+				{ id: 'storage', label: 'Array Storage', summary: 'Array representation', parent: 'arrays' },
+				{ id: 'linked', label: 'Linked Lists', summary: 'Linked nodes', parent: 'arrays' },
+			],
+			currentStepId: 'arrays',
+		};
+		const { send } = setup([call('update_topic', { part: 'Arrays & Lists', intentMatch: 'aligned' })], topic);
 		const result = await send('Continue to next topic');
 		expect(result.pendingProposal).toBeNull();
-		expect(mocks.updateCurrentPart).toHaveBeenCalledWith(expect.anything(), 'user_1', 'ASCII representation', 'topic_1');
+		expect(mocks.updateCurrentPart).toHaveBeenCalledWith(expect.anything(), 'user_1', 'Array Storage', 'topic_1');
+		expect(mocks.updateCurrentStep).toHaveBeenCalledWith(expect.anything(), 'user_1', 'topic_1', 'storage');
+	});
+	it('applies an aligned explicit plan update and returns the saved plan', async () => {
+		const revisedPlan = [
+			{ id: 'addition', label: 'Addition', summary: 'Add vectors', parent: null },
+			{ id: 'products', label: 'Products', summary: 'Dot and cross products', parent: null },
+		];
+		const topic = {
+			id: 'topic_1',
+			title: 'Vectors',
+			summary: 'Vector arithmetic',
+			part: 'Addition',
+			plan: revisedPlan.slice(0, 1),
+			currentStepId: 'addition',
+			updatedAt: '2026-09-08T00:00:00.000Z',
+		};
+		const { send } = setup([call('update_topic', { plan: revisedPlan, intentMatch: 'aligned' })], topic);
+		const result = await send('/update Include vector products');
+		expect(result.pendingProposal).toBeNull();
+		expect(mocks.updateTopicState).toHaveBeenCalledWith(expect.anything(), 'topic_1', { plan: revisedPlan });
+		expect(result.parts).toContainEqual({ type: 'plan', steps: revisedPlan });
+		expect(result.parts[0]).toEqual({ type: 'text', content: 'Learning plan updated! You are currently on Addition.' });
+	});
+	it('asks before an explicit update changes the learning goal', async () => {
+		const revisedPlan = [{ id: 'derivatives', label: 'Derivatives', summary: 'Differentiate functions', parent: null }];
+		const { send } = setup([
+			call('update_topic', {
+				plan: revisedPlan,
+				intentMatch: 'changes-goal',
+				explanation: 'Derivatives would redirect this vector arithmetic plan into calculus. Did you intend that?',
+			}),
+		]);
+		const result = await send('/update Include derivatives');
+		expect(result.pendingProposal?.proposal).toMatchObject({ intentMatch: 'changes-goal', plan: revisedPlan });
+		expect(mocks.updateTopicState).not.toHaveBeenCalled();
 	});
 	it('adds next-step options to a direct completed answer', async () => {
 		const { send } = setup([response({ content: 'Correct. A is 65 and B is 66.' })]);
@@ -294,6 +404,32 @@ ASCII Code`);
 			),
 		).rejects.toThrow('different topic');
 		expect(mocks.createTopicMessage).not.toHaveBeenCalled();
+	});
+	it('does not apply a proposal created for an older plan revision', async () => {
+		const { io } = setup([], {
+			id: 'topic_1',
+			title: 'Vectors',
+			summary: 'Vector arithmetic',
+			part: 'Addition',
+			updatedAt: '2026-09-08T02:00:00.000Z',
+		});
+		const result = await handleDecision(
+			{} as Db,
+			{ OPENROUTER_API_KEY: 'test' },
+			'user_1',
+			{
+				proposalId: 'p1',
+				topicId: 'topic_1',
+				topicUpdatedAt: '2026-09-08T01:00:00.000Z',
+				prompt: 'Change?',
+				proposal: { kind: 'update-topic', part: 'Products' },
+				request: { messageId: 'msg_u', parts: [{ type: 'text', content: 'next' }] },
+			},
+			'accept',
+			io,
+		);
+		expect(result.parts).toContainEqual(expect.objectContaining({ type: 'text', content: expect.stringContaining('changed') }));
+		expect(mocks.updateCurrentPart).not.toHaveBeenCalled();
 	});
 	it('bounds tool loops and does not fabricate a successful response', async () => {
 		const { send, runner } = setup(Array.from({ length: MAX_TUTOR_TURNS }, () => call('load_skill', { name: 'explain' })));

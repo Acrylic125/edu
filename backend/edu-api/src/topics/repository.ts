@@ -114,13 +114,15 @@ export async function updateTopicState(
 	updates: {
 		title?: string;
 		summary?: string;
+		plan?: TopicPlanStep[];
 	},
-): Promise<void> {
+): Promise<Date> {
 	const now = new Date();
 	await db
 		.update(topic)
 		.set({ ...updates, updatedAt: now })
 		.where(eq(topic.id, topicId));
+	return now;
 }
 
 export async function setCurrentTopic(db: Db, userId: string, topicId: string, part: string | null, currentStepId: string | null = null): Promise<void> {

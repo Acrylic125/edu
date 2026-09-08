@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractSuppliedPlanLines, formatTopicPlanMarkdown } from './new-topic';
+import { extractSuppliedPlanLines, formatTopicPlanMarkdown, structuredPlanFromSuppliedLines } from './new-topic';
 
 describe('formatTopicPlanMarkdown', () => {
 	it('renders a generated plan as a list', () => {
@@ -76,5 +76,22 @@ ASCII Code`),
 
 	it('does not treat a normal multiline request as an explicit plan', () => {
 		expect(extractSuppliedPlanLines('/new Explain vectors\nwith examples')).toBeNull();
+	});
+
+	it('treats bullets as children of the preceding heading', () => {
+		const plan = structuredPlanFromSuppliedLines([
+			'Arrays & Lists',
+			'- Array Storage',
+			'- Linked Lists',
+			'Trees & Graphs',
+			'- Tree Traversal',
+		]);
+		expect(plan).toMatchObject([
+			{ id: 'step-1', label: 'Arrays & Lists', parent: null },
+			{ id: 'step-2', label: 'Array Storage', parent: 'step-1' },
+			{ id: 'step-3', label: 'Linked Lists', parent: 'step-1' },
+			{ id: 'step-4', label: 'Trees & Graphs', parent: null },
+			{ id: 'step-5', label: 'Tree Traversal', parent: 'step-4' },
+		]);
 	});
 });

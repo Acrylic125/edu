@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TopicPlanSchema } from "../messages/schema";
 
 export const TopicGenerationSchema = z.object({
 	title: z.string(),
@@ -31,6 +32,7 @@ export const TopicUpdateSchema = z.object({
 	title: z.string().optional(),
 	summary: z.string().optional(),
 	part: z.string().optional(),
+	plan: TopicPlanSchema.optional(),
 });
 
 export type TopicUpdate = z.infer<typeof TopicUpdateSchema>;

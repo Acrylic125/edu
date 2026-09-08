@@ -1,8 +1,16 @@
 import { catalogFromTopics } from "./catalog"
 import { toChatMessage } from "./map-message"
+import { z } from "zod"
 import type { CurrentMessagesPayload, TopicCatalog, TopicId } from "./types"
-import { CurrentTopicMessagesSchema, TopicsListSchema } from "./ws-schema"
+import {
+  CurrentTopicMessagesSchema,
+  TopicDetailResponseSchema,
+  TopicsListSchema,
+  type UpdateTopicRequest,
+} from "./ws-schema"
 import { env } from "@/env"
+
+const ErrorResponseSchema = z.object({ error: z.string() })
 
 function topicsUrl() {
   return new URL("/topics", env.NEXT_PUBLIC_API_URL)
@@ -24,6 +32,10 @@ function selectTopicStepUrl(topicId: TopicId, stepId: string) {
     `/topics/${encodeURIComponent(topicId)}/steps/${encodeURIComponent(stepId)}/select`,
     env.NEXT_PUBLIC_API_URL,
   )
+}
+
+function topicUrl(topicId: TopicId) {
+  return new URL(`/topics/${encodeURIComponent(topicId)}`, env.NEXT_PUBLIC_API_URL)
 }
 
 export function parseTopicsResponse(json: unknown): TopicCatalog {
@@ -53,6 +65,9 @@ export function sessionFromCurrentMessages(payload: CurrentMessagesPayload) {
     kind: "topic" as const,
     topicId: payload.topic.id,
     title: payload.topic.title,
+    summary: payload.topic.summary,
+    plan: payload.topic.plan,
+    updatedAt: payload.topic.updatedAt,
     messages: payload.messages,
     handoff: null,
     part: payload.topic.part,
@@ -106,4 +121,48 @@ export async function postSelectTopicStep(
   if (!response.ok) {
     throw new Error("Could not select plan step")
   }
+}
+
+export async function patchTopic(
+  token: string,
+  topicId: TopicId,
+  update: UpdateTopicRequest,
+) {
+  const response = await fetch(topicUrl(topicId), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(update),
+  })
+  const json = await response.json()
+  if (!response.ok) {
+    const error = ErrorResponseSchema.safeParse(json)
+    if (error.success) {
+      throw new Error(error.data.error)
+    }
+    throw new Error("Could not save the learning plan")
+  }
+  const parsed = TopicDetailResponseSchema.safeParse(json)
+  if (!parsed.success) {
+    throw new Error("Invalid learning plan response")
+  }
+  return parsed.data.topic
+}
+
+export async function fetchTopic(token: string, topicId: TopicId) {
+  const response = await fetch(topicUrl(topicId), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  })
+  const json = await response.json()
+  if (!response.ok) {
+    throw new Error("Could not refresh the learning plan")
+  }
+  const parsed = TopicDetailResponseSchema.safeParse(json)
+  if (!parsed.success) {
+    throw new Error("Invalid learning plan response")
+  }
+  return parsed.data.topic
 }

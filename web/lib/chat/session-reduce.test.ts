@@ -6,6 +6,9 @@ const session: ChatSession = {
   kind: "topic",
   topicId: "t1",
   title: "Vectors",
+  summary: "Learn vectors",
+  plan: [],
+  updatedAt: "2026-09-08T00:00:00.000Z",
   handoff: null,
   messages: [
     {
@@ -39,6 +42,22 @@ describe("chat run events", () => {
         session,
         run,
       })
+  })
+
+  it("uses the plan returned by a completed update", () => {
+    const steps = [{ id: "products", label: "Vector products", summary: "Dot and cross products", parent: null }]
+    const result = reduceSession(session, run, {
+      type: "ws",
+      message: {
+        type: "run.ended",
+        runId: "r1",
+        messageId: "m1",
+        status: "completed",
+        parts: [{ type: "text", content: "Learning plan updated!" }, { type: "plan", steps }],
+      },
+    })
+
+    expect(result.session).toMatchObject({ plan: steps })
   })
   it("keeps failure distinct from completion", () => {
     const result = reduceSession(session, run, {
@@ -77,6 +96,9 @@ describe("chat run events", () => {
       kind: "topic",
       topicId: "t1",
       title: "Vectors",
+      summary: "Learn vectors",
+      plan: [],
+      updatedAt: "2026-09-08T00:00:00.000Z",
       handoff: null,
       messages: [
         {
@@ -113,6 +135,9 @@ describe("chat run events", () => {
       kind: "topic",
       topicId: "t1",
       title: "Vectors",
+      summary: "Learn vectors",
+      plan: [],
+      updatedAt: "2026-09-08T00:00:00.000Z",
       handoff: null,
       messages: [
         {

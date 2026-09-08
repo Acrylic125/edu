@@ -34,6 +34,7 @@ import {
   ingestComposerImageFiles,
   MAX_COMPOSER_IMAGE_ATTACHMENTS,
   type ComposerImageAttachment,
+  isPdfFile,
 } from "@/lib/chat/composer-images"
 import { sendGate } from "@/lib/chat/gate"
 import {
@@ -50,7 +51,7 @@ import type {
 import { cn } from "@/lib/utils"
 
 type ChatComposerProps = {
-  onSend: (content: string, attachments: ChatMessageAttachment[]) => void
+  onSend: (content: string, attachments: ChatMessageAttachment[]) => Promise<void>
   onStop: () => void
   socket: SocketFact
   run: RunFact
@@ -199,21 +200,31 @@ export function ChatComposer({
     })
   }
 
-  async function uploadImage(
+  async function uploadAttachment(
     image: ComposerImageAttachment,
     token: string,
     signal: AbortSignal
   ) {
+    if (image.assetId && image.status === "ready" && image.mimeType) {
+      return { id: image.assetId, name: image.name, mimeType: image.mimeType, previewUrl: image.previewUrl }
+    }
     patchImage(image.id, { status: "uploading", progress: 0, error: null })
-    const blob = await compressImageForUpload(image.file)
+    let blob: Blob = image.file
+    let filename = image.name
+    let mimeType: "image/jpeg" | "application/pdf" = "application/pdf"
+    if (!isPdfFile(image.file)) {
+      blob = await compressImageForUpload(image.file)
+      filename = jpegFilename(image.name)
+      mimeType = "image/jpeg"
+    }
     if (signal.aborted) {
       throw new DOMException("Upload cancelled", "AbortError")
     }
 
     const signed = await requestAssetUploadUrl({
       token,
-      filename: jpegFilename(image.name),
-      mimeType: "image/jpeg",
+      filename,
+      mimeType,
       size: blob.size,
     })
     if (signal.aborted) {
@@ -239,7 +250,7 @@ export function ChatComposer({
 
     patchImage(image.id, {
       assetId: signed.assetId,
-      mimeType: "image/jpeg",
+      mimeType,
       sizeBytes: blob.size,
       status: "ready",
       progress: 1,
@@ -249,7 +260,7 @@ export function ChatComposer({
     return {
       id: signed.assetId,
       name: image.name,
-      mimeType: "image/jpeg",
+      mimeType,
       previewUrl: image.previewUrl,
     } satisfies ChatMessageAttachment
   }
@@ -273,7 +284,7 @@ export function ChatComposer({
 
     const token = session.data?.session.token
     if (imageSnapshot.length > 0 && !token) {
-      setAttachmentError("Sign in to upload images.")
+      setAttachmentError("Sign in to upload files.")
       return
     }
 
@@ -287,11 +298,11 @@ export function ChatComposer({
       const attachments: ChatMessageAttachment[] = []
       if (token) {
         for (const image of snapshot) {
-          attachments.push(await uploadImage(image, token, controller.signal))
+          attachments.push(await uploadAttachment(image, token, controller.signal))
         }
       }
 
-      onSend(text, attachments)
+      await onSend(text, attachments)
       setDraft("")
       // Message bubble keeps showing these object URLs — hand off ownership, don't revoke.
       previewsRef.current.transferAll()
@@ -301,7 +312,7 @@ export function ChatComposer({
         return
       }
       const message =
-        error instanceof Error ? error.message : "Could not upload image"
+        error instanceof Error ? error.message : "Could not upload file"
       setAttachmentError(message)
       setImages((current) =>
         current.map((image) => {
@@ -354,12 +365,14 @@ export function ChatComposer({
 
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(event.clipboardData.files)
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"))
-    if (imageFiles.length === 0) {
+    const supportedFiles = files.filter(
+      (file) => file.type.startsWith("image/") || isPdfFile(file)
+    )
+    if (supportedFiles.length === 0) {
       return
     }
     event.preventDefault()
-    addImageFiles(imageFiles)
+    addImageFiles(supportedFiles)
   }
 
   function handleDragOver(event: DragEvent<HTMLFormElement>) {
@@ -466,7 +479,7 @@ export function ChatComposer({
           >
             <div className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2 text-sm font-medium shadow-lg">
               <PaperclipIcon className="size-4 text-primary" aria-hidden />
-              Drop images to attach
+              Drop images or PDFs to attach
             </div>
           </div>
         ) : null}
@@ -542,7 +555,7 @@ export function ChatComposer({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/gif,image/jpeg,image/png,image/webp"
+              accept="image/gif,image/jpeg,image/png,image/webp,application/pdf"
               multiple
               className="sr-only"
               tabIndex={-1}
@@ -555,7 +568,7 @@ export function ChatComposer({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Attach images"
+              aria-label="Attach files"
               disabled={
                 isSubmitting || images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
               }
