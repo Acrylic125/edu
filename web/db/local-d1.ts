@@ -5,8 +5,12 @@ import { DatabaseSync } from "node:sqlite"
 import { drizzle } from "drizzle-orm/node-sqlite"
 
 import * as schema from "./schema"
+import { env } from "@/env"
 
 function eduApiStateDir() {
+	if (env.AUTH_D1_STATE_DIR) {
+		return path.resolve(env.AUTH_D1_STATE_DIR)
+	}
 	return path.resolve(
 		process.cwd(),
 		"../backend/edu-api/.wrangler/state/v3/d1/miniflare-D1DatabaseObject",
@@ -21,13 +25,21 @@ function resolveLocalD1Path() {
 		)
 	}
 
-	const files = fs
-		.readdirSync(dir)
-		.filter((name) => name.endsWith(".sqlite") && name !== "metadata.sqlite")
+	const files: string[] = []
+	function collect(current: string) {
+		for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+			const entryPath = path.join(current, entry.name)
+			if (entry.isDirectory()) {
+				collect(entryPath)
+				continue
+			}
+			if (entry.name.endsWith(".sqlite") && entry.name !== "metadata.sqlite") files.push(entryPath)
+		}
+	}
+	collect(dir)
 
 	for (const name of files) {
-		const filePath = path.join(dir, name)
-		const probe = new DatabaseSync(filePath, { readOnly: true })
+		const probe = new DatabaseSync(name, { readOnly: true })
 		try {
 			const row = probe
 				.prepare(
@@ -35,7 +47,7 @@ function resolveLocalD1Path() {
 				)
 				.get()
 			if (row) {
-				return filePath
+				return name
 			}
 		} finally {
 			probe.close()

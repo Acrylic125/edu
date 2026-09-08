@@ -2,6 +2,7 @@ import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
+  plan: text('plan', { enum: ['free', 'pro'] }).notNull().default('free'),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   emailVerified: integer("email_verified", { mode: "boolean" }).notNull(),
@@ -62,4 +63,17 @@ export const verification = sqliteTable("verification", {
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+})
+
+// Stripe will replace this snapshot and user.plan together through one sync path.
+export const billingAccount = sqliteTable('billing_account', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  stripeCustomerId: text('stripe_customer_id').unique(),
+  stripeSubscriptionId: text('stripe_subscription_id').unique(),
+  stripePriceId: text('stripe_price_id'),
+  subscriptionStatus: text('subscription_status'),
+  currentPeriodStart: integer('current_period_start', { mode: 'timestamp_ms' }),
+  currentPeriodEnd: integer('current_period_end', { mode: 'timestamp_ms' }),
+  cancelAtPeriodEnd: integer('cancel_at_period_end', { mode: 'boolean' }).notNull().default(false),
+  syncedAt: integer('synced_at', { mode: 'timestamp_ms' }),
 })

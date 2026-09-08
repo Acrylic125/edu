@@ -32,5 +32,13 @@ export async function requireUser(request: Request, env: Env): Promise<{ userId:
 		});
 	}
 
+	const quotas = env.CHAT_DURABLE_OBJECT.get(env.CHAT_DURABLE_OBJECT.idFromName(session.user.id));
+	const limit = await quotas.throttleHttp();
+	if (limit) {
+		return new Response(JSON.stringify({ ...limit, error: limit.message }), {
+			status: 429,
+			headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': String(limit.retryAfter) },
+		});
+	}
 	return { userId: session.user.id, expiresAt: session.session.expiresAt.getTime() };
 }
