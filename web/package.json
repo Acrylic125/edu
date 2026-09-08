@@ -13,6 +13,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "e2e:dev": "node scripts/run-e2e.mjs -- --ui",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -44,6 +46,7 @@
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.6",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^26.4.1",
     "@types/react": "^19",
