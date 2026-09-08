@@ -15,7 +15,7 @@ type LoginPageProps = {
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const session = await getSession()
   if (session) {
-    redirect("/")
+    redirect("/chat")
   }
 
   const params = await searchParams

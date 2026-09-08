@@ -5,7 +5,7 @@ import { ChatFrame } from "@/components/chat/chat-frame"
 import { MessageSkeletons } from "@/components/chat/message-skeletons"
 import { loadChatBootstrap } from "@/lib/chat/load-bootstrap"
 
-export default function Home() {
+export default function ChatPage() {
   return (
     <Suspense
       fallback={

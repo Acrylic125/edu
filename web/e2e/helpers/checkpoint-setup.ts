@@ -21,7 +21,7 @@ import { validateMessageParts } from "./validators"
 const baseURL = "http://localhost:3100"
 
 async function openApp(page: import("@playwright/test").Page) {
-  await page.goto("/")
+  await page.goto("/chat")
   await page.waitForTimeout(2000)
 }
 

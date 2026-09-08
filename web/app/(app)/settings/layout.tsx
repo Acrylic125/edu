@@ -23,7 +23,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
         <div className="grid gap-4 md:grid-cols-[10rem_minmax(0,1fr)] md:gap-6">
           <aside className="space-y-1">
             <Link
-              href="/"
+              href="/chat"
               className={cn(
                 buttonVariants({ variant: "ghost", size: "sm" }),
                 "h-7 gap-1 px-1.5 text-muted-foreground hover:text-foreground"

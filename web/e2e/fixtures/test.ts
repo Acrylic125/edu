@@ -90,7 +90,7 @@ export const test = base.extend<Fixtures>({
     })
     const page = await context.newPage()
     const observer = createObserver(page)
-    await page.goto("/")
+    await page.goto("/chat")
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 })
     await page.waitForTimeout(5_000)
     await expect(page.locator("form").filter({ has: page.getByRole("button", { name: "Send" }) })).toHaveCount(1)
