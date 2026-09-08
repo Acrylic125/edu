@@ -37,7 +37,7 @@ const now = Date.parse('2026-09-08T12:00:00Z');
 describe('credit allowances', () => {
 	it('keeps every credit cost and plan limit in the shared policy', () => {
 		expect(creditCosts).toEqual({ turn: 1, imageUpload: 1, pdfPage: 1 });
-		expect(plans.free).toMatchObject({ creditsPer5Hours: 100, creditsPerWeek: 1_000 });
+		expect(plans.free).toMatchObject({ creditsPer5Hours: 250, creditsPerWeek: 1_200 });
 		expect(plans.pro).toMatchObject({ creditsPer5Hours: 1_000, creditsPerWeek: 15_000 });
 	});
 
@@ -49,8 +49,8 @@ describe('credit allowances', () => {
 		expect(results.filter((result) => result.ok)).toHaveLength(plans.free.creditsPer5Hours);
 		const snapshot = await quotas.snapshot('free', now);
 		expect(snapshot.subscription.allowances).toEqual([
-			expect.objectContaining({ metric: 'creditsPer5Hours', used: 100, remaining: 0 }),
-			expect.objectContaining({ metric: 'creditsPerWeek', used: 100, remaining: 900 }),
+			expect.objectContaining({ metric: 'creditsPer5Hours', used: 250, remaining: 0 }),
+			expect.objectContaining({ metric: 'creditsPerWeek', used: 250, remaining: 950 }),
 		]);
 	});
 

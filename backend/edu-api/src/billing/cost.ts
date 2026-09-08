@@ -15,8 +15,8 @@ export const creditCosts = {
 export const plans = {
 	free: {
 		name: 'Free',
-		creditsPer5Hours: 100,
-		creditsPerWeek: 1_000,
+		creditsPer5Hours: 250,
+		creditsPerWeek: 1_200,
 	},
 	pro: {
 		name: 'Pro',

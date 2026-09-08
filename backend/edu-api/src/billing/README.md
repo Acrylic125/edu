@@ -4,8 +4,8 @@ Edit `cost.ts` to change credit costs or plan allowances. The API is authoritati
 
 | Allowance | Free | Pro | Meaning |
 | --- | ---: | ---: | --- |
-| Credits/5 hours | 100 | 1,000 | Consecutive epoch-aligned five-hour windows |
-| Credits/week | 1,000 | 15,000 | Monday 00:00 UTC through the following Monday |
+| Credits/5 hours | 250 | 1,000 | Consecutive epoch-aligned five-hour windows |
+| Credits/week | 1,200 | 15,000 | Monday 00:00 UTC through the following Monday |
 
 Each accepted turn costs one credit, including tool calls, image processing, repairs, and background memory work within that turn. Each image upload costs one additional credit. Each PDF upload costs one additional credit per page when accepted for indexing. Confirming or rejecting an existing proposal is free because current proposal handlers only apply an already-generated plan. Reading history, editing a plan through HTTP, reconnecting, and stopping do not consume credits.
 
