@@ -1,5 +1,5 @@
 import { resolveAssetReadUrl } from "./access";
-import { MAX_ASSET_BYTES } from "./limits";
+import { MAX_IMAGE_BYTES } from "./limits";
 import { attachmentRefs, listOwnedAssetsByIds } from "./repository";
 import type { Db } from "../../db/client";
 import type { MessagePart } from "../messages/schema";
@@ -55,11 +55,14 @@ export async function loadOwnedImagesByIds(
 		if (!row) {
 			throw new Error("Attachment not found");
 		}
+		if (!row.mimeType.startsWith('image/')) {
+			continue;
+		}
 		const object = await env.ASSETS.get(row.storageKey);
 		if (!object) {
 			throw new Error("Attachment file is missing");
 		}
-		if (object.size > MAX_ASSET_BYTES) {
+		if (object.size > MAX_IMAGE_BYTES) {
 			throw new Error("Attachment file is too large");
 		}
 		const buffer = await object.arrayBuffer();

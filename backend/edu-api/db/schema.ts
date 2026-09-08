@@ -7,6 +7,7 @@ import type { TopicPlanStep } from '@edu/chat-contract';
 
 export const user = sqliteTable('user', {
 	id: text('id').primaryKey(),
+  plan: text('plan', { enum: ['free', 'pro'] }).notNull().default('free'),
 	name: text('name').notNull(),
 	email: text('email').notNull().unique(),
 	emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),
@@ -293,3 +294,54 @@ export const asset = sqliteTable(
 	},
 	(table) => [index('asset_user_idx').on(table.userId), index('asset_topic_message_idx').on(table.topicMessageId, table.orderIndex)],
 );
+
+export const pdfDocument = sqliteTable(
+	'pdf_document',
+	{
+		assetId: text('asset_id')
+			.primaryKey()
+			.references(() => asset.id, { onDelete: 'cascade' }),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		status: text('status', { enum: ['queued', 'indexing', 'ready', 'failed'] }).notNull(),
+		pageCount: integer('page_count'),
+		indexedPages: integer('indexed_pages').notNull().default(0),
+		error: text('error'),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+		updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+	},
+	(table) => [index('pdf_document_user_idx').on(table.userId, table.updatedAt)],
+);
+
+export const pdfPage = sqliteTable(
+	'pdf_page',
+	{
+		assetId: text('asset_id')
+			.notNull()
+			.references(() => asset.id, { onDelete: 'cascade' }),
+		pageNumber: integer('page_number').notNull(),
+		storageKey: text('storage_key').notNull(),
+		preview: text('preview').notNull(),
+		searchText: text('search_text').notNull(),
+		charCount: integer('char_count').notNull(),
+		createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+	},
+	(table) => [
+		uniqueIndex('pdf_page_asset_page_uidx').on(table.assetId, table.pageNumber),
+		index('pdf_page_asset_idx').on(table.assetId, table.pageNumber),
+	],
+);
+
+// Stripe will replace this snapshot and user.plan together through one sync path.
+export const billingAccount = sqliteTable('billing_account', {
+  userId: text('user_id').primaryKey().references(() => user.id, { onDelete: 'cascade' }),
+  stripeCustomerId: text('stripe_customer_id').unique(),
+  stripeSubscriptionId: text('stripe_subscription_id').unique(),
+  stripePriceId: text('stripe_price_id'),
+  subscriptionStatus: text('subscription_status'),
+  currentPeriodStart: integer('current_period_start', { mode: 'timestamp_ms' }),
+  currentPeriodEnd: integer('current_period_end', { mode: 'timestamp_ms' }),
+  cancelAtPeriodEnd: integer('cancel_at_period_end', { mode: 'boolean' }).notNull().default(false),
+  syncedAt: integer('synced_at', { mode: 'timestamp_ms' }),
+})

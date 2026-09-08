@@ -13,6 +13,15 @@ the shared contract package directly.
 3. Start the web app (`pnpm dev` in `web/`). In development it opens the local D1 sqlite under `.wrangler/state` (not the remote Cloudflare DB).
 4. Sign out and sign in again so the session is written locally.
 
+PDF attachments are indexed in five-page queue jobs. Create the queues once before the first deployment:
+
+```sh
+pnpx wrangler queues create edu-pdf-index
+pnpx wrangler queues create edu-pdf-index-production-ben
+```
+
+The original PDF and extracted page text live in the `ASSETS` R2 bucket. D1 stores indexing status and bounded page previews used by the tutor's PDF search tool.
+
 `.dev.vars` `BETTER_AUTH_SECRET` must match web `BETTER_AUTH_SECRET`.
 
 Set `LANGTRACE_API_KEY` in `.dev.vars` to export Tutor run traces. Model calls
@@ -70,3 +79,7 @@ pnpx wrangler r2 bucket cors set edu-assets --file /dev/stdin <<'EOF'
 }
 EOF
 ```
+
+## Free and Pro plans
+
+Plan configuration, allowance definitions, manual assignment, and the Stripe integration boundary are documented in [src/billing/README.md](src/billing/README.md).

@@ -36,7 +36,12 @@ async function parseResponse<Schema extends z.ZodType>(
 export async function requestAssetUploadUrl(params: {
   token: string
   filename: string
-  mimeType: "image/gif" | "image/jpeg" | "image/png" | "image/webp"
+  mimeType:
+    | "image/gif"
+    | "image/jpeg"
+    | "image/png"
+    | "image/webp"
+    | "application/pdf"
   size: number
 }) {
   const response = await fetch(apiUrl("/assets/upload-url"), {

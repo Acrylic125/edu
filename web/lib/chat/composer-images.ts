@@ -1,4 +1,5 @@
 export const MAX_COMPOSER_IMAGE_ATTACHMENTS = 5
+export const MAX_PDF_BYTES = 20 * 1024 * 1024
 
 export const SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
@@ -22,6 +23,10 @@ export type ComposerImageAttachment = {
   error: string | null
 }
 
+export function isPdfFile(file: File) {
+  return file.type === "application/pdf"
+}
+
 export function isSupportedImageFile(file: File): boolean {
   return (
     file.type.startsWith("image/") &&
@@ -35,7 +40,7 @@ export function createComposerImageAttachment(file: File): ComposerImageAttachme
   return {
     id: crypto.randomUUID(),
     assetId: null,
-    name: file.name || "image",
+    name: file.name || (isPdfFile(file) ? "document.pdf" : "image"),
     mimeType: file.type,
     sizeBytes: file.size,
     previewUrl: URL.createObjectURL(file),
@@ -60,16 +65,20 @@ export function ingestComposerImageFiles(
   let error: string | null = null
 
   for (const file of files) {
-    if (!file.type.startsWith("image/")) {
-      error = `"${file.name}" is not an image. Attach GIF, JPEG, PNG, or WebP files only.`
+    if (!file.type.startsWith("image/") && !isPdfFile(file)) {
+      error = `"${file.name}" is unsupported. Attach a PDF, GIF, JPEG, PNG, or WebP file.`
       continue
     }
-    if (!isSupportedImageFile(file)) {
+    if (file.type.startsWith("image/") && !isSupportedImageFile(file)) {
       error = `"${file.name}" is not a supported image type. Use GIF, JPEG, PNG, or WebP.`
       continue
     }
+    if (isPdfFile(file) && file.size > MAX_PDF_BYTES) {
+      error = `"${file.name}" exceeds the 20 MB PDF limit.`
+      continue
+    }
     if (nextImages.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS) {
-      error = `You can attach up to ${MAX_COMPOSER_IMAGE_ATTACHMENTS} images per message.`
+      error = `You can attach up to ${MAX_COMPOSER_IMAGE_ATTACHMENTS} files per message.`
       break
     }
     const attachment = createComposerImageAttachment(file)

@@ -5,10 +5,27 @@ import { hydrateAttachmentParts } from './assets/load';
 import { selectTopic, selectTopicStep } from './chat/select-topic';
 import { requireUser } from './lib/auth-middleware';
 import { loadAllMessages, toResponseMessage } from './messages/persistence';
-import { getCurrentTopic, listUserTopics } from './topics/repository';
+import { UpdateTopicRequestSchema } from './messages/schema';
+import {
+	getCurrentTopic,
+	getTopicForUser,
+	listUserTopics,
+	updateCurrentPart,
+	updateCurrentStep,
+	updateTopicState,
+} from './topics/repository';
 import { getUserUsage } from './usage/service';
+import { learningStepsFromPlan } from './chat/new-topic';
+import { indexPdfBatch } from './documents/pdf';
+import { z } from 'zod';
 
 export { ChatDurableObject };
+
+const PdfIndexJobSchema = z.object({
+	assetId: z.string().min(1).max(128),
+	userId: z.string().min(1).max(128),
+	nextPage: z.number().int().positive(),
+});
 
 function jsonResponse(data: object, status = 200) {
 	return new Response(JSON.stringify(data), {
@@ -21,6 +38,7 @@ function withCors(env: Env, request: Request, response: Response) {
 	const headers = new Headers(response.headers);
 	headers.set('Access-Control-Allow-Origin', env.WEB_ORIGIN);
 	headers.set('Access-Control-Allow-Credentials', 'true');
+	headers.set('Access-Control-Expose-Headers', 'Retry-After');
 	const requestedHeaders = request.headers.get('Access-Control-Request-Headers');
 	if (requestedHeaders) {
 		headers.set('Access-Control-Allow-Headers', requestedHeaders);
@@ -84,6 +102,95 @@ export default {
 					headers,
 				}),
 			);
+		}
+
+		const updateTopicMatch = url.pathname.match(/^\/topics\/([^/]+)\/?$/);
+		if (updateTopicMatch && request.method === 'GET') {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) {
+				return withCors(env, request, authResult);
+			}
+			if (!env.DB) {
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
+			}
+			const topicId = decodeURIComponent(updateTopicMatch[1] ?? '');
+			const db = createDb(env.DB);
+			const selected = await getCurrentTopic(db, authResult.userId);
+			const existing = await getTopicForUser(db, topicId, authResult.userId);
+			if (!existing) {
+				return withCors(env, request, jsonResponse({ error: 'Topic not found' }, 404));
+			}
+			return withCors(env, request, jsonResponse({
+				topic: {
+					id: existing.id,
+					title: existing.title,
+					summary: existing.summary,
+					plan: existing.plan,
+					part: selected?.topic.id === topicId ? selected.part : null,
+					currentStepId: selected?.topic.id === topicId ? selected.currentStepId : null,
+					updatedAt: existing.updatedAt.toISOString(),
+				},
+			}));
+		}
+		if (updateTopicMatch && request.method === 'PATCH') {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) {
+				return withCors(env, request, authResult);
+			}
+			if (!env.DB) {
+				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
+			}
+
+			let parsed;
+			try {
+				parsed = UpdateTopicRequestSchema.safeParse(await request.json());
+			} catch {
+				return withCors(env, request, jsonResponse({ error: 'Invalid request body' }, 400));
+			}
+			if (!parsed.success) {
+				return withCors(env, request, jsonResponse({ error: 'Invalid learning plan' }, 400));
+			}
+
+			const topicId = decodeURIComponent(updateTopicMatch[1] ?? '');
+			const db = createDb(env.DB);
+			const existing = await getTopicForUser(db, topicId, authResult.userId);
+			if (!existing) {
+				return withCors(env, request, jsonResponse({ error: 'Topic not found' }, 404));
+			}
+			if (existing.updatedAt.toISOString() !== parsed.data.expectedUpdatedAt) {
+				return withCors(env, request, jsonResponse({ error: 'This plan changed while you were editing it. Reopen it and try again.' }, 409));
+			}
+
+			const plan = learningStepsFromPlan(parsed.data.plan, parsed.data.title);
+			const updatedAt = await updateTopicState(db, topicId, {
+				title: parsed.data.title,
+				summary: parsed.data.summary,
+				plan,
+			});
+			const current = await getCurrentTopic(db, authResult.userId);
+			let currentStepId = current?.topic.id === topicId ? current.currentStepId : null;
+			let part = current?.topic.id === topicId ? current.part : null;
+			if (!plan.some((step) => step.id === currentStepId)) {
+				const fallback = plan.find((step) => step.parent === null) ?? plan[0];
+				if (fallback && current?.topic.id === topicId) {
+					currentStepId = fallback.id;
+					part = fallback.label;
+					await updateCurrentStep(db, authResult.userId, topicId, fallback.id);
+					await updateCurrentPart(db, authResult.userId, fallback.label, topicId);
+				}
+			}
+
+			return withCors(env, request, jsonResponse({
+				topic: {
+					id: topicId,
+					title: parsed.data.title,
+					summary: parsed.data.summary,
+					plan,
+					part,
+					currentStepId,
+					updatedAt: updatedAt.toISOString(),
+				},
+			}));
 		}
 
 		const selectMatch = url.pathname.match(/^\/topics\/([^/]+)\/select\/?$/);
@@ -164,8 +271,11 @@ export default {
 					topic: {
 						id: current.topic.id,
 						title: current.topic.title,
+						summary: current.topic.summary,
+						plan: current.topic.plan,
 						part: current.part,
 						currentStepId: current.currentStepId,
+						updatedAt: current.topic.updatedAt.toISOString(),
 					},
 					messages: hydrated,
 				}),
@@ -212,9 +322,26 @@ export default {
 
 			const db = createDb(env.DB);
 			const usage = await getUserUsage(db, authResult.userId);
-			return withCors(env, request, jsonResponse(usage));
+			const quotas = env.CHAT_DURABLE_OBJECT.get(env.CHAT_DURABLE_OBJECT.idFromName(authResult.userId));
+			const subscription = await quotas.usageSnapshot(authResult.userId);
+			return withCors(env, request, jsonResponse({ ...usage, subscription }));
 		}
 
 		return new Response('Not found', { status: 404 });
+	},
+	async queue(batch, env) {
+		for (const message of batch.messages) {
+			const parsed = PdfIndexJobSchema.safeParse(message.body);
+			if (!parsed.success) {
+				message.ack();
+				continue;
+			}
+			try {
+				await indexPdfBatch(env, parsed.data);
+				message.ack();
+			} catch {
+				message.retry();
+			}
+		}
 	},
 } satisfies ExportedHandler<Env>;

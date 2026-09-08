@@ -8,6 +8,7 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types",
+		"plan:set": "node scripts/set-plan.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate:local": "wrangler d1 migrations apply edu-api --local",
 		"db:migrate:remote": "wrangler d1 migrations apply edu-api --remote",
@@ -26,6 +27,7 @@
 		"katex": "^0.18.5",
 		"nanoid": "^6.0.1",
 		"openai": "^5.12.2",
+		"unpdf": "^1.8.1",
 		"zod": "^3.24.2",
 		"zod-to-json-schema": "^3.25.2"
 	},

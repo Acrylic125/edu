@@ -18,13 +18,14 @@ export function attachmentRefs(parts: MessagePart[]) {
 export async function insertAsset(
 	db: Db,
 	params: {
+		id?: string;
 		userId: string;
 		filename: string;
 		mimeType: string;
 		size: number;
 	},
 ) {
-	const id = `ast_${nanoid()}`;
+	const id = params.id ?? `ast_${nanoid()}`;
 	const now = new Date();
 	const storageKey = `${params.userId}/${id}`;
 	await db.insert(asset).values({

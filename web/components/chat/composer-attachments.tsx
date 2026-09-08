@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2Icon, XIcon } from "lucide-react"
+import { FileTextIcon, Loader2Icon, XIcon } from "lucide-react"
 import { useRef, useState } from "react"
 import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react"
 
@@ -40,25 +40,33 @@ export function ComposerImageStrip({
     <div className={cn("flex flex-wrap gap-2", className)}>
       {images.map((image) => {
         const showOverlay = image.status === "uploading"
+        const isPdf = image.mimeType === "application/pdf"
         return (
           <div
             key={image.id}
             className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
           >
-            <button
-              type="button"
-              className="h-full w-full cursor-zoom-in"
-              aria-label={`Preview ${image.name}`}
-              onClick={() => {
-                onExpand?.(image)
-              }}
-            >
-              <img
-                src={image.previewUrl}
-                alt={image.name}
-                className="h-full w-full object-cover"
-              />
-            </button>
+            {isPdf ? (
+              <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-muted-foreground">
+                <FileTextIcon className="size-6" aria-hidden />
+                <span className="w-full truncate text-center text-[10px]">
+                  {image.name}
+                </span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="h-full w-full cursor-zoom-in"
+                aria-label={`Preview ${image.name}`}
+                onClick={() => onExpand?.(image)}
+              >
+                <img
+                  src={image.previewUrl}
+                  alt={image.name}
+                  className="h-full w-full object-cover"
+                />
+              </button>
+            )}
             {showOverlay ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50">
                 <Loader2Icon
@@ -113,20 +121,33 @@ export function MessageImageGrid({
           key={image.id}
           className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
         >
-          <button
-            type="button"
-            className="h-full w-full cursor-zoom-in"
-            aria-label={`Preview ${image.name}`}
-            onClick={() => {
-              onExpand?.(image)
-            }}
-          >
-            <img
-              src={image.previewUrl}
-              alt={image.name}
-              className="block h-auto max-h-[220px] w-full object-cover"
-            />
-          </button>
+          {image.mimeType === "application/pdf" ? (
+            <a
+              href={image.previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-muted/50"
+            >
+              <FileTextIcon
+                className="size-5 shrink-0 text-muted-foreground"
+                aria-hidden
+              />
+              <span className="max-w-64 truncate">{image.name}</span>
+            </a>
+          ) : (
+            <button
+              type="button"
+              className="h-full w-full cursor-zoom-in"
+              aria-label={`Preview ${image.name}`}
+              onClick={() => onExpand?.(image)}
+            >
+              <img
+                src={image.previewUrl}
+                alt={image.name}
+                className="block h-auto max-h-[220px] w-full object-cover"
+              />
+            </button>
+          )}
         </div>
       ))}
     </div>

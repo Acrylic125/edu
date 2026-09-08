@@ -54,6 +54,10 @@
 			"bucket_name": "edu-assets",
 		},
 	],
+	"queues": {
+		"producers": [{ "binding": "PDF_INDEX_QUEUE", "queue": "edu-pdf-index" }],
+		"consumers": [{ "queue": "edu-pdf-index", "max_batch_size": 1, "max_retries": 3 }],
+	},
 	"observability": {
 		"enabled": true,
 	},
@@ -96,6 +100,10 @@
 					"bucket_name": "edu-assets",
 				},
 			],
+			"queues": {
+				"producers": [{ "binding": "PDF_INDEX_QUEUE", "queue": "edu-pdf-index-production-ben" }],
+				"consumers": [{ "queue": "edu-pdf-index-production-ben", "max_batch_size": 1, "max_retries": 3 }],
+			},
 		},
 	},
 }
