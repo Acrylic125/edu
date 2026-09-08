@@ -11,7 +11,16 @@ import {
 
 export const auth = betterAuth({
   baseURL: env.NEXT_PUBLIC_BACKEND_URL,
+    user: {
+      additionalFields: {
+        plan: { type: ["free", "pro"], defaultValue: "free", required: false, input: false },
+      },
+    },
   secret: env.BETTER_AUTH_SECRET,
+  emailAndPassword: {
+    enabled: env.E2E_AUTH_ENABLED === "1",
+    requireEmailVerification: false,
+  },
   logger: {
     level: "debug",
   },
@@ -25,7 +34,7 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          if (!isSchoolEmail(user.email)) {
+          if (env.AUTH_EMAIL_WHITELIST_ENABLED === "1" && !isSchoolEmail(user.email)) {
             throw new APIError("FORBIDDEN", {
               code: "school_email_required",
               message: SCHOOL_EMAIL_ERROR_MESSAGE,
@@ -37,6 +46,9 @@ export const auth = betterAuth({
     session: {
       create: {
         before: async (session, context) => {
+          // Keep the school-only policy available while access is temporarily open.
+          if (env.AUTH_EMAIL_WHITELIST_ENABLED !== "1") return
+
           const user = await context?.context.internalAdapter.findUserById(
             session.userId,
           )
@@ -56,10 +68,10 @@ export const auth = betterAuth({
     schema,
   }),
   socialProviders: {
-    // google: {
-    //   clientId: env.GOOGLE_CLIENT_ID,
-    //   clientSecret: env.GOOGLE_CLIENT_SECRET,
-    // },
+    google: {
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+    },
     microsoft: {
       clientId: env.MICROSOFT_CLIENT_ID,
       clientSecret: env.MICROSOFT_CLIENT_SECRET,

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { LoginForm } from "@/app/login/login-form"
 import { getSession } from "@/lib/auth-server"
 import { SCHOOL_EMAIL_ERROR_MESSAGE } from "@/lib/auth-email-whitelist"
+import { env } from "@/env"
 
 type LoginPageProps = {
   searchParams: Promise<{
@@ -24,7 +25,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     error = SCHOOL_EMAIL_ERROR_MESSAGE
   } else if (params.error_description) {
     error = params.error_description
+  } else if (params.error) {
+    error = "Sign-in didn’t finish. Please try again or choose another account provider."
   }
 
-  return <LoginForm error={error} />
+  return <LoginForm error={error} e2eEnabled={env.NEXT_PUBLIC_E2E_AUTH_ENABLED === "1"} />
 }

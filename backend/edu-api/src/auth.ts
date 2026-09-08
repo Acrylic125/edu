@@ -18,6 +18,11 @@ export function createAuth(env: Env) {
 	return betterAuth({
 		secret: env.BETTER_AUTH_SECRET,
 		baseURL: env.WEB_ORIGIN,
+    user: {
+      additionalFields: {
+        plan: { type: ["free", "pro"], defaultValue: "free", required: false, input: false },
+      },
+    },
 		database: drizzleAdapter(db, {
 			provider: "sqlite",
 			schema,
