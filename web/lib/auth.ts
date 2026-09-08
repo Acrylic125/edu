@@ -78,7 +78,10 @@ export const auth = betterAuth({
       tenantId: env.MICROSOFT_TENANT_ID,
       prompt: "select_account",
       // Entra profile photos are large base64 strings that can blow header limits.
-      mapProfileToUser: () => ({ image: undefined }),
+      mapProfileToUser: () => ({
+        emailVerified: true,
+        image: undefined,
+      }),
     },
   },
 })
