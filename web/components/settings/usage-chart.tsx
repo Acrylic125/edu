@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
 import {
   ChartContainer,
@@ -23,18 +23,11 @@ const PERIODS = [
 type Period = (typeof PERIODS)[number]["value"]
 
 const chartConfig = {
-  requests: {
-    label: "Requests",
+  credits: {
+    label: "Credits",
     theme: {
       light: "oklch(0.55 0.22 275)",
       dark: "oklch(0.72 0.18 275)",
-    },
-  },
-  responses: {
-    label: "Responses",
-    theme: {
-      light: "oklch(0.68 0.16 65)",
-      dark: "oklch(0.79 0.14 70)",
     },
   },
 } satisfies ChartConfig
@@ -87,8 +80,7 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
     ...bucket,
     label: formatBucketLabel(bucket.timestamp, period),
   }))
-  const requests = data.reduce((total, item) => total + item.requests, 0)
-  const responses = data.reduce((total, item) => total + item.responses, 0)
+  const credits = data.reduce((total, item) => total + item.credits, 0)
   const detail = PERIODS.find((option) => option.value === period)?.detail
 
   return (
@@ -121,39 +113,17 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
         </div>
       </div>
 
-      <div className="grid gap-px overflow-hidden rounded-lg border border-border/70 bg-border/70 sm:grid-cols-2">
-        <Metric
-          label="Requests"
-          value={requests}
-          color="bg-violet-600 dark:bg-violet-400"
-        />
-        <Metric
-          label="Responses"
-          value={responses}
-          color="bg-amber-600 dark:bg-amber-400"
-        />
-      </div>
-
       <div className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-xs">
         <div className="flex flex-col items-start justify-between gap-2 border-b border-border/70 px-4 py-3 sm:flex-row sm:items-center">
           <div>
-            <h3 className="font-medium">Requests and responses</h3>
+            <h3 className="font-medium">Credits used</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {detail} breakdown
             </p>
           </div>
-          <div
-            className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground"
-            aria-hidden="true"
-          >
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-violet-600 dark:bg-violet-400" />
-              Requests
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-amber-600 dark:bg-amber-400" />
-              Responses
-            </span>
+          <div className="text-left sm:text-right">
+            <p className="text-xl font-semibold tracking-tight tabular-nums">{credits.toLocaleString("en-GB")}</p>
+            <p className="text-xs text-muted-foreground">Total in period</p>
           </div>
         </div>
 
@@ -162,20 +132,10 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
             config={chartConfig}
             className="h-60 w-full aspect-auto sm:h-64"
           >
-            <AreaChart
+            <BarChart
               data={data}
               margin={{ top: 6, right: 8, left: -12, bottom: 0 }}
             >
-              <defs>
-                <linearGradient id="requestsFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-requests)" stopOpacity={0.28} />
-                  <stop offset="95%" stopColor="var(--color-requests)" stopOpacity={0.02} />
-                </linearGradient>
-                <linearGradient id="responsesFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-responses)" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="var(--color-responses)" stopOpacity={0.01} />
-                </linearGradient>
-              </defs>
               <CartesianGrid vertical={false} strokeDasharray="3 3" />
               <XAxis
                 dataKey="label"
@@ -193,54 +153,20 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
                 width={52}
               />
               <ChartTooltip
-                cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
-                content={<ChartTooltipContent indicator="line" />}
+                cursor={{ fill: "var(--muted)", opacity: 0.45 }}
+                content={<ChartTooltipContent indicator="dot" />}
               />
-              <Area
-                dataKey="responses"
-                type="monotone"
-                fill="url(#responsesFill)"
-                stroke="var(--color-responses)"
-                strokeWidth={2}
+              <Bar
+                dataKey="credits"
+                fill="var(--color-credits)"
+                radius={[4, 4, 0, 0]}
+                maxBarSize={32}
                 isAnimationActive={false}
               />
-              <Area
-                dataKey="requests"
-                type="monotone"
-                fill="url(#requestsFill)"
-                stroke="var(--color-requests)"
-                strokeWidth={2}
-                isAnimationActive={false}
-              />
-            </AreaChart>
+            </BarChart>
           </ChartContainer>
         </div>
       </div>
-    </div>
-  )
-}
-
-function Metric({
-  label,
-  value,
-  color,
-}: {
-  label: string
-  value: number
-  color: string
-}) {
-  return (
-    <div className="bg-card px-4 py-3">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span
-          className={cn("size-2 rounded-full", color)}
-          aria-hidden="true"
-        />
-        {label}
-      </div>
-      <p className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
-        {value.toLocaleString()}
-      </p>
     </div>
   )
 }

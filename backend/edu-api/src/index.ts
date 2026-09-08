@@ -14,7 +14,6 @@ import {
 	updateCurrentStep,
 	updateTopicState,
 } from './topics/repository';
-import { getUserUsage } from './usage/service';
 import { learningStepsFromPlan } from './chat/new-topic';
 import { indexPdfBatch } from './documents/pdf';
 import { z } from 'zod';
@@ -316,15 +315,8 @@ export default {
 				return withCors(env, request, authResult);
 			}
 
-			if (!env.DB) {
-				return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
-			}
-
-			const db = createDb(env.DB);
-			const usage = await getUserUsage(db, authResult.userId);
 			const quotas = env.CHAT_DURABLE_OBJECT.get(env.CHAT_DURABLE_OBJECT.idFromName(authResult.userId));
-			const subscription = await quotas.usageSnapshot(authResult.userId);
-			return withCors(env, request, jsonResponse({ ...usage, subscription }));
+			return withCors(env, request, jsonResponse(await quotas.usageSnapshot(authResult.userId)));
 		}
 
 		return new Response('Not found', { status: 404 });

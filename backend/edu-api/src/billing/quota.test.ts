@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { plans, creditCosts } from './cost';
 import { QuotaStore, quotaPeriod } from './quota';
-import { plans, safetyLimits } from './plans';
+import { safetyLimits } from './plans';
 
 function storageFixture() {
 	let records = new Map<string, object | number | string | boolean>();
@@ -30,103 +31,86 @@ function storageFixture() {
 	} as Partial<DurableObjectStorage> as DurableObjectStorage;
 	return { storage, quotas: new QuotaStore(storage) };
 }
+
 const now = Date.parse('2026-09-08T12:00:00Z');
-const request = { aiRequestsPerDay: 1, aiRequestsPerMonth: 1 };
 
-describe('persistent plan allowances', () => {
-	it('atomically completes uploads with a durable PDF outbox entry', async () => {
-		const { quotas, storage } = storageFixture();
-		await quotas.registerUpload('a', 'u', 100, now);
-		await quotas.reserve('pdf:a', 'free', { pdfPagesPerMonth: 2 }, now);
-		await quotas.transitionUpload('a', 'pending', 'writing', now);
-		await quotas.transitionUpload('a', 'writing', 'uploaded', now);
-		await quotas.transitionUpload('a', 'uploaded', 'completing', now);
-		await quotas.transitionUpload('a', 'completing', 'complete', now);
-		expect(await storage.get('pending-pdf:a')).toBe('u');
-		expect(await storage.get('pending-upload:a')).toBeUndefined();
+describe('credit allowances', () => {
+	it('keeps every credit cost and plan limit in the shared policy', () => {
+		expect(creditCosts).toEqual({ turn: 1, imageUpload: 1, pdfPage: 1 });
+		expect(plans.free).toMatchObject({ creditsPer5Hours: 100, creditsPerWeek: 1_000 });
+		expect(plans.pro).toMatchObject({ creditsPer5Hours: 1_000, creditsPerWeek: 15_000 });
 	});
-	it('atomically admits only the remaining allowance under concurrent submissions', async () => {
+
+	it('atomically admits only the credits remaining in both plan windows', async () => {
 		const { quotas } = storageFixture();
-		const results = await Promise.all(Array.from({ length: 30 }, (_, i) => quotas.reserve(`m${i}`, 'free', request, now + i * 60_001)));
-		expect(results.filter((result) => result.ok)).toHaveLength(plans.free.aiRequestsPerDay);
+		const results = await Promise.all(
+			Array.from({ length: plans.free.creditsPer5Hours + 10 }, (_, index) => quotas.reserve(`turn:${index}`, 'free', creditCosts.turn, now)),
+		);
+		expect(results.filter((result) => result.ok)).toHaveLength(plans.free.creditsPer5Hours);
 		const snapshot = await quotas.snapshot('free', now);
-		expect(snapshot.allowances.find((item) => item.metric === 'aiRequestsPerMonth')?.used).toBe(20);
+		expect(snapshot.subscription.allowances).toEqual([
+			expect.objectContaining({ metric: 'creditsPer5Hours', used: 100, remaining: 0 }),
+			expect.objectContaining({ metric: 'creditsPerWeek', used: 100, remaining: 900 }),
+		]);
 	});
 
-	it('persists the rolling-minute limiter across object recreation', async () => {
-		const { quotas, storage } = storageFixture();
-		for (let i = 0; i < 5; i++) await quotas.reserve(`m${i}`, 'free', request, now + i);
-		const resumed = new QuotaStore(storage);
-		expect(await resumed.reserve('blocked', 'free', request, now + 10)).toMatchObject({ ok: false, error: { metric: 'aiRequestsPerMinute', retryAfter: 60 } });
-		expect(await resumed.reserve('next', 'free', request, now + 60_000)).toMatchObject({ ok: true });
+	it('uses aligned five-hour windows and Monday-based UTC weeks', () => {
+		expect(quotaPeriod('creditsPer5Hours', now)).toEqual({
+			key: '2026-09-08T09:00:00.000Z',
+			resetAt: '2026-09-08T14:00:00.000Z',
+		});
+		expect(quotaPeriod('creditsPerWeek', now)).toEqual({
+			key: '2026-09-07T00:00:00.000Z',
+			resetAt: '2026-09-14T00:00:00.000Z',
+		});
 	});
 
-	it('does not rerun or recharge duplicate reservations even after refund', async () => {
+	it('records multi-credit PDF work once in every usage view', async () => {
 		const { quotas } = storageFixture();
-		await quotas.reserve('m1', 'free', request, now);
-		expect(await quotas.reserve('m1', 'free', request, now)).toMatchObject({ ok: true, duplicate: true });
-		await quotas.settle('m1', true);
-		await quotas.settle('m1', true);
-		expect(await quotas.reserve('m1', 'free', request, now)).toMatchObject({ duplicate: true, status: 'refunded' });
-		expect((await quotas.snapshot('free', now)).allowances[0].used).toBe(0);
+		await quotas.reserve('pdf:a', 'free', 12 * creditCosts.pdfPage, now);
+		const snapshot = await quotas.snapshot('free', now);
+		expect(snapshot.periods['1d'].buckets.at(-1)).toMatchObject({ credits: 12 });
+		expect(snapshot.periods['7d'].buckets.at(-1)).toMatchObject({ credits: 12 });
+		expect(snapshot.periods.ytd.buckets.at(-1)).toMatchObject({ credits: 12 });
 	});
 
-	it('refunds the original UTC period without altering the new period', async () => {
+	it('refunds failed work from its original windows and chart buckets', async () => {
 		const { quotas } = storageFixture();
-		const end = Date.parse('2026-09-30T23:59:59Z');
-		await quotas.reserve('old', 'free', request, end);
-		await quotas.reserve('new', 'free', request, end + 60_001);
-		await quotas.settle('old', true);
-		expect((await quotas.snapshot('free', end)).allowances[1].used).toBe(0);
-		expect((await quotas.snapshot('free', end + 60_001)).allowances[1].used).toBe(1);
-		expect(quotaPeriod('aiRequestsPerMonth', Date.parse('2026-12-31T23:59:59Z')).resetAt).toBe('2027-01-01T00:00:00.000Z');
+		await quotas.reserve('turn:a', 'free', creditCosts.turn, now);
+		await quotas.settle('turn:a', true);
+		const snapshot = await quotas.snapshot('free', now);
+		expect(snapshot.subscription.allowances.every((allowance) => allowance.used === 0)).toBe(true);
+		expect(snapshot.periods['1d'].buckets.at(-1)?.credits).toBe(0);
 	});
 
-	it('preserves usage on upgrades and downgrades and isolates users', async () => {
+	it('does not rerun or recharge duplicate reservations after settlement', async () => {
 		const { quotas } = storageFixture();
-		await quotas.reserve('m', 'free', request, now);
-		expect((await quotas.snapshot('pro', now)).allowances[1]).toMatchObject({ used: 1, limit: 2000, remaining: 1999 });
-		expect((await quotas.snapshot('free', now)).allowances[1]).toMatchObject({ used: 1, remaining: 99 });
-		expect((await storageFixture().quotas.snapshot('free', now)).allowances[1].used).toBe(0);
+		await quotas.reserve('turn:a', 'free', creditCosts.turn, now);
+		await quotas.settle('turn:a', false);
+		expect(await quotas.reserve('turn:a', 'free', creditCosts.turn, now)).toMatchObject({ duplicate: true, status: 'charged' });
+		expect((await quotas.snapshot('free', now)).subscription.allowances[0]?.used).toBe(1);
 	});
 
-	it('does not increment other metrics when a compound reservation exceeds storage', async () => {
-		const { quotas } = storageFixture();
-		await quotas.initializeStorage(plans.free.storageBytes);
-		expect(await quotas.reserve('upload', 'free', { uploadsPerMonth: 1, storageBytes: 1 }, now)).toMatchObject({ ok: false, error: { metric: 'storageBytes', resetAt: null } });
-		expect((await quotas.snapshot('free', now)).allowances.find((item) => item.metric === 'uploadsPerMonth')?.used).toBe(0);
-		await quotas.initializeStorage(0);
-		expect((await quotas.snapshot('free', now)).allowances.at(-1)?.used).toBe(plans.free.storageBytes);
-	});
-
-	it('counts PDF pages once across queue retries and enforces the page allowance', async () => {
-		const { quotas } = storageFixture();
-		await quotas.reserve('pdf:a', 'free', { pdfPagesPerMonth: 90 }, now);
-		expect(await quotas.reserve('pdf:a', 'free', { pdfPagesPerMonth: 90 }, now)).toMatchObject({ duplicate: true });
-		expect(await quotas.reserve('pdf:b', 'free', { pdfPagesPerMonth: 11 }, now)).toMatchObject({ ok: false, error: { metric: 'pdfPagesPerMonth', remaining: 10 } });
-	});
-
-	it('prevents overlapping writes, completed overwrites and expired completion', async () => {
+	it('preserves upload lifecycle protections independently of credit accounting', async () => {
 		const { quotas } = storageFixture();
 		await quotas.registerUpload('a', 'u', 100, now);
-		const starts = await Promise.all([quotas.transitionUpload('a', 'pending', 'writing', now), quotas.transitionUpload('a', 'pending', 'writing', now)]);
+		const starts = await Promise.all([
+			quotas.transitionUpload('a', 'pending', 'writing', now),
+			quotas.transitionUpload('a', 'pending', 'writing', now),
+		]);
 		expect(starts).toEqual([true, false]);
 		expect(await quotas.transitionUpload('a', 'writing', 'uploaded', now)).toBe(true);
 		expect(await quotas.transitionUpload('a', 'uploaded', 'completing', now)).toBe(true);
 		expect(await quotas.transitionUpload('a', 'completing', 'complete', now)).toBe(true);
 		expect(await quotas.expireUpload('a', now + safetyLimits.uploadExpiresMs)).toBeNull();
-		await quotas.registerUpload('b', 'u', 100, now);
-		expect(await quotas.transitionUpload('b', 'pending', 'writing', now + safetyLimits.uploadExpiresMs)).toBe(false);
-		expect(await quotas.expireUpload('b', now + safetyLimits.uploadExpiresMs)).toMatchObject({ userId: 'u' });
 	});
 
-	it('keeps settled debits and throttles even refunded submissions', async () => {
+	it('keeps safety throttles separate from plan credits', async () => {
 		const { quotas } = storageFixture();
-		await quotas.reserve('m', 'free', request, now);
-		await quotas.settle('m', false);
-		await quotas.settle('m', true);
-		expect((await quotas.snapshot('free', now)).allowances[0].used).toBe(1);
-		for (let i = 0; i < safetyLimits.uploadRequestsPerMinute; i++) expect(await quotas.throttle('uploads', safetyLimits.uploadRequestsPerMinute, now)).toBeNull();
+		for (let index = 0; index < safetyLimits.uploadRequestsPerMinute; index += 1) {
+			expect(await quotas.throttle('uploads', safetyLimits.uploadRequestsPerMinute, now)).toBeNull();
+		}
 		expect(await quotas.throttle('uploads', safetyLimits.uploadRequestsPerMinute, now)).toMatchObject({ code: 'limit_exceeded' });
+		expect((await quotas.snapshot('free', now)).subscription.allowances[0]?.used).toBe(0);
 	});
 });

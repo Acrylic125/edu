@@ -2,8 +2,7 @@ import { z } from "zod"
 
 const UsageBucketSchema = z.object({
   timestamp: z.iso.datetime(),
-  requests: z.number().int().nonnegative(),
-  responses: z.number().int().nonnegative(),
+  credits: z.number().int().nonnegative(),
 })
 
 const UsagePeriodSchema = z.object({
@@ -17,9 +16,8 @@ export const UsagePayloadSchema = z.object({
   subscription: z.object({
     plan: z.enum(["free", "pro"]),
     name: z.string(),
-    aiRequestsPerMinute: z.number().int().positive(),
     allowances: z.array(z.object({
-      metric: z.enum(["aiRequestsPerDay", "aiRequestsPerMonth", "uploadsPerMonth", "pdfPagesPerMonth", "storageBytes"]),
+      metric: z.enum(["creditsPer5Hours", "creditsPerWeek"]),
       used: z.number().nonnegative(),
       limit: z.number().nonnegative(),
       remaining: z.number().nonnegative(),

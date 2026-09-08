@@ -120,7 +120,7 @@ export async function handleAssetRequest(request: Request, env: Env, url: URL) {
 		}
 
 		const id = `ast_${nanoid()}`;
-		const admission = await quotas.reserveUpload(authResult.userId, id, parsed.data.size);
+		const admission = await quotas.reserveUpload(authResult.userId, id, parsed.data.size, parsed.data.mimeType);
 		if (!admission.ok) return quotaResponse(admission.error);
 		const created = await insertAsset(db, {
 			id,

@@ -7,40 +7,38 @@ export function UsageSettings({ usage }: { usage: UsagePayload }) {
       <div className="space-y-1 border-b border-border/70 pb-3">
         <h2 className="text-xl font-semibold tracking-tight">Usage</h2>
         <p className="text-sm text-muted-foreground">
-          Your plan allowances and learning activity.
+          Your plan allowances and credit activity.
         </p>
       </div>
 
       <div className="space-y-3 rounded-lg border border-border p-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-medium">{usage.subscription.name} plan</h3>
-          <span className="text-xs text-muted-foreground">
-            Up to {usage.subscription.aiRequestsPerMinute} AI requests per minute
-          </span>
+          <span className="text-xs text-muted-foreground">Credits renew automatically</span>
         </div>
-        <dl className="divide-y divide-border text-sm">
+        <dl className="grid gap-2 sm:grid-cols-2">
           {usage.subscription.allowances.map((allowance) => (
-            <div key={allowance.metric} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
-              <dt>{allowanceLabels[allowance.metric]}</dt>
-              <dd className="text-right tabular-nums">
-                {formatAmount(allowance.used, allowance.metric)} / {formatAmount(allowance.limit, allowance.metric)}
-                <span className="block text-xs text-muted-foreground">
-                  {formatAmount(allowance.remaining, allowance.metric)} remaining
-                  {allowance.resetAt && ` · Resets ${new Date(allowance.resetAt).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short" })}, 00:00 UTC`}
+            <div key={allowance.metric} className="rounded-md border border-border/70 bg-muted/25 p-3">
+              <dt className="text-xs text-muted-foreground">{allowanceLabels[allowance.metric]}</dt>
+              <dd className="mt-1 tabular-nums">
+                <span className="text-xl font-semibold tracking-tight">{allowance.used.toLocaleString("en-GB")}</span>
+                <span className="text-sm text-muted-foreground"> / {allowance.limit.toLocaleString("en-GB")}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {allowance.remaining.toLocaleString("en-GB")} remaining
+                  {allowance.resetAt && ` · Resets ${formatReset(allowance.resetAt)}`}
                 </span>
               </dd>
             </div>
           ))}
         </dl>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          One accepted message uses one AI request. Internal model calls are included; confirming or rejecting a plan is free.
-          Failed requests without a useful result are refunded; stopping a running request still counts.
-          Uploads reserve space for one hour. PDF pages count once when accepted for indexing.
+          Each turn costs 1 credit, including tool calls and image processing. Image uploads cost 1 additional credit;
+          PDF uploads cost 1 additional credit per indexed page. Failed turns without a useful result are refunded.
         </p>
       </div>
       <div className="space-y-1">
-        <h3 className="text-sm font-medium">Learning activity</h3>
-        <p className="text-xs text-muted-foreground">Saved messages and responses; these counts can differ from AI requests.</p>
+        <h3 className="text-sm font-medium">Credit usage</h3>
+        <p className="text-xs text-muted-foreground">Turns and uploaded content charged to your plan.</p>
       </div>
       <UsageChart usage={usage} />
     </section>
@@ -48,16 +46,17 @@ export function UsageSettings({ usage }: { usage: UsagePayload }) {
 }
 
 const allowanceLabels = {
-  aiRequestsPerDay: "AI requests today",
-  aiRequestsPerMonth: "AI requests this month",
-  uploadsPerMonth: "File uploads this month",
-  pdfPagesPerMonth: "PDF pages this month",
-  storageBytes: "Attachment storage",
+  creditsPer5Hours: "Current 5-hour window",
+  creditsPerWeek: "This week",
 }
 
-function formatAmount(value: number, metric: keyof typeof allowanceLabels) {
-  if (metric === "storageBytes") {
-    return `${(value / (1024 * 1024)).toLocaleString("en-GB", { maximumFractionDigits: 1 })} MiB`
-  }
-  return value.toLocaleString("en-GB")
+function formatReset(value: string) {
+  return new Date(value).toLocaleString("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }) + " UTC"
 }

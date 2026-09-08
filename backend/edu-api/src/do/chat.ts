@@ -1,10 +1,11 @@
 import { QuotaStore } from '../billing/quota';
 import { getUserPlan } from '../billing/account';
+import { creditCosts } from '../billing/cost';
 import { safetyLimits } from '../billing/plans';
 import { DurableObject } from 'cloudflare:workers';
 import { nanoid } from 'nanoid';
 import { z } from 'zod';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { createDb } from '../../db/client';
 import { agentRun, asset } from '../../db/schema';
 import { loadAttachedImages, loadOwnedImagesByIds } from '../assets/load';
@@ -49,26 +50,19 @@ export class ChatDurableObject extends DurableObject<Env> {
 	}
 
 	async usageSnapshot(userId: string) {
-		await this.initializeStorage(userId);
 		return this.quotas.snapshot(await getUserPlan(this.env, userId));
 	}
 
-	private async initializeStorage(userId: string) {
-		if (await this.ctx.storage.get('storage-initialized')) return;
-		const [existing] = await createDb(this.env.DB).select({ bytes: sql<number>`coalesce(sum(${asset.size}), 0)` }).from(asset).where(eq(asset.userId, userId));
-		await this.quotas.initializeStorage(existing?.bytes ?? 0);
-	}
-
-	async reserveUpload(userId: string, id: string, size: number) {
-		await this.initializeStorage(userId);
+	async reserveUpload(userId: string, id: string, size: number, mimeType: string) {
 		z.string().min(1).max(128).parse(id);
 		z.number().int().positive().max(safetyLimits.pdfBytes).parse(size);
 		const error = await this.quotas.throttle('uploads', safetyLimits.uploadRequestsPerMinute);
 		if (error) return { ok: false as const, error };
 		const plan = await getUserPlan(this.env, userId);
-		// Register cleanup before reserving so a crash cannot strand storage allowance.
+		// Register cleanup first so a rejected or abandoned upload still expires from R2.
 		await this.quotas.registerUpload(id, userId, size);
-		return this.quotas.reserve(`upload:${id}`, plan, { uploadsPerMonth: 1, storageBytes: size });
+		if (mimeType.startsWith('image/')) return this.quotas.reserve(`upload:${id}`, plan, creditCosts.imageUpload);
+		return { ok: true as const, duplicate: false, status: 'reserved' as const };
 	}
 
 	async uploadState(id: string) {
@@ -101,7 +95,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 
 	async reservePdf(userId: string, id: string, pages: number) {
 		z.number().int().positive().max(safetyLimits.pdfPagesPerFile).parse(pages);
-		return this.quotas.reserve(`pdf:${id}`, await getUserPlan(this.env, userId), { pdfPagesPerMonth: pages });
+		return this.quotas.reserve(`pdf:${id}`, await getUserPlan(this.env, userId), pages * creditCosts.pdfPage);
 	}
 
 	async alarm() {
@@ -224,7 +218,7 @@ export class ChatDurableObject extends DurableObject<Env> {
 		// Confirmations only apply an existing generated plan; they do not call the model.
 		if (frame.type === 'message') {
 			const id = `message:${frame.messageId}`;
-			const admission = await this.quotas.reserve(id, await getUserPlan(this.env, userId), { aiRequestsPerDay: 1, aiRequestsPerMonth: 1 });
+			const admission = await this.quotas.reserve(id, await getUserPlan(this.env, userId), creditCosts.turn);
 			if (!admission.ok) {
 				this.sendJson(ws, { type: 'error', ...admission.error, requestId: frame.messageId });
 				return;
