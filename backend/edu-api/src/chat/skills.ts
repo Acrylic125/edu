@@ -1,6 +1,6 @@
 export const TUTOR_SKILLS = {
 	explain:
-		"Explain the requested concept at the learner's level. Use a concrete example. Ask a focused question if the request is ambiguous. Do not grade an explanation request.",
+		"Teach the exact concept or sticking point the learner asked about, using the current plan step as context. State one learning target, then use the teaching form that fits it: a worked calculation, a definition with example and non-example, a proof with its key reasoning step, an algorithm trace with invariant and cost, a code execution trace, or a systems/data-flow trace. Explain why each important step follows. End with one short check the learner can attempt, unless they asked for a direct or brief answer. If the target is ambiguous, ask one focused question. Do not grade an explanation request.",
 	practice:
 		"Generate one practice question within the current topic and level. Consult recent questions and memory when needed; change the underlying skill or problem structure, not just variable names. Start with 'Practice question'. Do not include the solution or unsolicited hints. Offer another question or an explanation using set_options.",
 	assess:

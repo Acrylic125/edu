@@ -14,7 +14,7 @@ import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-ho
 import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { createLangtraceExporter } from './langtrace-exporter';
 
-export const DEFAULT_MODEL = 'openai/gpt-5.6-luna';
+export const DEFAULT_MODEL = 'openai/gpt-6-luna';
 const DEFAULT_MAX_TOKENS = safetyLimits.outputTokensPerCall;
 export type LlmEnv = {
 	LANGTRACE_API_HOST?: string;
