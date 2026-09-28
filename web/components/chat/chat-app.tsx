@@ -1,15 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { FileTextIcon, UploadCloudIcon } from "lucide-react"
 
 import { ChatComposerIsland } from "@/components/chat/chat-composer-island"
 import { ChatFrame, ChatFrameStatus } from "@/components/chat/chat-frame"
-import {
-  ChatRealtimeProvider,
-  useChatSend,
-} from "@/components/chat/chat-socket-island"
+import { ChatRealtimeProvider, useChatSend } from "@/components/chat/chat-socket-island"
 import { ChatThreadIsland } from "@/components/chat/chat-thread-island"
 import { MessageSkeletons } from "@/components/chat/message-skeletons"
+import { PlanDialog } from "@/components/chat/plan-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { clientMessageId } from "@/lib/chat/ids"
@@ -22,22 +21,7 @@ import {
   useChatStoreApi,
 } from "@/lib/chat/store"
 import type { ChatBootstrap } from "@/lib/chat/types"
-import {
-  WsChatClientDecisionSchema,
-  WsChatClientMessageSchema,
-} from "@/lib/chat/ws-schema"
-import { cn } from "@/lib/utils"
-
-const GRID_ORB_POSITIONS = [
-  { x: "10%", y: "14%" },
-  { x: "52%", y: "12%" },
-  { x: "90%", y: "18%" },
-  { x: "82%", y: "52%" },
-  { x: "88%", y: "86%" },
-  { x: "50%", y: "78%" },
-  { x: "14%", y: "84%" },
-  { x: "12%", y: "50%" },
-] as const
+import { WsChatClientDecisionSchema, WsChatClientMessageSchema } from "@/lib/chat/ws-schema"
 
 export function ChatApp({ bootstrap }: { bootstrap: ChatBootstrap }) {
   return (
@@ -50,286 +34,191 @@ export function ChatApp({ bootstrap }: { bootstrap: ChatBootstrap }) {
 }
 
 function ChatAppShell() {
-  const [gridOrbPosition, setGridOrbPosition] = useState<number | null>(null)
-  const [gridOrbVisible, setGridOrbVisible] = useState(false)
   const phase = useChatStore(selectShellPhase)
   const status = useChatStore(headerStatusSelector)
   const session = useChatStore((state) => state.session)
-  const hasNoTopics = useChatStore(
-    (state) =>
-      state.catalog.order.length === 0 &&
-      state.session.kind === "none" &&
-      state.switch === null,
-  )
-  const store = useChatStoreApi()
   const error = useChatStore((state) => state.error)
   const topicCreation = useChatStore((state) => state.topicCreation)
+  const store = useChatStoreApi()
   const { sendJsonMessage } = useChatSend()
+  const [newViewFromTopicId, setNewViewFromTopicId] = useState<string | null | undefined>(undefined)
 
-  useEffect(() => {
-    let timerId = 0
-    let previousPosition = -1
-
-    function revealOrb() {
-      let nextPosition = Math.floor(Math.random() * GRID_ORB_POSITIONS.length)
-      if (nextPosition === previousPosition) {
-        nextPosition = (nextPosition + 1) % GRID_ORB_POSITIONS.length
-      }
-      previousPosition = nextPosition
-      setGridOrbPosition(nextPosition)
-      setGridOrbVisible(true)
-      timerId = window.setTimeout(() => {
-        setGridOrbVisible(false)
-        timerId = window.setTimeout(() => {
-          setGridOrbPosition(null)
-          timerId = window.setTimeout(revealOrb, 800)
-        }, 1000)
-      }, 5000 + Math.floor(Math.random() * 2000))
-    }
-
-    timerId = window.setTimeout(revealOrb, 700)
-    return () => {
-      window.clearTimeout(timerId)
-    }
-  }, [])
+  const showNewView =
+    session.kind === "none" ||
+    (newViewFromTopicId !== undefined &&
+      session.kind === "topic" &&
+      session.topicId === newViewFromTopicId)
 
   const hasPendingTopic = topicCreation !== null
   useEffect(() => {
-    if (!hasPendingTopic) {
-      return
-    }
+    if (!hasPendingTopic) return
     function warnBeforeLeaving(event: BeforeUnloadEvent) {
       event.preventDefault()
-      event.returnValue =
-        "This topic wasn't created. Leaving will lose the pending topic creation."
+      event.returnValue = "This topic wasn't created. Leaving will lose the pending topic creation."
     }
     window.addEventListener("beforeunload", warnBeforeLeaving)
-    return () => {
-      window.removeEventListener("beforeunload", warnBeforeLeaving)
-    }
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving)
   }, [hasPendingTopic])
-
-  let title = "Chat"
-  if (phase.show === "thread" && phase.title) {
-    title = phase.title
-  }
-
-  const isEmptyThread = phase.show === "thread" && phase.empty
-  const showComposer = phase.show !== "error" && !hasNoTopics
-  const gridOrb =
-    gridOrbPosition === null ? null : GRID_ORB_POSITIONS[gridOrbPosition]
 
   function sendUserText(content: string, optionMessageId?: string) {
     const state = store.getState()
-    if (state.sendGate(content, false, true) !== "send") {
-      return
-    }
+    if (state.sendGate(content, false, true) !== "send") return
     const text = content.trim()
-    if (text === "") {
-      return
-    }
+    if (text === "") return
     const messageId = clientMessageId()
     state.stageUserMessage(messageId, text, [])
-    if (optionMessageId) {
-      state.setOptionPending(optionMessageId)
-    }
+    if (optionMessageId) state.setOptionPending(optionMessageId)
     const topicId = activeTopicIdForSend(state.session)
     sendJsonMessage(
       WsChatClientMessageSchema.parse({
         type: "message",
-        messageId: messageId,
+        messageId,
         parts: [{ type: "text", content: text }],
         ...(topicId ? { topicId } : {}),
       }),
     )
   }
 
-  let body = null
-  if (hasNoTopics && phase.show !== "error") {
+  const alerts = (
+    <>
+      {error ? (
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {topicCreation?.status === "failed" ? (
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>{topicCreation.error ?? "The topic wasn't created. Please retry."}</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const messageId = clientMessageId()
+                store.getState().retryNewTopic(messageId)
+                sendJsonMessage(
+                  WsChatClientMessageSchema.parse({
+                    type: "message",
+                    messageId,
+                    parts: topicCreation.parts,
+                  }),
+                )
+              }}
+            >
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  )
+
+  let body
+  if (phase.show === "error") {
+    body = <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">{phase.message}</div>
+  } else if (showNewView) {
     body = (
-      <div className="relative h-full min-h-0 overflow-hidden">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 overflow-hidden"
-        >
-          <div className="empty-state-grid absolute inset-0" />
-          <svg
-            className="absolute inset-0 size-full text-primary"
-            aria-hidden="true"
-            preserveAspectRatio="none"
-          >
-            <defs>
-              <pattern
-                id="empty-state-highlight-grid"
-                width="80"
-                height="80"
-                patternUnits="userSpaceOnUse"
-              >
-                <path
-                  d="M 0 0 H 80 M 0 0 V 80"
-                  fill="none"
-                  stroke="white"
-                  strokeWidth="2"
-                />
-              </pattern>
-              <mask
-                id="empty-state-highlight-mask"
-                x="0"
-                y="0"
-                width="100%"
-                height="100%"
-                maskUnits="userSpaceOnUse"
-                maskContentUnits="userSpaceOnUse"
-              >
-                <rect
-                  width="100%"
-                  height="100%"
-                  fill="url(#empty-state-highlight-grid)"
-                />
-              </mask>
-              <radialGradient id="empty-state-highlight-color">
-                <stop offset="0" stopColor="currentColor" stopOpacity="0.3" />
-                <stop offset="1" stopColor="currentColor" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-            <circle
-              cx={gridOrb?.x ?? "50%"}
-              cy={gridOrb?.y ?? "50%"}
-              r="46%"
-              fill="url(#empty-state-highlight-color)"
-              mask="url(#empty-state-highlight-mask)"
-              className={cn(
-                "transition-opacity duration-1000 ease-in-out motion-reduce:transition-none",
-                gridOrbVisible ? "opacity-100" : "opacity-0",
-              )}
-            />
-          </svg>
-        </div>
-        <div className="relative h-full overflow-y-auto">
-          <div className="flex min-h-full items-center justify-center px-6 py-10">
-            <ChatComposerIsland emptyState />
+      <div className="flex h-full overflow-y-auto px-5 py-10 sm:px-8">
+        <div className="m-auto w-full max-w-2xl">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <span className="mb-5 flex size-14 items-center justify-center rounded-2xl border border-border bg-card text-primary">
+              <UploadCloudIcon className="size-7" strokeWidth={1.5} />
+            </span>
+            <h1 className="max-w-lg text-2xl font-semibold tracking-tight sm:text-3xl">What would you like to learn?</h1>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+              Add slides or tutorials, then tell Prune what you want to understand.
+            </p>
           </div>
+          {alerts}
+          <ChatComposerIsland newTopicMode />
+          <p className="mt-4 text-center text-xs text-muted-foreground">You can also drag files into the outline box.</p>
         </div>
       </div>
     )
   } else if (phase.show === "skeleton") {
     body = <MessageSkeletons />
-  } else if (phase.show === "error") {
-    body = (
-      <div className="flex h-full items-center justify-center px-4">
-        <p className="text-destructive text-sm">{phase.message}</p>
-      </div>
-    )
   } else {
+    const files = new Map<string, { name: string; url?: string }>()
+    for (const message of phase.messages) {
+      for (const part of message.parts) {
+        if (part.type !== "attachment") continue
+        files.set(part.ref, { name: part.filename ?? "Attached file", url: part.url })
+      }
+    }
     body = (
-      <div className="absolute inset-0 min-h-0 overflow-hidden">
-        <ChatThreadIsland
-          onOption={(messageId, label) => {
-            sendUserText(label, messageId)
-          }}
-          onDecision={(proposalId, decision) => {
-            const state = store.getState()
-            if (state.socket.status !== "ready") {
-              return
-            }
-            if (state.run.status === "running") {
-              return
-            }
-            sendJsonMessage(
-              WsChatClientDecisionSchema.parse({
-                type: "decision",
-                proposalId,
-                decision,
-              }),
-            )
-          }}
-        />
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-4xl px-5 pt-10 sm:px-10 sm:pt-14">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">Learning topic</p>
+                <h1 className="break-words text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">{phase.title || "Untitled topic"}</h1>
+              </div>
+              <PlanDialog session={session} />
+            </div>
+            {files.size > 0 ? (
+              <div className="mt-6 flex flex-wrap gap-2">
+                {[...files].map(([id, file]) => (
+                  file.url ? (
+                    <a key={id} href={file.url} target="_blank" rel="noopener noreferrer" className="flex max-w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{file.name}</span>
+                    </a>
+                  ) : (
+                    <span key={id} className="flex max-w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs">
+                      <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{file.name}</span>
+                    </span>
+                  )
+                ))}
+              </div>
+            ) : null}
+            {session.kind === "topic" && session.plan.length > 0 ? (
+              <section className="mt-8 rounded-xl border border-border bg-card/50 px-5 py-5 sm:px-6" aria-labelledby="contents-title">
+                <h2 id="contents-title" className="text-base font-semibold">Table of contents</h2>
+                <ol className="mt-4 max-h-48 space-y-2 overflow-y-auto pr-2">
+                  {session.plan.map((step) => (
+                    <li key={step.id} className="text-sm leading-snug" style={{ paddingLeft: step.parent ? "1rem" : undefined }}>
+                      {step.label}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : null}
+            <div className="mt-8 border-t border-border pt-5">
+              <p className="text-xs font-medium text-muted-foreground">Conversation</p>
+            </div>
+          </div>
+          <div className="mx-auto max-w-4xl px-1 pb-56 sm:px-6">
+            <ChatThreadIsland
+              onOption={(messageId, label) => sendUserText(label, messageId)}
+              onDecision={(proposalId, decision) => {
+                const state = store.getState()
+                if (state.socket.status !== "ready" || state.run.status === "running") return
+                sendJsonMessage(WsChatClientDecisionSchema.parse({ type: "decision", proposalId, decision }))
+              }}
+            />
+          </div>
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-background via-background/95 to-transparent px-4 pb-4 pt-10 sm:pb-6">
+          <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+            {alerts}
+            <ChatComposerIsland />
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
     <ChatFrame
-      hideHeader={hasNoTopics && phase.show !== "error"}
-      titleSlot={<span className="truncate">{title}</span>}
-      statusSlot={
-        status.label === "Online" ? null : (
-          <div className="shrink-0 text-xs">
-            <ChatFrameStatus label={status.label} tone={status.tone} />
-          </div>
-        )
-      }
-      planSession={session}
-      body={
-        <>
-          {body}
-          {showComposer ? (
-            <div
-              className={cn(
-                "pointer-events-none absolute inset-x-0 z-10 flex flex-col items-center px-4 transition-[bottom,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                isEmptyThread
-                  ? "bottom-1/2 translate-y-1/2"
-                  : "bottom-4 translate-y-0",
-              )}
-            >
-              <div
-                className={cn(
-                  "overflow-hidden text-center transition-all duration-300 ease-out",
-                  isEmptyThread && !hasNoTopics
-                    ? "mb-8 max-h-24 translate-y-0 opacity-100"
-                    : "mb-0 max-h-0 -translate-y-2 opacity-0",
-                )}
-              >
-                <p className="text-xl font-medium tracking-tight">New chat</p>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Send a message to get started.
-                </p>
-              </div>
-
-              <div className="pointer-events-auto w-full max-w-3xl">
-                {error ? (
-                  <Alert variant="destructive" className="mb-3">
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                ) : null}
-                {topicCreation?.status === "failed" ? (
-                  <Alert
-                    variant="destructive"
-                    className="mb-3 bg-background/95"
-                  >
-                    <AlertDescription className="flex items-center justify-between gap-3">
-                      <span>
-                        {topicCreation.error ??
-                          "The topic wasn't created. Please retry."}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={() => {
-                          const messageId = clientMessageId()
-                          store.getState().retryNewTopic(messageId)
-                          sendJsonMessage(
-                            WsChatClientMessageSchema.parse({
-                              type: "message",
-                              messageId: messageId,
-                              parts: topicCreation.parts,
-                            }),
-                          )
-                        }}
-                      >
-                        Retry
-                      </Button>
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-                <ChatComposerIsland emptyState={hasNoTopics} />
-              </div>
-            </div>
-          ) : null}
-        </>
-      }
+      title={showNewView ? "New topic" : phase.show === "thread" ? phase.title : "Prune"}
+      activeTopicId={!showNewView && session.kind === "topic" ? session.topicId : null}
+      onNew={() => setNewViewFromTopicId(session.kind === "topic" ? session.topicId : null)}
+      onSelectTopic={() => setNewViewFromTopicId(undefined)}
+      statusSlot={status.label === "Online" ? "Ready to learn" : <ChatFrameStatus label={status.label} tone={status.tone} />}
+      body={body}
     />
   )
 }

@@ -38,6 +38,10 @@ function topicUrl(topicId: TopicId) {
   return new URL(`/topics/${encodeURIComponent(topicId)}`, env.NEXT_PUBLIC_API_URL)
 }
 
+function topicDocumentUrl(topicId: TopicId) {
+  return new URL(`/topics/${encodeURIComponent(topicId)}/document`, env.NEXT_PUBLIC_API_URL)
+}
+
 export function parseTopicsResponse(json: unknown): TopicCatalog {
   const parsed = TopicsListSchema.safeParse(json)
   if (!parsed.success) {
@@ -68,6 +72,7 @@ export function sessionFromCurrentMessages(payload: CurrentMessagesPayload) {
     summary: payload.topic.summary,
     plan: payload.topic.plan,
     updatedAt: payload.topic.updatedAt,
+    document: payload.topic.document,
     messages: payload.messages,
     handoff: null,
     part: payload.topic.part,
@@ -165,4 +170,20 @@ export async function fetchTopic(token: string, topicId: TopicId) {
     throw new Error("Invalid learning plan response")
   }
   return parsed.data.topic
+}
+
+export async function patchTopicDocument(token: string, topicId: TopicId, markdown: string, expectedUpdatedAt: string) {
+  const response = await fetch(topicDocumentUrl(topicId), {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ markdown, expectedUpdatedAt }),
+  })
+  const json: unknown = await response.json()
+  if (!response.ok) {
+    const error = ErrorResponseSchema.safeParse(json)
+    throw new Error(error.success ? error.data.error : "Could not save the document")
+  }
+  const parsed = z.object({ document: z.object({ markdown: z.string(), updatedAt: z.string() }) }).safeParse(json)
+  if (!parsed.success) throw new Error("Invalid document response")
+  return parsed.data.document
 }

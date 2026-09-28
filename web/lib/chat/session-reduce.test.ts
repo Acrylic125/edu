@@ -9,6 +9,7 @@ const session: ChatSession = {
   summary: "Learn vectors",
   plan: [],
   updatedAt: "2026-09-08T00:00:00.000Z",
+  document: { markdown: "", updatedAt: "" },
   handoff: null,
   messages: [
     {
@@ -99,6 +100,7 @@ describe("chat run events", () => {
       summary: "Learn vectors",
       plan: [],
       updatedAt: "2026-09-08T00:00:00.000Z",
+      document: { markdown: "", updatedAt: "" },
       handoff: null,
       messages: [
         {
@@ -138,6 +140,7 @@ describe("chat run events", () => {
       summary: "Learn vectors",
       plan: [],
       updatedAt: "2026-09-08T00:00:00.000Z",
+      document: { markdown: "", updatedAt: "" },
       handoff: null,
       messages: [
         {

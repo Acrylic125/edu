@@ -7,7 +7,6 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
-  type ReactNode,
 } from "react"
 import {
   AlertCircleIcon,
@@ -23,7 +22,6 @@ import {
   ImagePreviewDialog,
 } from "@/components/chat/composer-attachments"
 import { ComposerHighlightText } from "@/components/chat/composer-highlight-text"
-import { NewTopicDialog } from "@/components/chat/new-topic-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -55,9 +53,8 @@ type ChatComposerProps = {
   onStop: () => void
   socket: SocketFact
   run: RunFact
-  footerStart?: ReactNode
   className?: string
-  emptyState?: boolean
+  newTopicMode?: boolean
 }
 
 const COMPOSER_INPUT_CLASS =
@@ -66,71 +63,13 @@ const COMPOSER_INPUT_CLASS =
 const COMPOSER_MIRROR_CLASS =
   "pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 
-const TOPIC_EXAMPLES = [
-  {
-    title: "Learn Calculus",
-    sections: [
-      ["Limits & Continuity", "Continuity · Infinite limits"],
-      ["Derivatives", "Rules · Applications"],
-      ["Integrals", "Techniques · Fundamental theorem"],
-    ],
-    prompt: `Learn Calculus
-Limits & Continuity
-- Continuity
-- Infinite Limits
-Derivatives
-- Rules of Derivatives
-- Applications
-Integrals
-- Integration Techniques
-- Fundamental Theorem of Calculus`,
-  },
-  {
-    title: "Master Data Structures",
-    sections: [
-      ["Arrays & Lists", "Storage · Linked lists"],
-      ["Trees & Graphs", "Traversal · Search"],
-      ["Algorithms", "Sorting · Complexity"],
-    ],
-    prompt: `Master Data Structures
-Arrays & Lists
-- Array Storage
-- Linked Lists
-Trees & Graphs
-- Tree Traversal
-- Graph Search
-Algorithms
-- Sorting
-- Time Complexity`,
-  },
-  {
-    title: "Learn Computer Architecture",
-    sections: [
-      ["Data Representation", "Binary arithmetic · Encoding"],
-      ["CPU & Instructions", "ISA · Datapath"],
-      ["Memory Systems", "Caches · Virtual memory"],
-    ],
-    prompt: `Learn Computer Architecture
-Data Representation
-- Binary Arithmetic
-- Data Encoding
-CPU & Instructions
-- Instruction Set Architecture
-- Processor Datapath
-Memory Systems
-- Caches
-- Virtual Memory`,
-  },
-] as const
-
 export function ChatComposer({
   onSend,
   onStop,
   socket,
   run,
-  footerStart,
   className,
-  emptyState = false,
+  newTopicMode = false,
 }: ChatComposerProps) {
   const session = useSession()
   const [draft, setDraft] = useState("")
@@ -153,8 +92,9 @@ export function ChatComposer({
     images.length > 0,
     composerImagesReady(images) && !isSubmitting
   )
-  const canSend = gate === "send"
-  const newTopicDisabled = socket.status !== "ready" || isSubmitting
+  const canSend =
+    gate === "send" &&
+    (!newTopicMode || (draft.trim() !== "" && !/^\/new\s*$/i.test(draft)))
 
   function patchImage(
     imageId: string,
@@ -278,7 +218,10 @@ export function ChatComposer({
     }
 
     const text = content.trim()
-    if (text === "" && imageSnapshot.length === 0) {
+    if (
+      (text === "" && imageSnapshot.length === 0) ||
+      (newTopicMode && (text === "" || /^\/new\s*$/i.test(text)))
+    ) {
       return
     }
 
@@ -328,27 +271,6 @@ export function ChatComposer({
       }
       setIsSubmitting(false)
     }
-  }
-
-  function createTopic(topic: string, files: File[]) {
-    let nextImages = images
-    if (files.length > 0) {
-      const result = ingestComposerImageFiles(files, images)
-      for (const image of result.added) {
-        previewsRef.current.track(image)
-      }
-      nextImages = result.nextImages
-      setImages(nextImages)
-      setAttachmentError(result.error)
-      if (result.error && result.added.length === 0) {
-        return
-      }
-    }
-    const topicRequest = topic.replace(/^(?:\/new(?:\s+|$))+/i, "").trim()
-    if (topicRequest === "") {
-      return
-    }
-    void submit(`/new ${topicRequest}`, nextImages)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -402,61 +324,6 @@ export function ChatComposer({
     event.preventDefault()
     setIsDragOver(false)
     addImageFiles(Array.from(event.dataTransfer.files))
-  }
-
-  if (emptyState) {
-    return (
-      <section className="grid w-full max-w-5xl items-center gap-12 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] md:gap-16">
-        <div className="flex flex-col items-start">
-          <h2 className="max-w-sm text-4xl leading-[1.08] font-medium tracking-tight sm:text-5xl">
-            What would you like to learn?
-          </h2>
-          <NewTopicDialog
-            disabled={newTopicDisabled}
-            onCreate={createTopic}
-            triggerClassName="mt-8 h-12 rounded-xl px-6"
-            triggerContent="New Learning Plan"
-            triggerSize="lg"
-            triggerVariant="default"
-          />
-        </div>
-
-        <div className="space-y-4">
-          {TOPIC_EXAMPLES.map((example) => {
-            return (
-              <NewTopicDialog
-                key={example.title}
-                initialTopic={example.prompt}
-                disabled={newTopicDisabled}
-                onCreate={createTopic}
-                triggerClassName="group h-auto min-h-28 w-full justify-start rounded-xl bg-background p-0 text-left hover:bg-card focus-visible:bg-card sm:min-h-32"
-                triggerContent={
-                  <div className="flex min-h-28 flex-col justify-center px-6 py-5 sm:min-h-32 sm:px-8 sm:py-6">
-                    <p className="text-xl leading-tight font-medium sm:text-2xl">
-                      {example.title}
-                    </p>
-                    <p className="mt-3 text-sm text-muted-foreground sm:text-base">
-                      {example.sections.map(([title], sectionIndex) => (
-                        <span key={title}>
-                          {sectionIndex > 0 ? " > " : null}
-                          {title}
-                        </span>
-                      ))}
-                    </p>
-                  </div>
-                }
-                triggerVariant="outline"
-              />
-            )
-          })}
-        </div>
-        {attachmentError ? (
-          <p role="alert" className="mt-4 text-sm text-destructive">
-            {attachmentError}
-          </p>
-        ) : null}
-      </section>
-    )
   }
 
   return (
@@ -523,7 +390,9 @@ export function ChatComposer({
               className="pointer-events-none absolute inset-0 px-4 pt-3 pb-2 text-sm leading-relaxed text-muted-foreground"
               aria-hidden
             >
-              Ask or answer questions, or type /new
+              {newTopicMode
+                ? "Type an outline of what you want to learn"
+                : "Ask or answer questions"}
             </div>
           ) : null}
           <Textarea
@@ -578,13 +447,6 @@ export function ChatComposer({
             >
               <PaperclipIcon />
             </Button>
-            {footerStart}
-            <NewTopicDialog
-              onCreate={(topic, files) => {
-                createTopic(topic, files)
-              }}
-              triggerVariant="outline"
-            />
           </div>
 
           <ComposerActionButton gate={gate} canSend={canSend} onStop={onStop} />

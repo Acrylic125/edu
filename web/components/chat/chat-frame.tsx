@@ -1,77 +1,134 @@
-import type { ReactNode } from "react"
+"use client"
+
+import { useState, type ReactNode } from "react"
+import { MenuIcon, MessageSquareIcon, SettingsIcon, XIcon } from "lucide-react"
+import Link from "next/link"
 
 import { AccountMenu } from "@/components/ui/account-menu"
-import { PlanDialog } from "@/components/chat/plan-dialog"
-import type { ChatSession } from "@/lib/chat/types"
+import { useSwitchTopic } from "@/components/chat/use-switch-topic"
+import { useChatStore } from "@/lib/chat/store"
 import { cn } from "@/lib/utils"
 
 type ChatFrameProps = {
   title?: string
   status?: string
-  titleSlot?: ReactNode
   statusSlot?: ReactNode
-  planSession?: ChatSession
-  hideHeader?: boolean
+  activeTopicId?: string | null
+  onNew?: () => void
+  onSelectTopic?: () => void
   body: ReactNode
-  composer?: ReactNode
+  chat?: ReactNode
 }
 
 export function ChatFrame({
-  title = "Chat",
+  title = "Prune",
   status = "Connecting",
-  titleSlot,
   statusSlot,
-  planSession,
-  hideHeader = false,
+  activeTopicId = null,
+  onNew,
+  onSelectTopic,
   body,
-  composer,
+  chat,
 }: ChatFrameProps) {
-  return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
-      {hideHeader ? null : (
-        <header className="h-12 shrink-0 border-b border-border px-3">
-          <div className="mx-auto flex h-full w-full max-w-6xl items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <h1 className="min-w-0 truncate text-sm font-medium">
-                {titleSlot ?? title}
-              </h1>
-              <PlanDialog session={planSession ?? null} />
-            </div>
-            {statusSlot === undefined ? (
-              <div className="shrink-0 text-xs">
-                <span className="text-muted-foreground">{status}</span>
-              </div>
-            ) : (
-              statusSlot
-            )}
-            <AccountMenu />
-          </div>
-        </header>
-      )}
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const catalog = useChatStore((state) => state.catalog)
+  const switchTopic = useSwitchTopic()
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        {body}
-        {composer}
+  return (
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+      {sidebarOpen ? (
+        <button type="button" aria-label="Close topics" className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSidebarOpen(false)} />
+      ) : null}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col border-r border-border bg-sidebar transition-transform duration-200 md:static md:w-64 md:translate-x-0 lg:w-72",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+        aria-label="Topics"
+      >
+        <div className="flex h-20 shrink-0 items-center justify-between px-5">
+          <button
+            type="button"
+            className="flex items-center gap-3 rounded-md text-left text-lg font-semibold tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => {
+              onNew?.()
+              setSidebarOpen(false)
+            }}
+          >
+            <span className="flex size-8 items-center justify-center rounded-lg border border-primary/35 bg-primary/10 font-serif text-xl text-primary" aria-hidden="true">P</span>
+            Prune
+          </button>
+          <button type="button" aria-label="Close topics" className="rounded-md p-2 text-muted-foreground md:hidden" onClick={() => setSidebarOpen(false)}>
+            <XIcon className="size-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
+          <button
+            type="button"
+            className="mb-5 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border bg-background text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => {
+              onNew?.()
+              setSidebarOpen(false)
+            }}
+          >
+            <span aria-hidden="true" className="text-lg leading-none">+</span>
+            New topic
+          </button>
+          <p className="px-3 pb-2 text-xs font-medium text-muted-foreground">Your topics</p>
+          <nav className="space-y-1" aria-label="Your topics">
+            {catalog.order.map((topicId) => {
+              const topic = catalog.byId[topicId]
+              if (!topic) return null
+              const selected = topicId === activeTopicId
+              return (
+                <button
+                  key={topicId}
+                  type="button"
+                  aria-current={selected ? "page" : undefined}
+                  className={cn(
+                    "flex min-h-10 w-full items-center rounded-lg px-3 py-2 text-left text-sm leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    selected ? "bg-sidebar-accent font-medium text-sidebar-foreground ring-1 ring-sidebar-border" : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+                  )}
+                  onClick={() => {
+                    onSelectTopic?.()
+                    void switchTopic(topicId)
+                    setSidebarOpen(false)
+                  }}
+                >
+                  <span className="line-clamp-2">{topic.title}</span>
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+        <div className="flex h-16 shrink-0 items-center gap-3 border-t border-border px-4">
+          <AccountMenu />
+          <Link href="/settings" aria-label="Settings" className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><SettingsIcon className="size-5" /></Link>
+          <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">{statusSlot ?? status}</span>
+        </div>
+      </aside>
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 lg:hidden">
+          <button type="button" aria-label="Open topics" className="rounded-md p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden" onClick={() => setSidebarOpen(true)}>
+            <MenuIcon className="size-5" />
+          </button>
+          <span className="truncate text-sm font-medium">{title}</span>
+          <button type="button" aria-label="Open chat" className="ml-auto rounded-md p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden" onClick={() => setChatOpen(true)}><MessageSquareIcon className="size-5" /></button>
+        </header>
+        <main data-document-pane className="relative min-h-0 flex-1 overflow-hidden">{body}</main>
       </div>
+      {chat ? <>
+        {chatOpen ? <button type="button" aria-label="Close chat" className="fixed inset-0 z-30 bg-black/60 lg:hidden" onClick={() => setChatOpen(false)} /> : null}
+        <aside aria-label="Chat" className={cn("fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col border-l border-border bg-background transition-transform duration-200 lg:static lg:w-[22rem] lg:shrink-0 lg:translate-x-0 xl:w-[25rem]", chatOpen ? "translate-x-0" : "translate-x-full")}>
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5"><h2 className="text-sm font-semibold">Chat</h2><button type="button" aria-label="Close chat" className="rounded-md p-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden" onClick={() => setChatOpen(false)}><XIcon className="size-5" /></button></div>
+          <div className="min-h-0 flex-1">{chat}</div>
+        </aside>
+      </> : null}
     </div>
   )
 }
 
-export function ChatFrameStatus({
-  label,
-  tone,
-}: {
-  label: string
-  tone: "muted" | "destructive"
-}) {
-  return (
-    <p
-      className={cn(
-        "text-xs",
-        tone === "destructive" ? "text-destructive" : "text-muted-foreground"
-      )}
-    >
-      {label}
-    </p>
-  )
+export function ChatFrameStatus({ label, tone }: { label: string; tone: "muted" | "destructive" }) {
+  return <span className={tone === "destructive" ? "text-destructive" : "text-muted-foreground"}>{label}</span>
 }

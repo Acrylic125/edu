@@ -40,6 +40,7 @@ export type ChatSession =
       summary: string
       plan: TopicPlanStep[]
       updatedAt: string
+      document: { markdown: string; updatedAt: string }
       messages: ChatMessage[]
       handoff: TopicHandoff | null
       part?: string | null
@@ -65,6 +66,7 @@ export type CurrentMessagesPayload = {
     summary: string
     plan: TopicPlanStep[]
     updatedAt: string
+    document: { markdown: string; updatedAt: string }
     part?: string | null
     currentStepId?: string | null
   } | null

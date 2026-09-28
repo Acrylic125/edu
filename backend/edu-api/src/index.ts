@@ -15,6 +15,7 @@ import {
 	updateTopicState,
 } from './topics/repository';
 import { learningStepsFromPlan } from './chat/new-topic';
+import { getTopicDocument, saveTopicDocument } from './topics/document';
 import { indexPdfBatch } from './documents/pdf';
 import { z } from 'zod';
 
@@ -24,6 +25,11 @@ const PdfIndexJobSchema = z.object({
 	assetId: z.string().min(1).max(128),
 	userId: z.string().min(1).max(128),
 	nextPage: z.number().int().positive(),
+});
+
+const SaveDocumentSchema = z.object({
+	markdown: z.string().max(200_000),
+	expectedUpdatedAt: z.string(),
 });
 
 function jsonResponse(data: object, status = 200) {
@@ -104,6 +110,28 @@ export default {
 		}
 
 		const updateTopicMatch = url.pathname.match(/^\/topics\/([^/]+)\/?$/);
+		const documentMatch = url.pathname.match(/^\/topics\/([^/]+)\/document\/?$/);
+		if (documentMatch && request.method === 'PATCH') {
+			const authResult = await requireUser(request, env);
+			if (authResult instanceof Response) return withCors(env, request, authResult);
+			if (!env.DB) return withCors(env, request, jsonResponse({ error: 'DB is not configured' }, 500));
+			let body;
+			try {
+				body = SaveDocumentSchema.safeParse(await request.json());
+			} catch {
+				return withCors(env, request, jsonResponse({ error: 'Invalid document' }, 400));
+			}
+			if (!body.success || (body.data.expectedUpdatedAt !== '' && Number.isNaN(Date.parse(body.data.expectedUpdatedAt)))) {
+				return withCors(env, request, jsonResponse({ error: 'Invalid document' }, 400));
+			}
+			const topicId = decodeURIComponent(documentMatch[1] ?? '');
+			const db = createDb(env.DB);
+			const existing = await getTopicForUser(db, topicId, authResult.userId);
+			if (!existing) return withCors(env, request, jsonResponse({ error: 'Topic not found' }, 404));
+			const document = await saveTopicDocument(db, topicId, body.data.markdown, body.data.expectedUpdatedAt);
+			if (!document) return withCors(env, request, jsonResponse({ error: 'The document changed. Refresh it and try again.' }, 409));
+			return withCors(env, request, jsonResponse({ document }));
+		}
 		if (updateTopicMatch && request.method === 'GET') {
 			const authResult = await requireUser(request, env);
 			if (authResult instanceof Response) {
@@ -119,6 +147,7 @@ export default {
 			if (!existing) {
 				return withCors(env, request, jsonResponse({ error: 'Topic not found' }, 404));
 			}
+			const document = await getTopicDocument(db, topicId, existing.plan, existing.summary);
 			return withCors(env, request, jsonResponse({
 				topic: {
 					id: existing.id,
@@ -128,6 +157,7 @@ export default {
 					part: selected?.topic.id === topicId ? selected.part : null,
 					currentStepId: selected?.topic.id === topicId ? selected.currentStepId : null,
 					updatedAt: existing.updatedAt.toISOString(),
+					document,
 				},
 			}));
 		}
@@ -167,6 +197,7 @@ export default {
 				plan,
 			});
 			const current = await getCurrentTopic(db, authResult.userId);
+			const document = await getTopicDocument(db, topicId, plan, parsed.data.summary);
 			let currentStepId = current?.topic.id === topicId ? current.currentStepId : null;
 			let part = current?.topic.id === topicId ? current.part : null;
 			if (!plan.some((step) => step.id === currentStepId)) {
@@ -188,6 +219,7 @@ export default {
 					part,
 					currentStepId,
 					updatedAt: updatedAt.toISOString(),
+					document,
 				},
 			}));
 		}
@@ -253,6 +285,7 @@ export default {
 			}
 
 			const messages = await loadAllMessages(db, current.topic.id);
+			const document = await getTopicDocument(db, current.topic.id, current.topic.plan, current.topic.summary);
 			const hydrated = [];
 			for (const message of messages) {
 				const parts = await hydrateAttachmentParts(env, db, authResult.userId, message.parts, url.origin);
@@ -275,6 +308,7 @@ export default {
 						part: current.part,
 						currentStepId: current.currentStepId,
 						updatedAt: current.topic.updatedAt.toISOString(),
+						document,
 					},
 					messages: hydrated,
 				}),

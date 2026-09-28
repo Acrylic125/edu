@@ -32,16 +32,14 @@ async function signInAsTestUser(page: import("@playwright/test").Page) {
     page.getByRole("button", { name: "Continue as test user" }).click(),
   ])
   await openApp(page)
-  await expect(page.getByText("New Learning Plan")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "What would you like to learn?" })).toBeVisible()
   await page.waitForTimeout(1000)
 }
 
 async function createPlan(page: import("@playwright/test").Page, outline: string) {
-  await expect(page.getByRole("button", { name: "New Learning Plan" })).toBeEnabled({ timeout: 60_000 })
-  await page.getByRole("button", { name: "New Learning Plan" }).click()
-  const dialog = page.getByRole("dialog")
-  await dialog.getByRole("textbox").fill(outline)
-  await dialog.getByRole("button", { name: "Create" }).click()
+  await page.getByRole("textbox").fill(outline)
+  await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 60_000 })
+  await page.getByRole("button", { name: "Send" }).click()
   await expect(page.getByText("Finite Automata", { exact: false }).first()).toBeVisible({ timeout: 180_000 })
   await expect(page.getByRole("button", { name: "See Plan" })).toBeEnabled({ timeout: 180_000 })
 }
@@ -145,10 +143,10 @@ async function buildCheckpoint(name: CheckpointName, parent: CheckpointName | nu
         await page.getByRole("button", { name: /Explain/ }).first().click()
         await expect(page.getByRole("button", { name: /Practice/ })).toBeVisible({ timeout: 180_000 })
       } else if (name === "SETUP_PLAN_CALCULUS") {
-        await page.getByRole("button", { name: "New Topic" }).last().click()
-        const dialog = page.getByRole("dialog")
-        await dialog.getByRole("textbox").fill(CALCULUS_OUTLINE)
-        await dialog.getByRole("button", { name: "Create" }).click()
+        await page.getByRole("button", { name: "New topic", exact: true }).click()
+        await page.getByRole("textbox").fill(CALCULUS_OUTLINE)
+        await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 60_000 })
+        await page.getByRole("button", { name: "Send" }).click()
         await expect(page.getByText("Limits and Continuity", { exact: false }).first()).toBeVisible({ timeout: 180_000 })
         await expect(page.getByRole("button", { name: "See Plan" })).toBeEnabled({ timeout: 180_000 })
       }

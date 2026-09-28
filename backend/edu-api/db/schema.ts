@@ -91,6 +91,12 @@ export const topic = sqliteTable(
 	(table) => [index('topic_user_idx').on(table.userId), index('topic_user_created_idx').on(table.userId, table.createdAt)],
 );
 
+export const topicDocument = sqliteTable('topic_document', {
+	topicId: text('topic_id').primaryKey().references(() => topic.id, { onDelete: 'cascade' }),
+	markdown: text('markdown').notNull().default(''),
+	updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
 export const userCurrentTopic = sqliteTable('user_current_topic', {
 	userId: text('user_id')
 		.primaryKey()

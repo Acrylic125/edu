@@ -120,6 +120,7 @@ export const TopicDetailSchema = z.object({
   part: z.string().nullable(),
   currentStepId: z.string().nullable(),
   updatedAt: z.string(),
+  document: z.object({ markdown: z.string(), updatedAt: z.string() }),
 });
 
 export const UpdateTopicRequestSchema = z.object({

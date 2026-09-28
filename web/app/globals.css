@@ -216,6 +216,45 @@
   overflow-y: visible;
 }
 
+.document-blocknote .bn-container {
+  --bn-colors-editor-background: transparent;
+  --bn-colors-editor-text: var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+  position: relative;
+  z-index: 1;
+}
+
+.document-blocknote .bn-editor {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+.document-blocknote .bn-block-content {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
+.document-blocknote .bn-block-outer {
+  position: relative;
+}
+
+.document-blocknote a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 639px) {
+  .document-blocknote[data-block-handles="true"] {
+    padding-left: 2rem;
+  }
+}
+
 @keyframes topic-enter-from-top {
   from {
     opacity: 0;

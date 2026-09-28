@@ -1,7 +1,6 @@
 "use client"
 
 import { ChatComposer } from "@/components/chat/chat-composer"
-import { TopicMenu } from "@/components/chat/topic-menu"
 import { useChatSend } from "@/components/chat/chat-socket-island"
 import { activeTopicIdForSend } from "@/lib/chat/active-topic"
 import { clientMessageId } from "@/lib/chat/ids"
@@ -15,10 +14,10 @@ import {
 
 export function ChatComposerIsland({
   className,
-  emptyState = false,
+  newTopicMode = false,
 }: {
   className?: string
-  emptyState?: boolean
+  newTopicMode?: boolean
 }) {
   const store = useChatStoreApi()
   const socket = useChatStore((state) => state.socket)
@@ -28,16 +27,17 @@ export function ChatComposerIsland({
   return (
     <ChatComposer
       className={className}
-      emptyState={emptyState}
+      newTopicMode={newTopicMode}
       socket={socket}
       run={run}
-      footerStart={<TopicMenu />}
       onSend={async (content, attachments) => {
         const state = store.getState()
         if (state.sendGate(content, attachments.length > 0, true) !== "send") {
           throw new Error("The tutor is not ready to receive a request yet.")
         }
-        const text = content.trim()
+        const text = newTopicMode
+          ? `/new ${content.trim().replace(/^\/new\s*/i, "")}`
+          : content.trim()
         if (text === "" && attachments.length === 0) {
           return
         }

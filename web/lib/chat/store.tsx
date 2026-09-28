@@ -55,6 +55,7 @@ export type ChatStore = ChatStoreState & {
   replaceCurrentMessages: (payload: CurrentMessagesPayload) => void
   setCurrentStep: (stepId: string) => void
   setTopicDetails: (topic: NonNullable<CurrentMessagesPayload["topic"]>) => void
+  setDocument: (topicId: TopicId, document: { markdown: string; updatedAt: string }) => void
   upsertListing: (listing: TopicListing) => void
   replaceCatalog: (catalog: TopicCatalog) => void
   sendGate: (
@@ -417,6 +418,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
               summary: payload.topic.summary,
               plan: payload.topic.plan,
               updatedAt: payload.topic.updatedAt,
+              document: payload.topic.document,
               messages: payload.messages,
               handoff: null,
               part: payload.topic.part,
@@ -435,6 +437,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             summary: payload.topic.summary,
             plan: payload.topic.plan,
             updatedAt: payload.topic.updatedAt,
+            document: payload.topic.document,
             messages: payload.messages,
             part: payload.topic.part,
             currentStepId: payload.topic.currentStepId,
@@ -471,6 +474,7 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             part: topic.part,
             currentStepId: topic.currentStepId,
             updatedAt: topic.updatedAt,
+            document: topic.document,
           },
           catalog: upsertListingInCatalog(state.catalog, {
             id: topic.id,
@@ -480,6 +484,12 @@ export function createChatStore(bootstrap: ChatBootstrap) {
             updatedAt: topic.updatedAt,
           }),
         }
+      })
+    },
+    setDocument: (topicId, document) => {
+      set((state) => {
+        if (state.session.kind !== "topic" || state.session.topicId !== topicId) return state
+        return { session: { ...state.session, document } }
       })
     },
 
@@ -526,6 +536,7 @@ function sessionFromPayload(payload: CurrentMessagesPayload) {
     summary: payload.topic.summary,
     plan: payload.topic.plan,
     updatedAt: payload.topic.updatedAt,
+    document: payload.topic.document,
     messages: payload.messages,
     handoff: null,
     part: payload.topic.part,

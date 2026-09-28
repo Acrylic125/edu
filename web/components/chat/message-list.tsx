@@ -1,11 +1,7 @@
 "use client"
 
-import {
-  LegendList,
-  type LegendListRenderItemProps,
-} from "@legendapp/list/react"
-import { CheckIcon, CopyIcon } from "lucide-react"
-import { memo, useCallback, useState } from "react"
+import { BookPlusIcon, CheckIcon, CopyIcon } from "lucide-react"
+import { memo, useState } from "react"
 
 import { AssistantMarkdown } from "@/components/chat/assistant-markdown"
 import {
@@ -30,10 +26,8 @@ type MessageListProps = {
   currentStepId: string | null
   onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
+  onSaveToDocument?: (messageId: string, text: string) => Promise<void>
 }
-
-// LegendList snapshots this prop by identity, so it must stay stable across renders.
-const messageListContentStyle = { paddingBottom: 240 } as const
 
 function textFromParts(parts: MessagePart[]) {
   const lines: string[] = []
@@ -114,12 +108,37 @@ function CopyMessageButton({ text }: { text: string }) {
   )
 }
 
+function UserMessage({
+  text,
+  attachments,
+  onExpandImage,
+}: {
+  text: string
+  attachments: ChatMessageAttachment[]
+  onExpandImage: (image: ChatMessageAttachment) => void
+}) {
+  return (
+    <div className="text-sm leading-relaxed">
+      <div className="min-w-0">
+        <MessageImageGrid images={attachments} onExpand={onExpandImage} />
+        {text.length > 0 ? (
+          <p className="whitespace-pre-wrap"><SkillInlineText text={text} skills={CHAT_COMMANDS} /></p>
+        ) : null}
+        {text.length === 0 && attachments.length > 0 ? (
+          <p className="text-xs italic text-muted-foreground">Attached file</p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 const MessageRow = memo(function MessageRow({
   message,
   isLatest,
   onExpandImage,
   onOption,
   onDecision,
+  onSaveToDocument,
   optionState,
   plan,
   currentStepId,
@@ -132,7 +151,9 @@ const MessageRow = memo(function MessageRow({
   currentStepId: string | null
   onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
+  onSaveToDocument?: (messageId: string, text: string) => Promise<void>
 }) {
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const attachments: ChatMessageAttachment[] = []
   for (const part of message.parts) {
     if (part.type === "attachment" && part.url)
@@ -148,21 +169,10 @@ const MessageRow = memo(function MessageRow({
     case "user": {
       const text = textFromParts(message.parts)
       return (
-        <div data-message-role="user" className="group flex flex-col items-end py-2">
-          <div className="w-fit max-w-[85%] rounded-2xl bg-secondary px-3 py-2 text-sm">
-            <MessageImageGrid images={attachments} onExpand={onExpandImage} />
-            {text.length > 0 ? (
-              <p className="whitespace-pre-wrap">
-                <SkillInlineText text={text} skills={CHAT_COMMANDS} />
-              </p>
-            ) : null}
-            {text.length === 0 && attachments.length > 0 ? (
-              <p className="text-muted-foreground text-xs italic">
-                Attached file
-              </p>
-            ) : null}
-          </div>
-          <CopyMessageButton text={text} />
+        <div data-message-role="user" className="group border-b border-border/60 py-5">
+          <p className="mb-2 text-xs font-semibold text-muted-foreground">You</p>
+          <UserMessage text={text} attachments={attachments} onExpandImage={onExpandImage} />
+          <div className="flex justify-end"><CopyMessageButton text={text} /></div>
         </div>
       )
     }
@@ -171,17 +181,12 @@ const MessageRow = memo(function MessageRow({
         message.status !== "streaming" && message.status !== "cancelled"
       const progress = message.progress ?? []
       const hasPlan = message.parts.some((part) => part.type === "plan")
-      const hasMermaid = message.parts.some(
-        (part) =>
-          part.type === "text" && /```mermaid(?:\s|$)/i.test(part.content),
-      )
       return (
-        <div data-message-role="assistant" className="group flex flex-col items-end py-2">
+        <div data-message-role="assistant" className="group border-b border-border/60 py-5">
+          <p className="mb-2 text-xs font-semibold text-primary">Prune</p>
           <div
             className={cn(
-              "self-start",
-              "flex flex-col gap-2 text-sm",
-              hasMermaid ? "w-full" : "max-w-[85%]",
+              "flex w-full flex-col gap-2 text-sm",
             )}
           >
             {progress.length > 0 && message.status === "streaming" ? (
@@ -216,7 +221,13 @@ const MessageRow = memo(function MessageRow({
               )
             })}
           </div>
-          <CopyMessageButton text={textFromParts(message.parts)} />
+          <div className="flex items-center justify-end gap-1">
+            {onSaveToDocument && !hasPlan && !message.parts.some((part) => part.type === "proposal") && enableRichContent && textFromParts(message.parts).trim() ? <Button type="button" variant="ghost" size="sm" disabled={saveStatus === "saving" || saveStatus === "saved"} className="text-xs text-muted-foreground" onClick={() => {
+              setSaveStatus("saving")
+              void onSaveToDocument(message.id, textFromParts(message.parts)).then(() => setSaveStatus("saved")).catch(() => setSaveStatus("error"))
+            }}><BookPlusIcon className="size-3.5" />{saveStatus === "saved" ? "Added" : saveStatus === "error" ? "Retry saving" : "Add to document"}</Button> : null}
+            <CopyMessageButton text={textFromParts(message.parts)} />
+          </div>
         </div>
       )
     }
@@ -275,6 +286,24 @@ function planStepDepths(steps: Extract<MessagePart, { type: "plan" }>["steps"]) 
   return depths
 }
 
+function PlanView({ steps }: { steps: Extract<MessagePart, { type: "plan" }>["steps"] }) {
+  const depths = planStepDepths(steps)
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+      <ol className="space-y-2">
+        {steps.map((step) => (
+          <li key={step.id} className="flex items-start gap-3" style={{ marginLeft: `${(depths.get(step.id) ?? 0) * 1.25}rem` }}>
+            <div>
+              <p className="font-medium">{step.label}</p>
+              <p className="text-xs text-muted-foreground">{step.summary}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 function PartView({
   part,
   messageId,
@@ -299,31 +328,13 @@ function PartView({
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
 }) {
   if (part.type === "text") {
-    return (
-      <AssistantMarkdown
-        text={part.content}
-        renderScope={renderScope}
-        enableRichContent={enableRichContent}
-      />
-    )
+    return <AssistantMarkdown text={part.content} renderScope={renderScope} enableRichContent={enableRichContent} />
   }
   if (part.type === "attachment") {
     return <p className="text-muted-foreground text-xs">{part.ref}</p>
   }
   if (part.type === "plan") {
-    const depths = planStepDepths(part.steps)
-    return (
-      <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
-        <ol className="space-y-2">
-          {part.steps.map((step) => (
-            <li key={step.id} style={{ marginLeft: `${(depths.get(step.id) ?? 0) * 1.25}rem` }}>
-              <p className="font-medium">{step.label}</p>
-              <p className="text-muted-foreground text-xs">{step.summary}</p>
-            </li>
-          ))}
-        </ol>
-      </div>
-    )
+    return <PlanView steps={part.steps} />
   }
   if (part.type === "options") {
     if (!actionsEnabled) {
@@ -423,75 +434,33 @@ export function MessageList({
   currentStepId,
   onOption,
   onDecision,
+  onSaveToDocument,
 }: MessageListProps) {
   const [expandedImage, setExpandedImage] =
     useState<ChatMessageAttachment | null>(null)
   const lastMessageId = messages.at(-1)?.id
   const plan = planFromMessages(messages)
-  const listRenderVersion = [
-    lastMessageId,
-    optionState?.messageId,
-    optionState?.status,
-    currentStepId,
-  ].join(":")
-
-  const renderItem = useCallback(
-    ({ item }: LegendListRenderItemProps<ChatMessage>) => {
-      const isLatest = isLatestChatMessage(item.id, lastMessageId)
-      return (
-        <div className="mx-auto w-full max-w-3xl px-4">
-          <MessageRow
-            message={item}
-            isLatest={isLatest}
-            optionState={optionState}
-            plan={plan}
-            currentStepId={currentStepId}
-            onExpandImage={setExpandedImage}
-            onOption={onOption}
-            onDecision={onDecision}
-          />
-        </div>
-      )
-    },
-    [lastMessageId, onDecision, onOption, optionState, plan, currentStepId],
-  )
-
   return (
     <>
-      <LegendList
-        className="h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
-        style={{ height: "100%" }}
-        contentContainerStyle={messageListContentStyle}
-        data={messages}
-        extraData={listRenderVersion}
-        renderItem={renderItem}
-        keyExtractor={(message) => message.id}
-        getItemType={(item) => {
-          const lastId = messages[messages.length - 1]?.id
-          if (item.id === lastId) {
-            return `${item.role}-last`
-          }
-          return item.role
-        }}
-        estimatedItemSize={72}
-        initialScrollAtEnd
-        alignItemsAtEnd={messages.length > 0}
-        maintainScrollAtEnd
-        maintainScrollAtEndThreshold={0.25}
-        maintainVisibleContentPosition
-        recycleItems={false}
-        ListHeaderComponent={
-          header == null ? undefined : <ListHeader header={header} />
-        }
-        ListFooterComponent={
-          messages.length === 0 || footer == null ? undefined : (
-            <ListFooter footer={footer} />
-          )
-        }
-        ListEmptyComponent={
-          messages.length === 0 && footer != null ? <>{footer}</> : undefined
-        }
-      />
+      <div className="pb-4">
+        {header == null ? null : <ListHeader header={header} />}
+        {messages.map((message) => (
+          <div key={message.id} className="mx-auto w-full max-w-3xl px-4">
+            <MessageRow
+              message={message}
+              isLatest={isLatestChatMessage(message.id, lastMessageId)}
+              optionState={optionState}
+              plan={plan}
+              currentStepId={currentStepId}
+              onExpandImage={setExpandedImage}
+              onOption={onOption}
+              onDecision={onDecision}
+              onSaveToDocument={onSaveToDocument}
+            />
+          </div>
+        ))}
+        {footer == null ? null : <ListFooter footer={footer} />}
+      </div>
       <ImagePreviewDialog
         open={expandedImage !== null}
         onOpenChange={(open) => {

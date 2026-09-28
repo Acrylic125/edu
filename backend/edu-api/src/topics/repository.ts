@@ -1,7 +1,8 @@
 import { and, asc, eq } from 'drizzle-orm';
 
 import type { Db } from '../../db/client';
-import { topic, userCurrentTopic } from '../../db/schema';
+import { topic, topicDocument, userCurrentTopic } from '../../db/schema';
+import { initialDocument } from './document';
 import { nanoid } from 'nanoid';
 import type { TopicPlanStep } from '../messages/schema';
 
@@ -87,15 +88,22 @@ export async function createTopic(
 	const id = `topic_${nanoid()}`;
 	const now = new Date();
 
-	await db.insert(topic).values({
-		id,
-		userId: params.userId,
-		title: params.title,
-		summary: params.summary,
-		plan: params.plan ?? [],
-		createdAt: now,
-		updatedAt: now,
-	});
+	await db.batch([
+		db.insert(topic).values({
+			id,
+			userId: params.userId,
+			title: params.title,
+			summary: params.summary,
+			plan: params.plan ?? [],
+			createdAt: now,
+			updatedAt: now,
+		}),
+		db.insert(topicDocument).values({
+			topicId: id,
+			markdown: initialDocument(params.plan ?? [], params.summary),
+			updatedAt: now,
+		}),
+	]);
 
 	return {
 		id,
