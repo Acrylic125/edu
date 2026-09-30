@@ -1,6 +1,7 @@
 import type { Db } from "../../db/client";
 import {
 	getTopicForUser,
+	getCurrentTopic,
 	setCurrentTopic,
 	updateCurrentStep,
 } from "../topics/repository";
@@ -16,7 +17,10 @@ export async function selectTopic(
 		return { success: false, error: "Topic not found" };
 	}
 
-	await setCurrentTopic(db, userId, topicId, null);
+	const current = await getCurrentTopic(db, userId);
+	if (current?.topic.id !== topicId) {
+		await setCurrentTopic(db, userId, topicId, null);
+	}
 
 	return { success: true };
 }

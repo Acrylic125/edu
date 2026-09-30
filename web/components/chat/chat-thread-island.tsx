@@ -6,11 +6,9 @@ import { selectShellPhase, useChatStore } from "@/lib/chat/store"
 export function ChatThreadIsland({
   onOption,
   onDecision,
-  onSaveToDocument,
 }: {
   onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
-  onSaveToDocument?: (messageId: string, text: string) => Promise<void>
 }) {
   const phase = useChatStore(selectShellPhase)
   const optionState = useChatStore((state) => state.optionState)
@@ -31,14 +29,13 @@ export function ChatThreadIsland({
   })
 
   return (
-    <div key={phase.topicId}>
+    <div key={phase.topicId} className="h-full min-h-0">
       <MessageList
         messages={visibleMessages}
         optionState={optionState}
         currentStepId={currentStepId}
         onOption={onOption}
         onDecision={onDecision}
-        onSaveToDocument={onSaveToDocument}
       />
     </div>
   )

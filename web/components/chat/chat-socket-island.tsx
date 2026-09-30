@@ -1,9 +1,11 @@
 "use client"
 
-import { createContext, useContext, useRef, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useRef, type ReactNode } from "react"
+import { useRouter } from "next/navigation"
 
+import { useChatFrame } from "@/components/chat/chat-frame"
 import { useSession } from "@/lib/auth-client"
-import { fetchCurrentMessages, fetchTopics } from "@/lib/chat/http"
+import { fetchTopicMessages, fetchTopics, postSelectTopic } from "@/lib/chat/http"
 import { useChatStoreApi } from "@/lib/chat/store"
 import { getChatWebSocketUrl, useChatWebSocket } from "@/lib/chat/ws"
 import {
@@ -21,7 +23,15 @@ const ChatSendContext = createContext<ChatSendApi | null>(null)
 export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
   const session = useSession()
   const store = useChatStoreApi()
+  const router = useRouter()
+  const { setCatalog } = useChatFrame()
+  const mounted = useRef(true)
   const submissions = useRef(new Map<string, { resolve: () => void; reject: (error: Error) => void }>())
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   let socketUrl: string | null = null
   if (session.data) {
@@ -42,13 +52,25 @@ export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
       }
       store.setState({ socket: { status: "connecting" } })
     },
-    onMessage: (event) => {
+    onMessage: async (event) => {
       try {
         const raw = JSON.parse(event.data)
         const parsed = WsServerMessageSchema.safeParse(raw)
         if (!parsed.success) {
           return
         }
+        if (parsed.data.type === "ready") {
+          const current = store.getState().session
+          if (current.kind === "topic" && current.topicId && session.data) {
+            try {
+              await postSelectTopic(session.data.session.token, current.topicId)
+            } catch {
+              store.setState({ socket: { status: "error", message: "Could not open this topic" }, error: "Could not open this topic" })
+              return
+            }
+          }
+        }
+        if (!mounted.current) return
         store.getState().applyWs(parsed.data)
         const message = parsed.data
         if ((message.type === "run.started" || message.type === "error") && message.requestId) {
@@ -59,7 +81,10 @@ export function ChatRealtimeProvider({ children }: { children: ReactNode }) {
         const bornId = store.getState().takeTopicBornRefresh()
         if (bornId && session.data) {
           const token = session.data.session.token
-          void refreshAfterTopicBorn(store, token, bornId)
+          const catalog = await refreshAfterTopicBorn(store, token, bornId)
+          if (!mounted.current) return
+          if (catalog) setCatalog(catalog)
+          router.replace(`/chat/${encodeURIComponent(bornId)}`)
         }
       } catch {
         return
@@ -119,19 +144,20 @@ async function refreshAfterTopicBorn(
 ) {
   try {
     const [current, catalog] = await Promise.all([
-      fetchCurrentMessages(token),
+      fetchTopicMessages(token, topicId),
       fetchTopics(token),
     ])
     const state = store.getState()
     if (state.session.kind !== "topic" || state.session.topicId !== topicId) {
       return
     }
-    if (current.topic?.id !== topicId) {
+    if (current?.topic?.id !== topicId) {
       store.getState().replaceCatalog(catalog)
-      return
+      return catalog
     }
     store.getState().replaceCurrentMessages(current)
     store.getState().replaceCatalog(catalog)
+    return catalog
   } catch {
     return
   }

@@ -1,26 +1,39 @@
+import { cache } from "react"
+import { notFound } from "next/navigation"
+
 import { emptyCatalog, upsertListing } from "./catalog"
 import {
-  fetchCurrentMessages,
+  fetchTopicMessages,
   fetchTopics,
   sessionFromCurrentMessages,
 } from "./http"
-import type { ChatBootstrap } from "./types"
 import { getSession } from "@/lib/auth-server"
 
-export async function loadChatBootstrap(): Promise<ChatBootstrap> {
+export const loadChatCatalog = cache(async () => {
+  const session = await getSession()
+  if (!session) return emptyCatalog()
+  return fetchTopics(session.session.token)
+})
+
+export async function loadChatBootstrap(topicId?: string) {
   const session = await getSession()
   if (!session) {
     return {
       catalog: emptyCatalog(),
-      session: { kind: "none" },
+      session: { kind: "none" as const },
     }
   }
 
-  const token = session.session.token
+  if (!topicId) {
+    return { catalog: await loadChatCatalog(), session: { kind: "none" as const } }
+  }
+
   const [catalog, current] = await Promise.all([
-    fetchTopics(token),
-    fetchCurrentMessages(token),
+    loadChatCatalog(),
+    fetchTopicMessages(session.session.token, topicId),
   ])
+
+  if (!current?.topic || current.topic.id !== topicId) notFound()
 
   let nextCatalog = catalog
   if (current.topic !== null && catalog.byId[current.topic.id] === undefined) {

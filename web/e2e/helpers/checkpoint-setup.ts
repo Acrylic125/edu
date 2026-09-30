@@ -22,6 +22,8 @@ const baseURL = "http://localhost:3100"
 
 async function openApp(page: import("@playwright/test").Page) {
   await page.goto("/chat")
+  const topics = page.getByRole("navigation", { name: "Your topics" }).getByRole("link")
+  if (await topics.count() > 0) await topics.last().click()
   await page.waitForTimeout(2000)
 }
 
@@ -32,7 +34,7 @@ async function signInAsTestUser(page: import("@playwright/test").Page) {
     page.getByRole("button", { name: "Continue as test user" }).click(),
   ])
   await openApp(page)
-  await expect(page.getByRole("heading", { name: "What would you like to learn?" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Drop in slides, tutorials and past year papers to learn" })).toBeVisible()
   await page.waitForTimeout(1000)
 }
 
@@ -41,7 +43,8 @@ async function createPlan(page: import("@playwright/test").Page, outline: string
   await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 60_000 })
   await page.getByRole("button", { name: "Send" }).click()
   await expect(page.getByText("Finite Automata", { exact: false }).first()).toBeVisible({ timeout: 180_000 })
-  await expect(page.getByRole("button", { name: "See Plan" })).toBeEnabled({ timeout: 180_000 })
+  await expect(page.getByRole("navigation", { name: "Table of contents" })).toBeVisible({ timeout: 180_000 })
+  await expect(page).toHaveURL(/\/chat\/topic_[^/]+$/)
 }
 
 async function assertTopicPersisted(stateDir: string) {
@@ -136,19 +139,20 @@ async function buildCheckpoint(name: CheckpointName, parent: CheckpointName | nu
     } else {
       await openApp(page)
       if (name === "SETUP_PLAN_TOC") {
-      await createPlan(page, AUTOMATA_OUTLINE)
+        await createPlan(page, AUTOMATA_OUTLINE)
       } else if (name === "SUBTOPIC_1") {
         await page.waitForTimeout(5000)
         await expect(page.getByRole("button", { name: /Explain/ }).first()).toBeEnabled({ timeout: 60_000 })
         await page.getByRole("button", { name: /Explain/ }).first().click()
         await expect(page.getByRole("button", { name: /Practice/ })).toBeVisible({ timeout: 180_000 })
       } else if (name === "SETUP_PLAN_CALCULUS") {
-        await page.getByRole("button", { name: "New topic", exact: true }).click()
+        await page.getByRole("link", { name: "New topic", exact: true }).click()
         await page.getByRole("textbox").fill(CALCULUS_OUTLINE)
         await expect(page.getByRole("button", { name: "Send" })).toBeEnabled({ timeout: 60_000 })
         await page.getByRole("button", { name: "Send" }).click()
         await expect(page.getByText("Limits and Continuity", { exact: false }).first()).toBeVisible({ timeout: 180_000 })
-        await expect(page.getByRole("button", { name: "See Plan" })).toBeEnabled({ timeout: 180_000 })
+        await expect(page.getByRole("navigation", { name: "Table of contents" })).toBeVisible({ timeout: 180_000 })
+        await expect(page).toHaveURL(/\/chat\/topic_[^/]+$/)
       }
     }
     await context.storageState({ path: storageStatePath })

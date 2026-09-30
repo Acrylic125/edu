@@ -43,7 +43,7 @@ function createObserver(page: Page): Observer {
   })
 
   page.on("response", (response) => {
-    if (!response.url().endsWith("/topics/current/messages")) return
+    if (!/\/topics\/[^/]+\/messages$/.test(response.url())) return
     const work = response
       .json()
       .then((payload) => {
@@ -78,7 +78,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures>({
   checkpoint: ["SETUP_PLAN_TOC", { option: true }],
-  page: async ({ browser, checkpoint }, use, testInfo) => {
+  page: async ({ browser, checkpoint }, provideFixture, testInfo) => {
     const runRoot = await ensureRunRoot(`${testInfo.workerIndex}-${testInfo.testId}`)
     const stateDir = `${runRoot}/state`
     await rm(stateDir, { recursive: true, force: true })
@@ -91,16 +91,19 @@ export const test = base.extend<Fixtures>({
     const page = await context.newPage()
     const observer = createObserver(page)
     await page.goto("/chat")
+    if (checkpoint !== "FRESH") {
+      await page.getByRole("navigation", { name: "Your topics" }).getByRole("link").last().click()
+    }
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 60_000 })
     await page.waitForTimeout(5_000)
     await expect(page.locator("form").filter({ has: page.getByRole("button", { name: "Send" }) })).toHaveCount(1)
-    await use(page)
+    await provideFixture(page)
     await observer.assertClean()
     await context.close()
     await stopServices(services)
   },
-  observer: async ({ page }, use) => {
-    await use(createObserver(page))
+  observer: async ({ page }, provideFixture) => {
+    await provideFixture(createObserver(page))
   },
 })
 

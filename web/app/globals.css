@@ -243,6 +243,10 @@
   position: relative;
 }
 
+.document-blocknote .bn-trailing-block {
+  display: none;
+}
+
 .document-blocknote a {
   color: var(--primary);
   text-decoration: underline;

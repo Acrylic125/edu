@@ -22,19 +22,17 @@ test.describe("checkpointed real-model chat flow", () => {
     await page.getByRole("button", { name: "Accept" }).click()
     await expect(page.getByText("Learning plan updated!", { exact: false }).last()).toBeVisible({ timeout: 180_000 })
 
-    await page.getByRole("button", { name: "See Plan" }).click()
-    const dialog = page.getByRole("dialog")
-    await expect(dialog.getByText("P vs NP", { exact: false })).toBeVisible()
-    await expect(dialog.getByText("3-SAT", { exact: false })).toBeVisible()
-    await expect(dialog.getByText("Vertex Cover", { exact: false })).toBeVisible()
+    const contents = page.getByRole("navigation", { name: "Table of contents" })
+    await expect(contents.getByText("P vs NP", { exact: false })).toBeVisible()
+    await expect(contents.getByText("3-SAT", { exact: false })).toBeVisible()
+    await expect(contents.getByText("Vertex Cover", { exact: false })).toBeVisible()
   })
 
   test("selects a plan step and answers the current-topic question", async ({ page }) => {
-    await page.getByRole("button", { name: "See Plan" }).click()
-    const plan = page.getByRole("dialog")
+    const plan = page.getByRole("navigation", { name: "Table of contents" })
     const candidate = plan.getByText("Deterministic Finite Automata", { exact: false }).first()
     await candidate.click()
-    await expect(plan).toBeHidden()
+    await expect(candidate).toHaveAttribute("aria-current", "step")
 
     await send(page, "What is the current topic?")
     await waitForAssistant(page)
@@ -45,18 +43,14 @@ test.describe("checkpointed real-model chat flow", () => {
     })
   })
 
-  test("edits the saved plan from See Plan", async ({ page }) => {
-    await page.getByRole("button", { name: "See Plan" }).click()
-    const dialog = page.getByRole("dialog")
-    await dialog.getByRole("button", { name: "Edit plan" }).click()
-    const outline = dialog.getByRole("textbox", { name: "Plan outline" })
-    await outline.fill((await outline.inputValue()).replace("Deterministic Finite Automata (DFAs)", "DFA foundations"))
-    await dialog.getByRole("button", { name: "Save changes" }).click()
-    await expect(dialog.getByText("DFA foundations", { exact: true })).toBeVisible()
-
+  test("keeps the same conversation URL and plan after reload", async ({ page }) => {
+    await expect(page).toHaveURL(/\/chat\/topic_[^/]+$/)
+    const url = page.url()
     await page.reload()
-    await page.getByRole("button", { name: "See Plan" }).click()
-    await expect(page.getByRole("dialog").getByText("DFA foundations", { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(url)
+    await expect(page.getByRole("navigation", { name: "Table of contents" }).getByText("Deterministic Finite Automata", { exact: false })).toBeVisible()
+    await expect(page.getByRole("button", { name: "See Plan" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Add to document" })).toHaveCount(0)
   })
 
   test("rejects an inappropriate plan update", async ({ page }) => {
@@ -65,8 +59,7 @@ test.describe("checkpointed real-model chat flow", () => {
     await expect(page.getByRole("button", { name: "Reject" })).toBeVisible()
     await page.getByRole("button", { name: "Reject" }).click()
     await expect(page.getByRole("button", { name: "Accept" })).toHaveCount(0)
-    await page.getByRole("button", { name: "See Plan" }).click()
-    await expect(page.getByRole("dialog").getByText("Derivatives", { exact: false })).toHaveCount(0)
+    await expect(page.getByRole("navigation", { name: "Table of contents" }).getByText("Derivatives", { exact: false })).toHaveCount(0)
   })
 
   test("explains the first topic and provides practice actions", async ({ page }) => {

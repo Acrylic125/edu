@@ -1,7 +1,8 @@
 "use client"
 
-import { BookPlusIcon, CheckIcon, CopyIcon } from "lucide-react"
-import { memo, useState } from "react"
+import { CheckIcon, CopyIcon } from "lucide-react"
+import { useVirtualizer } from "@tanstack/react-virtual"
+import { memo, useEffect, useRef, useState } from "react"
 
 import { AssistantMarkdown } from "@/components/chat/assistant-markdown"
 import {
@@ -16,17 +17,13 @@ import { CHAT_COMMANDS } from "@/lib/chat/skills"
 import type { ChatMessage, ChatMessageAttachment } from "@/lib/chat/types"
 import type { MessagePart } from "@/lib/chat/ws-schema"
 import { cn } from "@/lib/utils"
-import type { ReactNode } from "react"
 
 type MessageListProps = {
   messages: ChatMessage[]
-  header?: ReactNode
-  footer?: ReactNode
   optionState: { messageId: string; status: "pending" | "failed" } | null
   currentStepId: string | null
   onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
-  onSaveToDocument?: (messageId: string, text: string) => Promise<void>
 }
 
 function textFromParts(parts: MessagePart[]) {
@@ -138,7 +135,6 @@ const MessageRow = memo(function MessageRow({
   onExpandImage,
   onOption,
   onDecision,
-  onSaveToDocument,
   optionState,
   plan,
   currentStepId,
@@ -151,9 +147,7 @@ const MessageRow = memo(function MessageRow({
   currentStepId: string | null
   onOption: (messageId: string, label: string) => void
   onDecision: (proposalId: string, decision: "accept" | "reject") => void
-  onSaveToDocument?: (messageId: string, text: string) => Promise<void>
 }) {
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const attachments: ChatMessageAttachment[] = []
   for (const part of message.parts) {
     if (part.type === "attachment" && part.url)
@@ -169,10 +163,11 @@ const MessageRow = memo(function MessageRow({
     case "user": {
       const text = textFromParts(message.parts)
       return (
-        <div data-message-role="user" className="group border-b border-border/60 py-5">
-          <p className="mb-2 text-xs font-semibold text-muted-foreground">You</p>
-          <UserMessage text={text} attachments={attachments} onExpandImage={onExpandImage} />
-          <div className="flex justify-end"><CopyMessageButton text={text} /></div>
+        <div data-message-role="user" aria-label="Your message" className="group flex flex-col items-end py-3">
+          <div className="max-w-[90%] min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-secondary-foreground [overflow-wrap:anywhere]">
+            <UserMessage text={text} attachments={attachments} onExpandImage={onExpandImage} />
+          </div>
+          <div className="mt-1 flex justify-end"><CopyMessageButton text={text} /></div>
         </div>
       )
     }
@@ -182,13 +177,9 @@ const MessageRow = memo(function MessageRow({
       const progress = message.progress ?? []
       const hasPlan = message.parts.some((part) => part.type === "plan")
       return (
-        <div data-message-role="assistant" className="group border-b border-border/60 py-5">
-          <p className="mb-2 text-xs font-semibold text-primary">Prune</p>
-          <div
-            className={cn(
-              "flex w-full flex-col gap-2 text-sm",
-            )}
-          >
+        <div data-message-role="assistant" aria-label="Prune's message" className="group py-4">
+          <p className="mb-3 text-xs font-medium text-muted-foreground">Prune</p>
+          <div className="flex w-full min-w-0 flex-col gap-3 text-sm leading-relaxed">
             {progress.length > 0 && message.status === "streaming" ? (
               <ThinkingStatus steps={progress} />
             ) : null}
@@ -221,11 +212,7 @@ const MessageRow = memo(function MessageRow({
               )
             })}
           </div>
-          <div className="flex items-center justify-end gap-1">
-            {onSaveToDocument && !hasPlan && !message.parts.some((part) => part.type === "proposal") && enableRichContent && textFromParts(message.parts).trim() ? <Button type="button" variant="ghost" size="sm" disabled={saveStatus === "saving" || saveStatus === "saved"} className="text-xs text-muted-foreground" onClick={() => {
-              setSaveStatus("saving")
-              void onSaveToDocument(message.id, textFromParts(message.parts)).then(() => setSaveStatus("saved")).catch(() => setSaveStatus("error"))
-            }}><BookPlusIcon className="size-3.5" />{saveStatus === "saved" ? "Added" : saveStatus === "error" ? "Retry saving" : "Add to document"}</Button> : null}
+          <div className="mt-1 flex items-center gap-1">
             <CopyMessageButton text={textFromParts(message.parts)} />
           </div>
         </div>
@@ -418,48 +405,63 @@ function PartView({
   )
 }
 
-function ListHeader({ header }: { header: ReactNode }) {
-  return <>{header}</>
-}
-
-function ListFooter({ footer }: { footer: ReactNode }) {
-  return <>{footer}</>
-}
-
 export function MessageList({
   messages,
-  header,
-  footer,
   optionState,
   currentStepId,
   onOption,
   onDecision,
-  onSaveToDocument,
 }: MessageListProps) {
   const [expandedImage, setExpandedImage] =
     useState<ChatMessageAttachment | null>(null)
-  const lastMessageId = messages.at(-1)?.id
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const lastMessage = messages.at(-1)
+  const lastMessageId = lastMessage?.id
   const plan = planFromMessages(messages)
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 132,
+    getItemKey: (index) => messages[index]?.id ?? index,
+    overscan: 4,
+  })
+
+  useEffect(() => {
+    if (!atBottomRef.current || messages.length === 0) return
+    const frame = window.requestAnimationFrame(() => {
+      const element = scrollRef.current
+      if (element) virtualizer.scrollToOffset(element.scrollHeight)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [lastMessage, messages.length, virtualizer])
+
   return (
     <>
-      <div className="pb-4">
-        {header == null ? null : <ListHeader header={header} />}
-        {messages.map((message) => (
-          <div key={message.id} className="mx-auto w-full max-w-3xl px-4">
-            <MessageRow
-              message={message}
-              isLatest={isLatestChatMessage(message.id, lastMessageId)}
-              optionState={optionState}
-              plan={plan}
-              currentStepId={currentStepId}
-              onExpandImage={setExpandedImage}
-              onOption={onOption}
-              onDecision={onDecision}
-              onSaveToDocument={onSaveToDocument}
-            />
-          </div>
-        ))}
-        {footer == null ? null : <ListFooter footer={footer} />}
+      <div ref={scrollRef} className="h-full min-h-0 overflow-y-auto px-5 pt-4 pb-60" onScroll={(event) => {
+        const element = event.currentTarget
+        atBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120
+      }}>
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((item) => {
+            const message = messages[item.index]
+            if (!message) return null
+            return <div key={item.key} data-index={item.index} ref={virtualizer.measureElement} className="absolute left-0 top-0 w-full" style={{ transform: `translateY(${item.start}px)` }}>
+              <div className="mx-auto w-full max-w-3xl">
+                <MessageRow
+                  message={message}
+                  isLatest={isLatestChatMessage(message.id, lastMessageId)}
+                  optionState={optionState}
+                  plan={plan}
+                  currentStepId={currentStepId}
+                  onExpandImage={setExpandedImage}
+                  onOption={onOption}
+                  onDecision={onDecision}
+                />
+              </div>
+            </div>
+          })}
+        </div>
       </div>
       <ImagePreviewDialog
         open={expandedImage !== null}

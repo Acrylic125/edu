@@ -7,7 +7,7 @@ export default function ChatPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-dvh items-center justify-center bg-background text-sm text-muted-foreground">Loading Prune…</div>
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading Prune…</div>
       }
     >
       <BootedChat />
@@ -17,5 +17,5 @@ export default function ChatPage() {
 
 async function BootedChat() {
   const bootstrap = await loadChatBootstrap()
-  return <LearningWorkspace bootstrap={bootstrap} />
+  return <LearningWorkspace key="new" bootstrap={bootstrap} />
 }

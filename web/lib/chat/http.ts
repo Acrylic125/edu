@@ -104,6 +104,17 @@ export async function fetchCurrentMessages(token: string) {
   return parseCurrentMessages(json)
 }
 
+export async function fetchTopicMessages(token: string, topicId: TopicId) {
+  const url = new URL(`/topics/${encodeURIComponent(topicId)}/messages`, env.NEXT_PUBLIC_API_URL)
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  })
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error("Could not load the conversation")
+  return parseCurrentMessages(await response.json())
+}
+
 export async function postSelectTopic(token: string, topicId: TopicId) {
   const response = await fetch(selectTopicUrl(topicId), {
     method: "POST",

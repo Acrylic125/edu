@@ -268,7 +268,8 @@ export default {
 			return withCors(env, request, jsonResponse({ success: true, topicId, stepId }));
 		}
 
-		if (url.pathname === '/topics/current/messages' && request.method === 'GET') {
+		const topicMessagesMatch = url.pathname.match(/^\/topics\/([^/]+)\/messages\/?$/);
+		if (topicMessagesMatch && request.method === 'GET') {
 			const authResult = await requireUser(request, env);
 			if (authResult instanceof Response) {
 				return withCors(env, request, authResult);
@@ -279,7 +280,15 @@ export default {
 			}
 
 			const db = createDb(env.DB);
-			const current = await getCurrentTopic(db, authResult.userId);
+			const topicId = decodeURIComponent(topicMessagesMatch[1] ?? '');
+			let current = await getCurrentTopic(db, authResult.userId);
+			if (topicId !== 'current' && current?.topic.id !== topicId) {
+				const topic = await getTopicForUser(db, topicId, authResult.userId);
+				if (!topic) {
+					return withCors(env, request, jsonResponse({ error: 'Topic not found' }, 404));
+				}
+				current = { topic, part: null, currentStepId: null };
+			}
 			if (!current) {
 				return withCors(env, request, jsonResponse({ topic: null, messages: [] }));
 			}
