@@ -401,7 +401,7 @@ export default function BlockNoteViewerClient({
             }
             if (selectedId === position.id) {
               highlightClass =
-                "absolute z-0 bg-sky-400/10 ring-1 ring-inset ring-sky-400";
+                "absolute z-0 bg-primary/10 ring-1 ring-inset ring-primary";
             }
             return (
               <div
@@ -456,8 +456,8 @@ export default function BlockNoteViewerClient({
               data-block-handle={position.id}
               className={
                 hoveredId === position.id || selectedId === position.id
-                  ? "absolute z-20 flex size-7 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
-                  : "absolute z-20 flex size-7 items-center justify-center rounded-full opacity-0 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                  ? "absolute z-20 flex size-7 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  : "absolute z-20 flex size-7 items-center justify-center rounded-full opacity-0 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               }
               style={{ top: position.handleTop, left: position.handleLeft }}
               onMouseEnter={() => setHoveredId(position.id)}
