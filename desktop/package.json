@@ -1,0 +1,53 @@
+{
+  "name": "prune-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prune tutoring workspace and managed agent runners",
+  "author": "Prune",
+  "main": "out/main/index.js",
+  "scripts": {
+    "postinstall": "pnpm exec install-electron && node scripts/bundle-codex.mjs",
+    "dev": "node scripts/bundle-codex.mjs && node scripts/electron-vite.mjs dev",
+    "build": "node scripts/bundle-codex.mjs && pnpm typecheck && electron-vite build",
+    "preview": "node scripts/electron-vite.mjs preview",
+    "dev:renderer": "vite --config vite.renderer.config.ts --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:smoke": "pnpm build && playwright test",
+    "package": "pnpm build && electron-builder",
+    "package:dir": "pnpm build && electron-builder --dir -c.mac.identity=null"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@napi-rs/canvas": "^1.0.11",
+    "katex": "^0.19.0",
+    "lucide-react": "^1.33.0",
+    "openai": "^7.32.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "unpdf": "^1.8.1",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@openai/codex": "0.162.1",
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.7"
+  },
+  "packageManager": "pnpm@10.26.0"
+}

@@ -1,0 +1,20 @@
+appId: dev.benapps.prune
+productName: Prune
+icon: resources/icon.png
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: resources
+    to: resources
+asar: true
+mac:
+  category: public.app-category.education
+  target: [dmg, zip]
+win:
+  target: nsis
+linux:
+  category: Education
+  target: AppImage
