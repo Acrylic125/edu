@@ -9,6 +9,8 @@ import type { ChatCompletionMessage } from "openai/resources/chat/completions"
 import { afterEach, expect, test } from "vitest"
 import { newTopic } from "../src/main/workspace"
 import { runTutorTurn } from "../src/runners/tutor"
+import { generateTopicTitle } from "../src/runners/title"
+import { ProviderModelSchema } from "../src/shared/contracts"
 import type { LearningState, WorkerJob } from "../src/shared/contracts"
 
 const servers: ReturnType<typeof createServer>[] = []
@@ -285,4 +287,22 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
   expect(requests[1]).toContain(`prune-source://${id}/1`)
   const image = await readFile(join(directory, `source-${id}-1.png`))
   expect(image.subarray(1, 4).toString()).toBe("PNG")
+})
+
+test("OpenRouter title requests use the inexpensive model and bound the request", async () => {
+  const mock = await provider([reply('"Introduction to Limits"')])
+  const original = job()
+  const input = {
+    ...original,
+    titleModel: ProviderModelSchema.parse({ id: "cheap-title-model", name: "Cheap title model" }),
+  }
+  expect(await generateTopicTitle(input, mock.client, () => {}, () => {})).toBe("Introduction to Limits")
+  expect(JSON.parse(mock.requests[0])).toMatchObject({
+    model: "cheap-title-model",
+    max_tokens: 80,
+    messages: [{ role: "system" }, { role: "user", content: "Teach me limits" }],
+  })
+  expect(input.runner.model).toBe("test")
+  await expect(generateTopicTitle(original, mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")
+  expect(mock.requests).toHaveLength(1)
 })

@@ -43,7 +43,7 @@ export class CodexAppServer {
       CODEX_HOME: _codexHome,
       ...environment
     } = process.env
-    // An isolated Codex home keeps Prune's account and configuration separate from other clients.
+    // An isolated Codex home keeps EdU's account and configuration separate from other clients.
     this.child = spawn(
       connection.executable,
       [
@@ -207,7 +207,7 @@ export class CodexAppServer {
     await this.request(
       "initialize",
       {
-        clientInfo: { name: "prune_desktop", title: "Prune", version: "0.1.0" },
+        clientInfo: { name: "prune_desktop", title: "EdU", version: "0.1.0" },
         capabilities: { experimentalApi: true },
       },
       z.object({}).passthrough(),

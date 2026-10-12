@@ -1,0 +1,21 @@
+.katex {
+  color: inherit;
+}
+
+.katex * {
+  border-color: currentColor;
+  outline: none;
+}
+
+.katex-mathml {
+  display: none !important;
+}
+
+.katex svg {
+  display: inline !important;
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: visible;
+}

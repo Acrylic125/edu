@@ -22,7 +22,7 @@ export class ModelAccount {
       if (
         error instanceof Error &&
         error.message ===
-          "Connect your model account in Runners to start learning."
+          "Connect your model account in Settings → Providers to start learning."
       )
         return
       throw error
@@ -37,13 +37,13 @@ export class ModelAccount {
         safeStorage.getSelectedStorageBackend() === "basic_text")
     ) {
       throw new Error(
-        "Secure credential storage is unavailable. Unlock your system keychain and reopen Prune.",
+        "Secure credential storage is unavailable. Unlock your system keychain and reopen EdU.",
       )
     }
     const key = safeStorage.decryptString(encrypted)
     if (!key)
       throw new Error(
-        "Connect your model account in Runners to start learning.",
+        "Connect your model account in Settings → Providers to start learning.",
       )
     return key
   }
@@ -109,7 +109,7 @@ export class ModelAccount {
               "default-src 'none'; style-src 'unsafe-inline'",
           })
           response.end(
-            "<html><title>Prune</title><body style='font:16px system-ui;padding:64px'><h1>Return to Prune</h1><p>Finishing your account connection. You can close this tab.</p></body></html>",
+            "<html><title>EdU</title><body style='font:16px system-ui;padding:64px'><h1>Return to EdU</h1><p>Finishing your account connection. You can close this tab.</p></body></html>",
           )
           resolve(code)
         })
@@ -122,7 +122,7 @@ export class ModelAccount {
       )
       url.searchParams.set("code_challenge_method", "S256")
       url.searchParams.set("state", state)
-      url.searchParams.set("key_label", "Prune desktop")
+      url.searchParams.set("key_label", "EdU desktop")
       // Attach both handlers before opening the browser so cancellation never creates an unhandled rejection.
       const [code] = await Promise.all([
         codePromise,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdir } from "node:fs/promises"
+import { access, constants, mkdir, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
 import { pathToFileURL } from "node:url"
 import {
@@ -18,6 +18,7 @@ import {
   CreateTopicSchema,
   IdSchema,
   ProviderIdSchema,
+  ProviderSettingsSchema,
   RunnerInputSchema,
   SendSchema,
   SnapshotSchema,
@@ -41,6 +42,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 if (environment.PRUNE_DATA_DIR)
   app.setPath("userData", environment.PRUNE_DATA_DIR)
+else
+  // Preserve existing workspaces and keychain accounts through the EdU rename.
+  app.setPath("userData", join(app.getPath("appData"), "prune-desktop"))
 let window: BrowserWindow | undefined
 let manager: RunnerManager | undefined
 let providers: ProviderRegistry | undefined
@@ -94,6 +98,7 @@ else {
           process.platform === "win32" ? "codex.exe" : "codex",
         ),
         notify,
+        repository.stateSnapshot.providerSettings,
       )
       providers = registry
       await registry.openrouter.load()
@@ -134,11 +139,20 @@ else {
         trusted(event)
         return snapshot()
       })
+      async function saveCliConnection(id: z.infer<typeof ProviderIdSchema>, enabled: boolean) {
+        if (id !== "claude" && id !== "antigravity") return
+        await repository.mutate((workspace) => {
+          const settings = workspace.providerSettings.find((item) => item.id === id)
+          if (settings) settings.enabled = enabled
+        })
+        const settings = repository.stateSnapshot.providerSettings.find((item) => item.id === id)
+        if (settings) registry.configure(settings)
+      }
       ipcMain.handle(Channel.connect, async (event, raw) => {
         trusted(event)
-        await registry.connect(
-          ProviderIdSchema.default("openrouter").parse(raw),
-        )
+        const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        await registry.connect(provider)
+        await saveCliConnection(provider, true)
         notify()
       })
       ipcMain.handle(Channel.disconnect, async (event, raw) => {
@@ -148,6 +162,7 @@ else {
           if (runner.provider === provider) runnerManager.stop(runner.id)
         }
         await registry.disconnect(provider)
+        await saveCliConnection(provider, false)
         notify()
       })
       ipcMain.handle(Channel.cancelConnection, async (event, raw) => {
@@ -157,6 +172,38 @@ else {
       ipcMain.handle(Channel.refreshProviders, async (event) => {
         trusted(event)
         await registry.refresh()
+      })
+      ipcMain.handle(Channel.saveProvider, async (event, raw) => {
+        trusted(event)
+        const settings = ProviderSettingsSchema.parse(raw)
+        const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === settings.id)
+        settings.enabled = previous?.enabled ?? false
+        if (settings.binaryPath !== (previous?.binaryPath ?? "")) settings.enabled = false
+        if (settings.id === "openrouter" && settings.binaryPath)
+          throw new Error("OpenRouter does not use a local binary.")
+        if (settings.binaryPath) {
+          if (!isAbsolute(settings.binaryPath))
+            throw new Error("Enter an absolute binary path.")
+          if (!(await stat(settings.binaryPath)).isFile())
+            throw new Error("Choose an executable file for the binary path.")
+          await access(settings.binaryPath, constants.X_OK)
+        }
+        const changesBinary = settings.id !== "openrouter" &&
+          settings.binaryPath !== (previous?.binaryPath ?? "")
+        if (changesBinary) {
+          if (registry.statuses.some((provider) => provider.id === settings.id && (provider.connecting || provider.loading)))
+            throw new Error("Wait for the provider to finish connecting before changing its binary.")
+          const ids = repository.stateSnapshot.runners.filter((runner) => runner.provider === settings.id).map((runner) => runner.id)
+          if (runnerManager.statuses.some((runtime) => ids.includes(runtime.runnerId) && runtime.status === "running"))
+            throw new Error("Wait for your tutor to finish before changing its binary.")
+          for (const id of ids) runnerManager.stop(id)
+        }
+        await repository.mutate((workspace) => {
+          workspace.providerSettings = [...workspace.providerSettings.filter((item) => item.id !== settings.id), settings]
+        })
+        registry.configure(settings)
+        notify()
+        if (changesBinary && settings.id === "codex") await registry.codex.refresh()
       })
       ipcMain.handle(Channel.updateRunner, async (event, rawId, rawInput) => {
         trusted(event)
@@ -289,7 +336,7 @@ else {
           height: 940,
           minWidth: 960,
           minHeight: 640,
-          title: "Prune",
+          title: "EdU",
           backgroundColor: "#fafafa",
           webPreferences: {
             preload: join(__dirname, "../preload/index.js"),
@@ -318,7 +365,7 @@ else {
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
           {
-            label: "Prune",
+            label: "EdU",
             submenu: [
               { role: "about" },
               { type: "separator" },
@@ -339,7 +386,7 @@ else {
     })
     .catch((error) => {
       dialog.showErrorBox(
-        "Prune could not start",
+        "EdU could not start",
         error instanceof Error
           ? error.message
           : "Could not load the workspace.",

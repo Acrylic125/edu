@@ -1,5 +1,5 @@
 appId: dev.benapps.prune
-productName: Prune
+productName: EdU
 icon: resources/icon.png
 directories:
   output: release

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { chmod, mkdtemp, rm } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -22,20 +22,44 @@ test("native sandboxed app manages runners and restores topics across restarts",
   try {
     let page = await app.firstWindow()
     await expect(
-      page.getByRole("heading", { name: /Drop in slides/ }),
+      page.getByRole("heading", { name: /What will you.*learn today\?/ }),
     ).toBeVisible()
+    await expect(page).toHaveTitle("EdU")
+    await expect(page.getByRole("button", { name: "EdU", exact: true })).toBeVisible()
+    const appIcon = page.getByRole("button", { name: "EdU", exact: true }).locator("img")
+    await expect(appIcon).toBeVisible()
+    await expect.poll(() => appIcon.evaluate((image) => image instanceof HTMLImageElement && image.naturalWidth > 0)).toBe(true)
+    await expect(page.getByRole("button", { name: /^Runners/ })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Model accounts" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Change appearance" })).toHaveCount(0)
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("radio", { name: "Light", exact: true }).check()
+    await page.getByRole("button", { name: "Back", exact: true }).click()
+    await expect(page.locator("html")).not.toHaveClass("dark")
+    await expect(
+      page.getByRole("button", { name: /Learn calculus/ }),
+    ).toHaveCSS("background-color", "rgb(246, 231, 175)")
+    await page.getByRole("button", { name: /Learn calculus/ }).click()
+    await expect(page.getByLabel("Message your tutor")).toHaveValue(
+      "Help me learn calculus, starting with limits, derivatives and integrals.",
+    )
+    await expect(page.getByLabel("Message your tutor")).toBeFocused()
+    await page.getByLabel("Message your tutor").fill("")
     await page.screenshot({ path: "test-results/welcome.png" })
     expect(await page.evaluate(() => typeof window.prune?.send)).toBe(
       "function",
     )
     expect(await page.evaluate(() => "require" in window)).toBe(false)
-    await page.getByRole("button", { name: /^Runners/ }).click()
-    await expect(
-      page.getByRole("heading", { name: "Your runners" }),
-    ).toBeVisible()
-    await expect(
-      page.getByRole("button", { name: "Sign in with ChatGPT" }),
-    ).toBeVisible()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("button", { name: "Providers", exact: true }).click()
+    await expect(page.getByText("Choose your own provider")).toBeVisible()
+    await page.getByRole("button", { name: "Add provider", exact: true }).click()
+    await page.getByRole("button", { name: /ChatGPT.*Sign in/ }).click()
+    await expect(page.getByRole("button", { name: "Sign in with ChatGPT" })).toBeVisible()
+    await page.getByLabel("Display name", { exact: true }).fill("My ChatGPT")
+    await page.getByRole("button", { name: "Save changes", exact: true }).click()
+    await expect(page.getByRole("button", { name: "My ChatGPT", exact: true })).toBeVisible()
+    await page.screenshot({ path: "test-results/providers.png" })
     await expect
       .poll(
         async () =>
@@ -61,7 +85,10 @@ test("native sandboxed app manages runners and restores topics across restarts",
         effort: model.reasoningEfforts[0],
       }
     })
-    await page.getByLabel("Appearance", { exact: true }).selectOption("dark")
+    await page.getByRole("button", { name: "Appearance", exact: true }).click()
+    await page.getByRole("radio", { name: "Dark", exact: true }).check()
+    await page.screenshot({ path: "test-results/appearance-dark.png" })
+    await page.getByRole("button", { name: "Back", exact: true }).click()
     await expect(page.locator("html")).toHaveClass("dark")
     await page.getByRole("button", { name: "New topic", exact: true }).click()
     const modelTrigger = page.getByRole("combobox", {
@@ -74,7 +101,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(modelTrigger).toHaveText(/Auto/)
     await expect(page.getByRole("listbox")).not.toBeVisible()
     await modelTrigger.click()
-    await page.getByRole("button", { name: "Codex", exact: true }).click()
+    await page.getByRole("button", { name: "My ChatGPT", exact: true }).click()
     await page
       .getByRole("combobox", { name: "Search models" })
       .fill("no-model-matches-this")
@@ -103,7 +130,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(page.getByRole("menu")).not.toBeVisible()
     await modelTrigger.click()
     const favoriteButton = page.getByRole("button", {
-      name: `Favorite ${codexModel.name} from Codex`,
+      name: `Favorite ${codexModel.name} from My ChatGPT`,
       exact: true,
     })
     await favoriteButton.click()
@@ -111,7 +138,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.getByRole("button", { name: "Favorites", exact: true }).click()
     await expect(page.getByRole("option")).toHaveCount(1)
     await expect(page.getByRole("option", { name: codexModel.name, exact: true })).toBeVisible()
-    await page.getByRole("button", { name: "Codex", exact: true }).click()
+    await page.getByRole("button", { name: "My ChatGPT", exact: true }).click()
     await page.screenshot({ path: "test-results/model-picker.png" })
     await page
       .locator('[aria-label="Choose a model"]')
@@ -119,7 +146,9 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.keyboard.press("Escape")
     await expect(modelTrigger).toBeFocused()
     await modelTrigger.click()
-    await page.getByRole("heading", { name: /Drop in slides/ }).click()
+    await page
+      .getByRole("heading", { name: /What will you.*learn today\?/ })
+      .click()
     await expect(page.getByRole("listbox")).not.toBeVisible()
     await modelTrigger.click()
     await page.getByRole("button", { name: /More models/ }).click()
@@ -130,67 +159,19 @@ test("native sandboxed app manages runners and restores topics across restarts",
       page.getByRole("button", { name: "Choose reasoning effort" }),
     ).not.toBeVisible()
     await page.screenshot({ path: "test-results/welcome-dark.png" })
-    await page.getByRole("button", { name: /^Runners/ }).click()
-    await page.getByLabel("Appearance", { exact: true }).selectOption("light")
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("radio", { name: "Light", exact: true }).check()
     await expect(page.locator("html")).not.toHaveClass("dark")
-    await page.getByRole("button", { name: "Start", exact: true }).click()
-    await expect(page.getByText("Ready", { exact: true })).toBeVisible()
-    await expect
-      .poll(async () =>
-        page.evaluate(
-          async () => (await window.prune?.snapshot())?.runtime[0].pid ?? 0,
-        ),
-      )
-      .toBeGreaterThan(0)
-    await page.getByRole("button", { name: "Stop", exact: true }).click()
-    await expect(page.getByText("Stopped", { exact: true })).toBeVisible()
-    await page.getByRole("button", { name: "Add runner", exact: true }).click()
-    await page.getByLabel("Name", { exact: true }).fill("Physics tutor")
-    const runnerDialog = page.locator("dialog[open]")
-    await runnerDialog
-      .getByRole("combobox", { name: "Choose provider and model" })
-      .click()
-    await page
-      .getByRole("option", { name: codexModel.name, exact: true })
-      .click()
-    await runnerDialog
-      .getByRole("button", { name: "Choose reasoning effort" })
-      .click()
-    await page
-      .getByRole("menuitemradio", {
-        name: `${codexModel.effort} reasoning`,
-        exact: true,
-      })
-      .click()
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Add runner", exact: true })
-      .click()
-    await expect(
-      page.getByRole("heading", { name: "Physics tutor" }),
-    ).toBeVisible()
-    await page.screenshot({ path: "test-results/runners.png" })
-    const physics = page
-      .getByRole("heading", { name: "Physics tutor" })
-      .locator("xpath=ancestor::section")
-    await physics.getByRole("button", { name: "Edit Physics tutor" }).click()
-    await expect(
-      runnerDialog.getByRole("combobox", { name: "Choose provider and model" }),
-    ).toHaveText(codexModel.name)
-    await runnerDialog
-      .getByRole("button", { name: "Choose reasoning effort" })
-      .click()
-    await expect(
-      page.getByRole("menuitemradio", {
-        name: `${codexModel.effort} reasoning`,
-        exact: true,
-      }),
-    ).toHaveAttribute("aria-checked", "true")
-    await page.keyboard.press("Escape")
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Save changes" })
-      .click()
+    await page.screenshot({ path: "test-results/appearance-light.png" })
+    await page.getByRole("button", { name: "Back", exact: true }).click()
+    await page.evaluate(async (model) => {
+      const bridge = window.prune
+      if (!bridge) throw new Error("Missing desktop bridge")
+      const snapshot = await bridge.snapshot()
+      await bridge.startRunner(snapshot.runners[0].id)
+      await bridge.stopRunner(snapshot.runners[0].id)
+      await bridge.addRunner({ name: "Physics tutor", provider: "codex", model: model.id, reasoningEffort: model.effort })
+    }, codexModel)
     await page.getByRole("button", { name: "New topic", exact: true }).click()
     await page.getByLabel("Message your tutor").fill("Teach me calculus")
     await page.getByRole("button", { name: "Send message" }).click()
@@ -232,11 +213,39 @@ test("native sandboxed app manages runners and restores topics across restarts",
       model: codexModel.id,
       reasoningEffort: codexModel.effort,
     })
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("radio", { name: "Light", exact: true }).check()
+    await page.getByRole("button", { name: "Providers", exact: true }).click()
+    await expect(page.getByRole("button", { name: "My ChatGPT", exact: true })).toBeVisible()
+    await page.getByRole("button", { name: "Back", exact: true }).click()
     const snapshot = await page.evaluate(async () => window.prune?.snapshot())
     const topic = snapshot?.topics.find(
       (topic) => topic.title === "Teach me calculus",
     )
     if (!snapshot || !topic) throw new Error("Missing restored topic")
+    await expect(page.getByRole("navigation", { name: "Your topics" }).locator("svg")).toHaveCount(0)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole("button", { name: "Open topics", exact: true }).click()
+    const navigation = page.getByRole("complementary", {
+      name: "Workspace navigation",
+    })
+    await expect(navigation).toBeVisible()
+    await navigation
+      .getByRole("button", { name: topic.title, exact: true })
+      .click()
+    await expect(navigation).not.toBeVisible()
+    await page.getByRole("button", { name: "Open chat", exact: true }).click()
+    const tutorChat = page.getByRole("complementary", { name: "Tutor chat" })
+    await expect(tutorChat).toBeVisible()
+    await expect(tutorChat.getByLabel("Message your tutor")).toBeVisible()
+    await tutorChat
+      .getByRole("button", { name: "Close chat", exact: true })
+      .click()
+    await expect(tutorChat).not.toBeVisible()
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(tutorChat).toBeVisible()
+
     await expect(
       page.getByRole("button", { name: "Export study notes" }),
     ).toHaveCount(0)
@@ -292,6 +301,61 @@ test("native sandboxed app manages runners and restores topics across restarts",
     )
     await expect(page.getByText(/^Diagnostics ·/)).toHaveCount(0)
     await page.screenshot({ path: "test-results/workspace.png" })
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("native Claude and Antigravity providers save settings and commit validated lessons", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-cli-native-"))
+  const executable = resolve("tests/fixtures/provider-cli.mjs")
+  await chmod(executable, 0o755)
+  const { ELECTRON_RUN_AS_NODE: _nodeMode, ELECTRON_RENDERER_URL: _rendererUrl, ...environment } = process.env
+  const launch = () => _electron.launch({ args: [resolve(".")], env: { ...environment, PRUNE_DATA_DIR: directory } })
+  let app = await launch()
+  try {
+    let page = await app.firstWindow()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("button", { name: "Providers", exact: true }).click()
+    for (const name of ["Claude", "Antigravity"] as const) {
+      await page.getByRole("button", { name: "Add provider", exact: true }).click()
+      await page.getByRole("dialog").getByRole("button", { name: new RegExp(name) }).click()
+      await page.getByLabel("Binary path", { exact: true }).fill(executable)
+      await page.getByRole("button", { name: "Save changes", exact: true }).click()
+      await expect(page.getByRole("status")).toContainText("Saved")
+      await page.getByRole("button", { name: "Check connection", exact: true }).click()
+      await expect(page.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible()
+    }
+    await page.screenshot({ path: "test-results/provider-editor.png" })
+    for (const provider of ["claude", "antigravity"] as const) {
+      const topicId = await page.evaluate(async (provider) => {
+        const bridge = window.prune
+        if (!bridge) throw new Error("Missing native bridge")
+        const runnerId = await bridge.addRunner({ name: `${provider} tutor`, provider, model: "default" })
+        const topicId = await bridge.createTopic({ runnerId, title: `${provider} lesson` })
+        await bridge.send({ topicId, content: "Teach me limits" })
+        return topicId
+      }, provider)
+      await expect.poll(async () => page.evaluate(async (id) => {
+        const snapshot = await window.prune?.snapshot()
+        return snapshot?.topics.find((topic) => topic.id === id)?.messages.at(-1)?.role
+      }, topicId)).toBe("assistant")
+    }
+    await app.close()
+    app = await launch()
+    page = await app.firstWindow()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("button", { name: "Providers", exact: true }).click()
+    for (const name of ["Claude", "Antigravity"] as const) {
+      await page.getByRole("button", { name, exact: true }).click()
+      await expect(page.getByLabel("Binary path", { exact: true })).toHaveValue(executable)
+      await expect(page.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible()
+    }
+    await page.getByRole("button", { name: "Disconnect", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Check connection", exact: true })).toBeVisible()
+    const snapshot = await page.evaluate(async () => window.prune?.snapshot())
+    expect(snapshot?.topics.filter((topic) => topic.messages.at(-1)?.role === "assistant")).toHaveLength(2)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

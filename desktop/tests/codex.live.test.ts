@@ -54,7 +54,7 @@ test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
       skillDirectory: resolve("resources/tutor-me"),
       codex: {
         executable: resolve(
-          "release/mac-arm64/Prune.app/Contents/Resources/resources/codex/bin/codex",
+          "release/mac-arm64/EdU.app/Contents/Resources/resources/codex/bin/codex",
         ),
         home: join(workspaceDirectory, "providers", "codex"),
       },

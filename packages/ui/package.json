@@ -1,0 +1,38 @@
+{
+  "name": "@edu/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./workspace": "./learning/workspace-layout.tsx",
+    "./learning": "./learning/learning-view.tsx",
+    "./chat": "./chat/chat-layout.tsx",
+    "./button": "./primitives/button.tsx",
+    "./learning-books": "./learning/learning-books.tsx",
+    "./theme": "./theme/index.ts",
+    "./theme-provider": "./theme/provider.tsx",
+    "./theme-utils": "./theme/utils.ts",
+    "./dropdown-menu": "./primitives/dropdown-menu.tsx",
+    "./theme.css": "./theme.css",
+    "./math.css": "./math.css"
+  },
+  "dependencies": {
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.6.0"
+  },
+  "peerDependencies": {
+    "@base-ui/react": ">=1.7.0",
+    "lucide-react": "^1.33.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@base-ui/react": "1.7.0",
+    "lucide-react": "1.33.0"
+  }
+}

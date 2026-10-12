@@ -1,7 +1,13 @@
 import { z } from "zod"
 
 export const IdSchema = z.string().uuid()
-export const ProviderIdSchema = z.enum(["codex", "openrouter"])
+export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity", "openrouter"])
+export const ProviderSettingsSchema = z.object({
+  id: ProviderIdSchema,
+  displayName: z.string().trim().min(1).max(60),
+  binaryPath: z.string().trim().max(4096).default(""),
+  enabled: z.boolean().default(false),
+})
 export const ReasoningEffortSchema = z.enum([
   "none",
   "minimal",
@@ -29,10 +35,16 @@ export const ProviderStatusSchema = z.object({
   account: z.string().optional(),
   error: z.string().optional(),
   models: z.array(ProviderModelSchema),
+  settings: ProviderSettingsSchema.optional(),
 })
 export const CodexConnectionSchema = z.object({
   executable: z.string(),
   home: z.string(),
+})
+export const CliConnectionSchema = z.object({
+  provider: z.enum(["claude", "antigravity"]),
+  executable: z.string(),
+  directory: z.string(),
 })
 export const RunnerInputSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -90,6 +102,7 @@ export const LearningStateSchema = z
 export const TopicSchema = z.object({
   id: IdSchema,
   title: z.string().max(150),
+  titleGenerated: z.boolean().default(false),
   runnerId: IdSchema,
   createdAt: z.string().datetime(),
   planConfirmed: z.boolean(),
@@ -101,6 +114,7 @@ export const WorkspaceSchema = z.object({
   version: z.literal(1),
   runners: z.array(RunnerSchema),
   topics: z.array(TopicSchema),
+  providerSettings: z.array(ProviderSettingsSchema).default([]),
 })
 export const TraceDetailsSchema = z.record(
   z.string(),
@@ -160,11 +174,14 @@ export const WorkerJobSchema = z.object({
   runner: RunnerSchema,
   apiKey: z.string().default(""),
   codex: CodexConnectionSchema.optional(),
+  cli: CliConnectionSchema.optional(),
+  titleModel: ProviderModelSchema.optional(),
   skillDirectory: z.string(),
   assetDirectory: z.string(),
   action: SendSchema.shape.action,
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
   z.object({ type: z.literal("activity"), activity: z.string() }),
   z.object({
     type: z.literal("trace"),
@@ -189,6 +206,7 @@ export const Channel = {
   disconnect: "prune:disconnect",
   cancelConnection: "prune:cancel-connection",
   refreshProviders: "prune:refresh-providers",
+  saveProvider: "prune:save-provider",
   updateRunner: "prune:update-runner",
   addRunner: "prune:add-runner",
   removeRunner: "prune:remove-runner",
@@ -216,6 +234,7 @@ export type DesktopBridge = {
     provider: z.infer<typeof ProviderIdSchema>,
   ) => Promise<void>
   refreshProviders: () => Promise<void>
+  saveProvider: (input: z.input<typeof ProviderSettingsSchema>) => Promise<void>
   updateRunner: (
     id: string,
     input: z.input<typeof RunnerInputSchema>,

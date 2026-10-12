@@ -18,7 +18,7 @@ import {
 } from "../shared/contracts"
 
 export class WorkspaceRepository {
-  private state: Workspace = { version: 1, runners: [], topics: [] }
+  private state: Workspace = WorkspaceSchema.parse({ version: 1, runners: [], topics: [] })
   private writes = Promise.resolve()
 
   constructor(readonly directory: string) {}

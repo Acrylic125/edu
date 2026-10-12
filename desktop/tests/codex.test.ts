@@ -14,6 +14,7 @@ import { afterEach, expect, test, vi } from "vitest"
 import { CodexAppServer } from "../src/providers/codex-rpc"
 import { CodexProvider, readCodexModels } from "../src/providers/codex"
 import { runCodexTutorTurn } from "../src/runners/codex"
+import { generateTopicTitle } from "../src/runners/title"
 import { createTutorSession } from "../src/runners/tutor"
 import { newTopic } from "../src/main/workspace"
 import { WorkerJobSchema, WorkspaceSchema } from "../src/shared/contracts"
@@ -95,11 +96,18 @@ createInterface({input:process.stdin}).on("line",line=>{
   },100)
  } else if(message.method==="account/logout") {account=null;send({id:message.id,result:{}})}
  else if(message.method==="account/login/cancel") send({id:message.id,result:{status:"canceled"}})
- else if(message.method==="model/list") send({id:message.id,result:{data:[{model:"test-model",displayName:"Fixture model",isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"medium"},{reasoningEffort:"high"}]}],nextCursor:null}})
+ else if(message.method==="model/list") send({id:message.id,result:{data:[{model:"test-model",displayName:"Fixture model",isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"medium"},{reasoningEffort:"high"}]},...(${JSON.stringify(mode)}.startsWith("title")?[{model:"gpt-6-luna",displayName:"GPT-6 Luna",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"none"}]}]:[])],nextCursor:null}})
  else if(message.method==="thread/start") send({id:message.id,result:{thread:{id:"thread"}}})
  else if(message.method==="turn/start") {
   turns++
   send({id:message.id,result:{turn:{id:"turn"}}})
+  if(${JSON.stringify(mode)}.startsWith("title")) {
+   send({method:"item/completed",params:{threadId:"other-thread",item:{type:"agentMessage",text:'{"title":"Wrong thread"}'}}})
+   send({method:"item/completed",params:{threadId:"thread",item:{type:"agentMessage",phase:"commentary",text:"Preparing a title"}}})
+   send({method:"item/completed",params:{threadId:"thread",item:{type:"agentMessage",phase:"final_answer",text:${JSON.stringify(mode === "title-empty" ? '{"title":""}' : '{"title":"Introduction to Calculus"}')}}}})
+   send({method:"turn/completed",params:{threadId:"thread",turn:{status:${JSON.stringify(mode === "title-failed" ? "failed" : "completed")}}}})
+   return
+  }
   if((${JSON.stringify(mode)}==="missed-save" && turns===1) || ${JSON.stringify(mode)}==="never-save") {
    send({method:"item/completed",params:{threadId:"thread",item:{type:"agentMessage",phase:"final_answer",text:"Here is your proposed plan. Please review it."}}})
    send({method:"turn/completed",params:{threadId:"thread",turn:{status:"completed",error:null}}})
@@ -442,4 +450,35 @@ test("canceling while Codex creates a login prevents opening the browser", async
   } finally {
     provider.close()
   }
+})
+
+test("topic titles use Luna with minimal reasoning independently of the tutor model", async () => {
+  const { job, home } = await fixture("title")
+  const processes: (number | null)[] = []
+  const title = await generateTopicTitle(job, undefined, (pid) => processes.push(pid), () => {})
+  expect(title).toBe("Introduction to Calculus")
+  expect(job.runner.model).toBe("test-model")
+  expect(job.runner.reasoningEffort).toBe("high")
+  expect(processes[0]).toBeGreaterThan(0)
+  expect(processes.at(-1)).toBeNull()
+  const requests = (await readFile(join(home, "requests.jsonl"), "utf8"))
+    .trim().split("\n")
+    .map((line) => z.object({ method: z.string().optional(), params: z.json().optional() }).parse(JSON.parse(line)))
+  expect(requests.find((request) => request.method === "thread/start")?.params).toMatchObject({
+    model: "gpt-6-luna", ephemeral: true, dynamicTools: [],
+  })
+  expect(requests.find((request) => request.method === "turn/start")?.params).toMatchObject({ effort: "none" })
+})
+
+test.each(["title-failed", "title-empty"])("rejects invalid title results and closes the Codex process: %s", async (mode) => {
+  const { job } = await fixture(mode)
+  const processes: (number | null)[] = []
+  await expect(generateTopicTitle(job, undefined, (pid) => processes.push(pid), () => {})).rejects.toThrow()
+  expect(processes.at(-1)).toBeNull()
+})
+
+test("does not use an expensive tutor model when no budget Codex model is available", async () => {
+  const { job, home } = await fixture()
+  await expect(generateTopicTitle(job, undefined, () => {}, () => {})).rejects.toThrow("No budget title model")
+  expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })

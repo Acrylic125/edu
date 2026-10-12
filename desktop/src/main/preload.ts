@@ -21,6 +21,7 @@ const bridge: DesktopBridge = {
   cancelConnection: (provider) =>
     ipcRenderer.invoke(Channel.cancelConnection, provider),
   refreshProviders: () => ipcRenderer.invoke(Channel.refreshProviders),
+  saveProvider: (input) => ipcRenderer.invoke(Channel.saveProvider, input),
   updateRunner: (id, input) =>
     ipcRenderer.invoke(Channel.updateRunner, id, input),
   addRunner: (input) => ipcRenderer.invoke(Channel.addRunner, input),

@@ -24,7 +24,7 @@ export const useWorkspace = create<{
 export function desktop() {
   if (!window.prune)
     throw new Error(
-      "Open the Prune desktop app to connect accounts and run tutors.",
+      "Open the EdU desktop app to connect accounts and run tutors.",
     )
   return window.prune
 }

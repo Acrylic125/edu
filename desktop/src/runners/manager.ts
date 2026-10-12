@@ -27,7 +27,7 @@ export class RunnerManager {
     private skillDirectory: string,
     private getConnection: (
       runner: z.infer<typeof RunnerSchema>,
-    ) => Promise<Pick<WorkerJob, "apiKey" | "codex">>,
+    ) => Promise<Pick<WorkerJob, "apiKey" | "codex" | "cli" | "titleModel">>,
     private notify: () => void,
   ) {}
 
@@ -56,7 +56,7 @@ export class RunnerManager {
       throw new Error("Runner not found.")
     if (this.processes.has(id)) return
     const child = utilityProcess.fork(this.workerPath, [], {
-      serviceName: "Prune tutor runner",
+      serviceName: "EdU tutor runner",
       stdio: "ignore",
     })
     this.processes.set(id, child)
@@ -232,6 +232,18 @@ export class RunnerManager {
     }
     if (event.type === "activity") {
       runtime.activity = event.activity
+      this.notify()
+      return
+    }
+    if (event.type === "title") {
+      const topicId = runtime.topicId
+      await this.repository.mutate((workspace) => {
+        const topic = workspace.topics.find((item) => item.id === topicId)
+        if (!topic || topic.titleGenerated) return
+        topic.learning.notes = topic.learning.notes.replace(`# ${topic.title}\n`, `# ${event.title}\n`)
+        topic.title = event.title
+        topic.titleGenerated = true
+      })
       this.notify()
       return
     }

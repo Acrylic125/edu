@@ -1,9 +1,47 @@
-@import "../../../web/app/globals.css";
+@import "tailwindcss";
+@import "@edu/ui/theme.css";
+@import "@edu/ui/math.css";
 @source "./**/*.{ts,tsx}";
 
 body {
   font-family: var(--font-sans);
 }
+
+.theme-preview {
+  --preview-background: #f3f4f0;
+  --preview-sidebar: #fafbf7;
+  --preview-border: #dce0d5;
+  --preview-line: #dce0d5;
+  --preview-mark: #f6e7af;
+  --preview-tile: #dce9df;
+  background: var(--preview-background);
+}
+.theme-preview-dark {
+  --preview-background: #191d19;
+  --preview-sidebar: #202620;
+  --preview-border: #384035;
+  --preview-line: #485044;
+  --preview-mark: #49432c;
+  --preview-tile: #30443b;
+}
+.theme-preview-system {
+  background: linear-gradient(110deg, #f3f4f0 50%, #191d19 50%);
+}
+.theme-preview-window {
+  background: var(--preview-background);
+  border-color: var(--preview-border);
+}
+.theme-preview-system .theme-preview-window {
+  background: linear-gradient(110deg, #f3f4f0 50%, #191d19 50%);
+}
+.theme-preview-sidebar {
+  background: var(--preview-sidebar);
+  border-color: var(--preview-border);
+}
+.theme-preview-line { background: var(--preview-line); }
+.theme-preview-mark { background: var(--preview-mark); }
+.theme-preview-tile { background: var(--preview-tile); }
+.theme-preview-input { border-color: var(--preview-border); }
 
 button,
 select {
