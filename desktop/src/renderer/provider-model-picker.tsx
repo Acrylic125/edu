@@ -1,14 +1,41 @@
 import { useRef, useState } from "react"
 import { Combobox } from "@base-ui/react/combobox"
 import { Menu } from "@base-ui/react/menu"
-import { Check, ChevronDown, Search } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Route, Search, Star } from "lucide-react"
+import { Toolbar } from "@base-ui/react/toolbar"
 import { z } from "zod"
 import {
   ProviderIdSchema,
+  ProviderModelSchema,
   ReasoningEffortSchema,
   type RunnerSchema,
 } from "../shared/contracts"
 import { useWorkspace } from "./store"
+import { useModelPreferences } from "./model-preferences"
+import codexIcon from "./assets/providers/codex.svg"
+import claudeIcon from "./assets/providers/claude.svg"
+import antigravityIcon from "./assets/providers/antigravity.png"
+
+const providerNames = {
+  codex: "Codex",
+  claude: "Claude",
+  antigravity: "Antigravity",
+  openrouter: "OpenRouter",
+}
+
+const providerIcons = {
+  codex: codexIcon,
+  claude: claudeIcon,
+  antigravity: antigravityIcon,
+}
+
+function ProviderIcon({ provider, className }: {
+  provider: z.infer<typeof ProviderIdSchema>
+  className: string
+}) {
+  if (provider === "openrouter") return <Route aria-hidden="true" className={className} />
+  return <img src={providerIcons[provider]} alt="" className={`${className} ${provider === "codex" ? "dark:brightness-0 dark:invert" : ""}`} />
+}
 
 type ModelSelection = Pick<
   z.infer<typeof RunnerSchema>,
@@ -27,11 +54,7 @@ export function ProviderModelFields({
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium">Model</p>
-      <ProviderModelPicker
-        value={value}
-        onChange={onChange}
-        lockProvider={lockProvider}
-      />
+      <ProviderModelPicker value={value} onChange={onChange} lockProvider={lockProvider} />
     </div>
   )
 }
@@ -50,62 +73,108 @@ export function ProviderModelPicker({
   const anchor = useRef<HTMLDivElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
-  const [browseProvider, setBrowseProvider] = useState(value.provider)
+  const [browseProvider, setBrowseProvider] = useState<z.infer<typeof ProviderIdSchema> | "favorites">(value.provider)
   const [search, setSearch] = useState("")
+  const [expanded, setExpanded] = useState(false)
   const providers = useWorkspace((state) => state.snapshot.providers)
+  const { favorites, toggleFavorite } = useModelPreferences()
   const provider = providers.find((entry) => entry.id === value.provider)
   const catalog = providers.find((entry) => entry.id === browseProvider)
   const model = provider?.models.find((entry) => entry.id === value.model)
-  const automatic = browseProvider === "codex" ? "default" : "openrouter/auto"
-  const choices = [
-    {
-      id: automatic,
-      name: browseProvider === "codex" ? "Default model" : "Auto",
-      isDefault: false,
+  const choices = ProviderIdSchema.options.flatMap((id) => {
+    const status = providers.find((entry) => entry.id === id)
+    const automatic = id === "openrouter" ? "openrouter/auto" : "default"
+    const models = (status?.models ?? []).filter((entry) => entry.id !== automatic)
+    const entries = models.map((entry) => ({
+      ...entry,
+      provider: id,
+      providerName: status?.name ?? providerNames[id],
+      automatic: false,
       unavailable: false,
-    },
-    ...(catalog?.models ?? [])
-      .filter((entry) => entry.id !== automatic)
-      .map((entry) => ({
-        id: entry.id,
-        name: entry.name,
-        isDefault: entry.isDefault,
-        unavailable: false,
-      })),
-  ]
-  if (
-    value.provider === browseProvider &&
-    !choices.some((entry) => entry.id === value.model)
-  ) {
-    choices.push({
-      id: value.model,
-      name: value.model,
-      isDefault: false,
-      unavailable: true,
+    }))
+    entries.push({
+      ...ProviderModelSchema.parse({
+        id: automatic,
+        name: id === "openrouter" ? "Auto" : "Default model",
+        description: "Use the provider’s recommended model",
+      }),
+      provider: id,
+      providerName: status?.name ?? providerNames[id],
+      automatic: true,
+      unavailable: false,
     })
+    if (value.provider === id && !entries.some((entry) => entry.id === value.model)) {
+      entries.unshift({
+        ...ProviderModelSchema.parse({
+          id: value.model,
+          name: value.model,
+          description: "This model is no longer in the provider’s catalog",
+        }),
+        provider: id,
+        providerName: status?.name ?? providerNames[id],
+        automatic: false,
+        unavailable: true,
+      })
+    }
+    return entries.map((entry) => ({
+      ...entry,
+      favorite: favorites.some((favorite) => favorite.provider === id && favorite.model === entry.id),
+    }))
+  })
+  const availableChoices = choices.filter((entry) => {
+    if (lockProvider && entry.provider !== value.provider) return false
+    if (browseProvider === "favorites") return entry.favorite
+    return entry.provider === browseProvider
+  })
+  function priority(entry: typeof choices[number]) {
+    if (entry.provider === value.provider && entry.id === value.model) return 3
+    if (entry.favorite) return 2
+    if (entry.isDefault) return 1
+    return 0
   }
-  const matches = choices.filter((entry) =>
-    `${entry.name} ${entry.id}`.toLowerCase().includes(search.toLowerCase()),
-  )
+  const primary = availableChoices.filter((entry) => !entry.automatic)
+    .toSorted((a, b) => priority(b) - priority(a)).slice(0, 3)
+  if (primary.length === 0 && browseProvider !== "favorites") primary.push(...availableChoices.slice(0, 1))
+  const more = availableChoices.filter((entry) => !primary.includes(entry))
+  let matches = primary
+  const query = search.trim().toLowerCase()
+  if (query) {
+    matches = availableChoices.filter((entry) =>
+      `${entry.name} ${entry.id} ${entry.providerName}`.toLowerCase().includes(query),
+    )
+  } else if (browseProvider === "favorites") {
+    matches = availableChoices
+  } else if (expanded) {
+    matches = [...primary, ...more]
+  }
+  const shortcuts = matches.filter((entry) => !entry.unavailable).slice(0, 3)
+  const shortcutModifier = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"
+
+  function selectModel(selected: typeof choices[number]) {
+    if (selected.unavailable || (lockProvider && selected.provider !== value.provider)) return
+    let reasoningEffort = value.reasoningEffort
+    if (value.provider !== selected.provider || value.model !== selected.id) reasoningEffort = undefined
+    onChange({ provider: selected.provider, model: selected.id, reasoningEffort })
+    setOpen(false)
+  }
   let label = model?.name ?? value.model
   if (value.model === "default") label = "Default model"
   if (value.model === "openrouter/auto") label = "Auto"
   const effort = value.reasoningEffort ?? model?.defaultReasoningEffort
   let effortLabel = "Auto"
   if (effort) effortLabel = effort.charAt(0).toUpperCase() + effort.slice(1)
+  let emptyLabel = "No matching models"
+  if (browseProvider === "favorites" && !availableChoices.length) emptyLabel = "Star a model to keep it here."
+  else if (catalog?.loading) emptyLabel = "Loading models…"
 
   return (
     <div ref={anchor} className="flex min-w-0 items-center gap-0.5">
       <Combobox.Root
         items={matches}
         filter={null}
-        value={
-          value.provider === browseProvider
-            ? (choices.find((entry) => entry.id === value.model) ?? null)
-            : null
-        }
+        value={choices.find((entry) => entry.provider === value.provider && entry.id === value.model) ?? null}
         itemToStringLabel={(entry) => entry.name}
-        isItemEqualToValue={(entry, selected) => entry.id === selected.id}
+        isItemEqualToValue={(entry, selected) => entry.provider === selected.provider && entry.id === selected.id}
         inputValue={search}
         onInputValueChange={setSearch}
         open={open && !disabled}
@@ -115,19 +184,11 @@ export function ProviderModelPicker({
           if (next) {
             setBrowseProvider(value.provider)
             setSearch("")
+            setExpanded(false)
           }
         }}
         onValueChange={(selected) => {
-          if (!selected || selected.unavailable) return
-          let reasoningEffort = value.reasoningEffort
-          if (value.provider !== browseProvider || value.model !== selected.id)
-            reasoningEffort = undefined
-          onChange({
-            provider: browseProvider,
-            model: selected.id,
-            reasoningEffort,
-          })
-          setOpen(false)
+          if (selected) selectModel(selected)
         }}
       >
         <Combobox.Trigger
@@ -136,6 +197,7 @@ export function ProviderModelPicker({
           title={`${provider?.name ?? value.provider}: ${label}`}
           className="flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground disabled:opacity-50"
         >
+          <ProviderIcon provider={value.provider} className="size-3.5 shrink-0" />
           <span className="truncate">{label}</span>
           <ChevronDown className="size-3 shrink-0" />
         </Combobox.Trigger>
@@ -151,86 +213,152 @@ export function ProviderModelPicker({
             <Combobox.Popup
               aria-label="Choose a model"
               initialFocus={searchInput}
-              className="w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
+              className="flex h-96 max-h-[var(--available-height)] w-[23rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl"
+              onKeyDown={(event) => {
+                if ((!event.metaKey && !event.ctrlKey) || event.altKey || event.shiftKey) return
+                const index = ["1", "2", "3"].indexOf(event.key)
+                const selected = shortcuts[index]
+                if (!selected) return
+                event.preventDefault()
+                selectModel(selected)
+              }}
             >
-              <div
-                className="flex items-center gap-1 border-b border-border/60 px-2 pt-1.5"
-                role="group"
+              <Toolbar.Root
+                orientation="vertical"
                 aria-label="Model providers"
+                className="flex w-12 shrink-0 flex-col gap-1 border-r border-border/60 bg-muted/20 p-1.5"
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowRight") {
+                    event.preventDefault()
+                    searchInput.current?.focus()
+                  }
+                }}
               >
-                {ProviderIdSchema.options.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={browseProvider === id}
-                    disabled={lockProvider && id !== value.provider}
-                    title={
-                      lockProvider && id !== value.provider
-                        ? "This topic keeps its provider"
-                        : undefined
-                    }
-                    className="relative px-2 pb-2 pt-1 text-xs text-muted-foreground hover:text-foreground aria-pressed:text-foreground aria-pressed:after:absolute aria-pressed:after:inset-x-2 aria-pressed:after:bottom-0 aria-pressed:after:h-0.5 aria-pressed:after:rounded-full aria-pressed:after:bg-primary disabled:opacity-35"
-                    onClick={() => {
-                      setBrowseProvider(id)
-                      setSearch("")
-                      searchInput.current?.focus()
-                    }}
+                <Toolbar.Button
+                  aria-label="Favorites"
+                  aria-pressed={browseProvider === "favorites"}
+                  title="Favorites"
+                  className="relative flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground aria-pressed:text-foreground aria-pressed:after:absolute aria-pressed:after:-right-1.5 aria-pressed:after:h-5 aria-pressed:after:w-0.5 aria-pressed:after:rounded-l aria-pressed:after:bg-primary"
+                  onClick={() => {
+                    setBrowseProvider("favorites")
+                    setSearch("")
+                    searchInput.current?.focus()
+                  }}
+                >
+                  <Star className="size-5 fill-current" aria-hidden="true" />
+                </Toolbar.Button>
+                <Toolbar.Separator className="my-1 border-t border-border/60" />
+                {ProviderIdSchema.options.map((id) => {
+                  const status = providers.find((provider) => provider.id === id)
+                  const name = status?.name ?? providerNames[id]
+                  let connection = "Not connected"
+                  if (status?.connected) connection = "Connected"
+                  else if (status?.connecting) connection = "Connecting…"
+                  else if (status?.loading) connection = "Checking…"
+                  let title = `${name}: ${connection}`
+                  if (lockProvider && id !== value.provider) title = "This topic keeps its provider"
+                  return (
+                    <Toolbar.Button
+                      key={id}
+                      aria-label={name}
+                      aria-description={connection}
+                      aria-pressed={browseProvider === id}
+                      disabled={lockProvider && id !== value.provider}
+                      title={title}
+                      className="relative flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground aria-pressed:text-foreground aria-pressed:after:absolute aria-pressed:after:-right-1.5 aria-pressed:after:h-5 aria-pressed:after:w-0.5 aria-pressed:after:rounded-l aria-pressed:after:bg-primary disabled:opacity-35"
+                      onClick={() => {
+                        setBrowseProvider(id)
+                        setSearch("")
+                        setExpanded(false)
+                        searchInput.current?.focus()
+                      }}
+                    >
+                      <ProviderIcon provider={id} className="size-5 shrink-0" />
+                      {status?.connected && <span aria-hidden="true" className="absolute bottom-1 right-1 size-1.5 rounded-full bg-emerald-500 ring-2 ring-popover" />}
+                    </Toolbar.Button>
+                  )
+                })}
+              </Toolbar.Root>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="mx-3 mb-2 mt-1.5 flex shrink-0 items-center gap-2 border-b border-border px-0.5 focus-within:border-primary">
+                  <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <Combobox.Input
+                    ref={searchInput}
+                    aria-label="Search models"
+                    placeholder="Search models…"
+                    className="h-10 w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground focus-visible:outline-none"
+                  />
+                </div>
+                <Combobox.Empty className="text-center text-xs text-muted-foreground">
+                  <p className="px-5 py-8">
+                    {emptyLabel}
+                  </p>
+                </Combobox.Empty>
+                <div className="min-h-0 flex-1 scroll-py-1 overflow-y-auto overscroll-contain">
+                  <Combobox.List
+                    className="px-2 pb-1"
+                    aria-label="Models"
                   >
-                    {id === "codex" ? "Codex" : "OpenRouter"}
-                  </button>
-                ))}
-              </div>
-              <div className="mx-2 my-1.5 flex items-center gap-2 rounded-md bg-muted/40 px-2 focus-within:ring-1 focus-within:ring-border">
-                <Search className="size-3.5 shrink-0 text-muted-foreground" />
-                <Combobox.Input
-                  ref={searchInput}
-                  aria-label="Search models"
-                  placeholder="Search models…"
-                  className="h-8 w-full min-w-0 bg-transparent text-xs outline-none placeholder:text-muted-foreground focus-visible:outline-none"
-                />
-              </div>
-              <Combobox.Empty className="text-center text-xs text-muted-foreground">
-                <p className="px-3 py-5">
-                  {catalog?.loading ? "Loading models…" : "No matching models"}
-                </p>
-              </Combobox.Empty>
-              <Combobox.List
-                className="max-h-60 scroll-py-1 overflow-y-auto overscroll-contain px-1.5 pb-1.5"
-                aria-label="Models"
-              >
-                {matches.map((entry) => (
-                  <Combobox.Item
-                    key={entry.id}
-                    value={entry}
-                    disabled={entry.unavailable}
-                    aria-label={entry.name}
-                    title={entry.name}
-                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-xs outline-none data-highlighted:bg-accent data-selected:text-primary data-disabled:cursor-default data-disabled:opacity-50"
-                  >
-                    <span className="min-w-0 flex-1 truncate">
-                      {entry.name}
-                    </span>
-                    {entry.isDefault && (
-                      <span className="text-[10px] text-muted-foreground">
-                        Default
+                    {matches.map((entry) => {
+                      const shortcut = shortcuts.indexOf(entry)
+                      return (
+                        <div key={`${entry.provider}:${entry.id}`} className="group relative">
+                          <Combobox.Item
+                            value={entry}
+                            disabled={entry.unavailable}
+                            aria-label={entry.name}
+                            title={entry.description || entry.name}
+                            className="flex min-h-12 cursor-pointer items-center gap-2 rounded-md py-2 pl-2.5 pr-9 text-[13px] outline-none data-highlighted:bg-accent data-selected:bg-accent/60 data-disabled:cursor-default data-disabled:opacity-50"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate font-medium">{entry.name}</span>
+                                {entry.isDefault && <span className="text-[10px] text-muted-foreground">Default</span>}
+                              </div>
+                              <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <ProviderIcon provider={entry.provider} className="size-3 shrink-0 opacity-60" />
+                                <span className="truncate">{entry.providerName}</span>
+                                {entry.unavailable && <span>· Unavailable</span>}
+                              </span>
+                            </div>
+                            {shortcut >= 0 && <kbd className="shrink-0 rounded bg-foreground/5 px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground">{shortcutModifier}{shortcut + 1}</kbd>}
+                            <Combobox.ItemIndicator><Check className="size-3.5 shrink-0 text-primary" /></Combobox.ItemIndicator>
+                          </Combobox.Item>
+                          <button
+                            type="button"
+                            aria-label={`Favorite ${entry.name} from ${entry.providerName}`}
+                            aria-pressed={entry.favorite}
+                            title={entry.favorite ? "Remove from favorites" : "Add to favorites"}
+                            className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 hover:bg-foreground/5 hover:text-foreground aria-pressed:text-primary"
+                            onClick={() => toggleFavorite({ provider: entry.provider, model: entry.id })}
+                          >
+                            <Star aria-hidden="true" className={`size-3.5 ${entry.favorite ? "fill-current" : ""}`} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </Combobox.List>
+                  {!query && browseProvider !== "favorites" && more.length > 0 && (
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      className="mx-2 mb-2 flex w-[calc(100%-1rem)] shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] hover:bg-accent"
+                      onClick={() => setExpanded(!expanded)}
+                    >
+                      <span className="flex-1">
+                        <span className="block font-medium">More models</span>
+                        <span className="text-xs text-muted-foreground">{more.length} models</span>
                       </span>
-                    )}
-                    {entry.unavailable && (
-                      <span className="text-[10px] text-muted-foreground">
-                        Unavailable
-                      </span>
-                    )}
-                    <Combobox.ItemIndicator>
-                      <Check className="size-3.5" />
-                    </Combobox.ItemIndicator>
-                  </Combobox.Item>
-                ))}
-              </Combobox.List>
-              {catalog?.error && (
-                <p className="border-t border-border/60 px-3 py-2 text-xs text-destructive">
-                  {catalog.error}
-                </p>
-              )}
+                      <ChevronRight aria-hidden="true" className={`size-4 text-muted-foreground ${expanded ? "rotate-90" : ""}`} />
+                    </button>
+                  )}
+                </div>
+                {catalog?.error && (
+                  <p role="status" className="border-t border-border/60 px-3 py-2.5 text-xs text-destructive">
+                    {catalog.error}
+                  </p>
+                )}
+              </div>
             </Combobox.Popup>
           </Combobox.Positioner>
         </Combobox.Portal>

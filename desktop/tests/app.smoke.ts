@@ -69,6 +69,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     })
     await modelTrigger.click()
     await page.getByRole("button", { name: "OpenRouter", exact: true }).click()
+    await page.getByRole("combobox", { name: "Search models" }).fill("openrouter/auto")
     await page.getByRole("option", { name: "Auto", exact: true }).click()
     await expect(modelTrigger).toHaveText(/Auto/)
     await expect(page.getByRole("listbox")).not.toBeVisible()
@@ -101,6 +102,16 @@ test("native sandboxed app manages runners and restores topics across restarts",
       .click()
     await expect(page.getByRole("menu")).not.toBeVisible()
     await modelTrigger.click()
+    const favoriteButton = page.getByRole("button", {
+      name: `Favorite ${codexModel.name} from Codex`,
+      exact: true,
+    })
+    await favoriteButton.click()
+    await expect(favoriteButton).toHaveAttribute("aria-pressed", "true")
+    await page.getByRole("button", { name: "Favorites", exact: true }).click()
+    await expect(page.getByRole("option")).toHaveCount(1)
+    await expect(page.getByRole("option", { name: codexModel.name, exact: true })).toBeVisible()
+    await page.getByRole("button", { name: "Codex", exact: true }).click()
     await page.screenshot({ path: "test-results/model-picker.png" })
     await page
       .locator('[aria-label="Choose a model"]')
@@ -111,6 +122,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.getByRole("heading", { name: /Drop in slides/ }).click()
     await expect(page.getByRole("listbox")).not.toBeVisible()
     await modelTrigger.click()
+    await page.getByRole("button", { name: /More models/ }).click()
     await page
       .getByRole("option", { name: "Default model", exact: true })
       .click()
