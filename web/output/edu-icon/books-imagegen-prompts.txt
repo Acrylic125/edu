@@ -1,0 +1,107 @@
+Use case: logo-brand.
+Asset: one square Edu app icon, not a presentation or mockup.
+Redraw the reference as exactly THREE thick, recognizable closed hardcover books. The reference is for the flat pastel illustration style only.
+Keep all three books the same real dimensions and thickness. Stack them physically on top of one another, with no gaps: muted blue on top shifted to the right, sage green in the middle shifted to the left, gold on the bottom centered between them. Keep the horizontal offsets moderate so the books visibly rest on the book below.
+Use convincing book anatomy: a single rounded bound spine along a LONG edge, substantial ivory layered page edges, a proper front and back hardcover with a small overhang, and rounded book corners. Draw perspective and curved paper edges naturally. These must look like thick books, not boxes, binders, blocks, or slabs with white rectangle labels. The visible page block is thick, roughly one quarter of the cover's long dimension. Do not add binding bands or straps.
+Style: crisp polished flat vector-like illustration, simple shapes, solid colors, no textures or gradients. Match the softness and three-quarter view of the reference book illustration.
+Palette: warm butter yellow #f6e7af rounded-square tile; blue #a5c0cd / #6e95a8, sage #a4bfa9 / #718d77, gold #e9c76c / #b99541, ivory paper #fffdf4.
+Composition: books fill about 75 percent of the icon width, balanced generous margins, centered stack. Tile corners about 21 percent of the tile width, transparent outside the tile.
+No text, letters, literal E, stars, sparkles, decorations, ground shadow, drop shadow, watermark, faces, or extra objects. Exactly three books.
+
+REFINEMENT
+
+Edit this icon while preserving the three thick book silhouettes, physically touching staggered stack, equal dimensions, and the blue/sage/gold order.
+Remove ALL the vertical decorative bands and stripes from the book spines. Each spine must be one plain, softly rounded continuous colored surface. Keep the visible ivory pages with fine horizontal page lines, the curved paper edges, the proper top and bottom hardcover overhang, and the rounded hinge at the cover. Do not turn the page blocks into rectangular labels.
+Convert the entire artwork to crisp flat vector-like illustration with solid colors. Remove all grain, mottling, gradients, lighting effects, shadows, and surface textures. Preserve convincing book geometry through separate solid-colored faces.
+Use these colors: blue #a5c0cd and #6e95a8; sage #a4bfa9 and #718d77; gold #e9c76c and #b99541; ivory pages #fffdf4.
+Background: perfectly uniform full-bleed #f6e7af filling the entire square canvas. No rounded canvas corners and no transparency; the application will mask the icon corners. No stars, symbols, ornaments, binding straps, text, extra objects, or shadow. Keep exactly three books.
+
+RESTORE STAGGERED LAYOUT
+
+Edit Image 1. Change only the composition and offsets of the books; preserve the current natural thick hardcover book shapes, rounded spines, page edges, colors, perspective, and artwork style.
+Image 2 is ONLY a rough guide to the staggered placement: top book to the right, middle book to the left, bottom book between them. Do not copy its shapes, different sizes, thinness, or floating gaps.
+Make the horizontal stagger pronounced and unmistakable. Use the same dimensions for all three books, each approximately 58 percent of the canvas width. The TOP BLUE book's center is at about 61 percent of the canvas width. The MIDDLE SAGE book's center is at about 39 percent. The BOTTOM GOLD book's center is at about 52 percent. This is a clear right-left-middle zigzag stack; do not align their spines or fore-edges into a straight column.
+All three books must physically rest directly on one another with convincing contact and overlap, with no air gaps. Show some exposed top cover of the supporting lower book to make the stagger clear. Maintain substantial page-block thickness and equal book size. Scale the entire composition down uniformly as needed for comfortable margins, without changing relative book sizes.
+Keep the same warm yellow full square background. Exactly three books; no stars, symbols, text, binding bands, decorations, ground shadow, or literal letter E.
+
+ALIGNMENT AND UI PALETTE REFINEMENT
+
+Edit this existing Edu app icon. Preserve the approved recognizable thick hardcover books: rounded plain spines, substantial ivory page blocks, curved page edges, top and bottom hardcovers with a small overhang. Exactly three books of the SAME size and thickness, resting directly on each other.
+Make their alignment more polished and intentional. Keep the staggered layout, but reduce the excessive sideways overhangs by about one third. Top blue book shifted RIGHT, middle sage book shifted LEFT, bottom gold book midway between the two. The books should form a balanced, stable zigzag pile. Their long edges and cover planes share exactly the same perspective and are parallel. Their centers are approximately 57%, 43%, and 50% across the canvas respectively; all three books approximately 65% of canvas width. Center the whole stack vertically and horizontally, with balanced margins. Do not straighten them into a flush column, rotate individual books, make them float, or change book anatomy.
+Recolor to the EXACT existing UI book palette, using clean solid colors:
+- Top blue book: light cover planes #a5c0cd, darker spine/edges #6e95a8.
+- Middle sage book: light cover planes #a4bfa9, darker spine/edges #718d77.
+- Bottom gold book: light cover planes #e9c76c, darker spine/edges #b99541.
+- Paper: warm ivory #fffdf4 with subtle page lines.
+- Canvas: perfectly uniform butter yellow #f6e7af, full-bleed square.
+Flatten the colored surfaces into solid fills matching those hex values. Remove the current overly saturated colors and all mottling, grain, gradients, glow, or texture. Separate solid-colored faces provide the sense of volume. Keep the existing illustration style and natural book silhouettes.
+No stars, sparkles, symbols, text, decorative binding bands, ornaments, ground shadow, drop shadow, or extra objects. No literal E. Do not round the canvas corners; the app applies that mask.
+
+TRANSPARENT BACKGROUND
+
+Remove only the yellow background from this existing app icon. Return the exact same three-book stack as a clean PNG cutout on a genuinely transparent background.
+Preserve the books' shapes, thickness, colors, page lines, rounded spines, illustration style, scale relative to one another, and current staggered offsets. Do not redraw, rearrange, recolor, rotate, straighten, or add anything to the books.
+The background outside the silhouette must have zero alpha. No colored tile, rectangle, rounded square, white background, checkerboard drawn into the image, ground shadow, halo, border, stars, decorations, or extra objects. Preserve opaque ivory pages inside the book silhouettes and clean antialiased edges.
+Keep the entire stack intact without clipping any book. Leave only enough empty transparent canvas to avoid clipping; the export pipeline will fit the stack to the full icon width.
+
+REDUCED PAGE LINES AND INDIVIDUAL ANGLES
+
+Edit this existing transparent three-book Edu app icon. Make only these two refinements:
+1. Reduce the horizontal lines inside each ivory page block to just TWO very faint, fine, low-contrast page lines per book. Remove the extra repeated lines. Keep substantial clean ivory page areas; do not turn the remaining lines into dark stripes.
+2. Give the three books subtly different orientations. They still lie FLAT, resting directly on one another, but each is rotated a few degrees in its own horizontal plane: top blue book about 5 degrees clockwise, middle sage about 4 degrees counterclockwise, bottom gold about 1 degree clockwise. Their cover edges should no longer be exactly parallel. Keep the variation gentle and natural, not dramatically tilted or falling over.
+Preserve the approved thick book shapes, rounded single spines, natural cover overhang, curved page edges, equal book sizes, and staggered arrangement: blue top to the right, sage middle to the left, gold bottom between them. Preserve the existing muted blue, sage, gold, and ivory palette and illustration style. Keep all three books physically touching, with a stable stack.
+Keep a genuinely TRANSPARENT background and smooth clean alpha edges. Do not add a colored tile, background, black backdrop, checkerboard drawn into the image, shadow, border, stars, symbols, ornaments, bands, text, or extra objects. Exactly three thick books, fully visible. The export pipeline will fit the stack to the full horizontal icon width.
+
+REFINED ANGLE DIFFERENCES
+
+Edit this transparent book-stack icon. Preserve the current two faint page lines per book, thick book anatomy, rounded spines, colors, equal dimensions, and right-left-middle staggered offsets.
+Change ONLY the individual book orientations so they are visibly but gently different. Right now their long cover edges still look almost parallel.
+The top BLUE book's long front edge should be almost level, with a tiny DOWNWARD slope toward the right, approximately +2 degrees. The middle SAGE book's long front edge should slope UPWARD toward the right, approximately -8 degrees. The bottom GOLD book's long front edge should be nearly level with a small UPWARD slope toward the right, approximately -2 degrees. These are different angles as seen on the screen. Rotate each book as a coherent natural 3D hardcover, with its cover, spine, pages, and bottom edge following the same book orientation. Do not merely slant individual page lines.
+Keep the books lying flat and resting physically on the book below, not tipping off the stack or floating. This is a slightly casually arranged pile, not a perfectly parallel column. Preserve their thickness, equal sizes, colors, minimal two page lines, and recognizable construction.
+Keep a genuinely transparent background, clean antialiased edges, no background tile, no shadow, no stars, text, ornaments, bands, outlines, or extra objects. Exactly three books, completely visible.
+
+YELLOW BOOK ANGLE MATCH
+
+Image 1 is the existing transparent app icon to edit. Image 2 is an angle guide ONLY; do not draw its labels, lines or background into the artwork.
+Change ONLY the bottom yellow book to follow the YELLOW angle in Image 2. Leave the blue and green books unchanged.
+Make the yellow book's entire long front edge ALMOST HORIZONTAL, exactly parallel to the blue book's almost horizontal front edge. The yellow page lines must also be almost horizontal like the blue page lines, rather than following the green book's steep diagonal. Rotate the complete yellow hardcover book CLOCKWISE until its front edge and page lines have the same angle as the blue book. This is a visible change of about 6 to 7 degrees from the yellow book's current orientation.
+Do not preserve the current yellow angle: it is too close to the green book's angle. The result must have BLUE and YELLOW front edges parallel, with GREEN at a different steeper angle, as in the angle guide.
+Preserve the yellow book's realistic coherent anatomy, rounded spine, thickness, size, color and exactly two faint page lines. Keep the staggered horizontal positions and natural physical contact between books. Keep the blue and green books' shapes and colors exactly unchanged. No new objects, no text, decorations, stars, shadows, border or background. Return a clean PNG with a genuinely transparent background.
+
+FINAL YELLOW ANGLE REFINEMENT
+
+Make one final small correction to ONLY the bottom yellow book in this transparent app icon. Keep the blue and green books unchanged.
+The yellow book's long front edge and its two page lines are still more steeply tilted upward to the right than the blue book's. Rotate the WHOLE yellow book a further 2 degrees CLOCKWISE, so its long front cover edge and both paper lines match the almost-horizontal blue front edge and paper lines exactly. Use the blue book's actual edge as a ruler. The yellow should be just as different from the green's diagonal as the blue is.
+All parts of the yellow book must rotate coherently: cover, spine, pages, both faint page lines, and bottom cover. Preserve its size, shape, colors, thickness, staggered position beneath the green book, and realistic contact. Do not change any blue or green pixels or add details.
+Exactly three books, two faint page lines on each, the same palette, genuinely transparent background, no tile, shadow, border, ornaments, text, or extra objects.
+
+STAIRCASE ANGLE CORRECTION
+
+Image 1 is the three-book app icon to edit. Image 2 is ONLY a guide to the desired progressive angles and equal lengths; do not copy its labels, lines or background into the artwork.
+Correct the bottom YELLOW book by rotating it COUNTERCLOCKWISE as a complete rigid book, without stretching or lengthening it.
+The desired angles progress like a STAIRCASE or a gently fanned stack:
+- BLUE long front edge: approximately -2 degrees, almost horizontal. Keep this book unchanged.
+- GREEN long front edge: approximately -9 degrees, tilted upward toward the right. Keep this book unchanged.
+- YELLOW long front edge: approximately -16 degrees, tilted upward toward the right MORE STEEPLY than the green.
+Thus the yellow turns another equal step beyond the green, in the SAME progression from blue to green. The angular differences between blue and green and between green and yellow should be equal. The yellow must NOT be parallel to the blue, must NOT be flatter than the green, and must NOT be enlarged. Follow the progressive angle guide.
+Keep the yellow book's actual cover length, width, thickness and proportions the SAME as in Image 1. Rotate its spine, top cover, page block, both faint page lines and bottom cover coherently. Its projected horizontal width may become slightly shorter due to rotation; do not compensate by elongating the book.
+Preserve the existing blue, green and yellow palette, thick recognizable hardcovers, curved spines and paper edges, two faint page lines per book, staggered horizontal positions and natural contact. The books lie flat resting on one another, with a staircase progression of their orientations.
+Exactly three books, clean genuinely transparent background, no tile, shadow, outline, stars, text, decorations, binding bands or extra objects.
+
+STRONGER YELLOW TILT
+
+Edit this transparent three-book app icon. Increase ONLY the bottom YELLOW book's counterclockwise rotation to make the staircase progression noticeably stronger.
+Rotate the entire yellow book another 10 to 12 degrees COUNTERCLOCKWISE from its current orientation. Its long front cover edge and two page lines should rise toward the right at about 25 degrees, substantially more steeply than the green book. This must be a visible further turn, not a tiny adjustment.
+Keep the blue book and green book unchanged. The sequence remains blue nearly level, green moderately tilted upward right, yellow tilted farther upward right.
+Rotate the yellow as a rigid, coherent 3D book: spine, cover, page block, both faint page lines, and bottom cover move together. Preserve its actual length, width and thickness. Let its projected horizontal extent shorten naturally as it rotates; DO NOT stretch or lengthen it to reach its previous right edge.
+Keep the staggered stack stable and touching, with the yellow still underneath the green. Preserve the existing natural book anatomy, rounded spines, colors, two faint lines, and illustration style.
+Genuinely transparent background; exactly three books; no background tile, shadow, outline, stars, symbols, bands, text, decorations or extra objects.
+
+EQUAL BOOK SIZE CORRECTION
+
+Correct the relative book sizes in this transparent Edu app icon.
+All THREE books must be copies of ONE identical thick hardcover book: identical cover length, cover depth, spine thickness, and page-block thickness. Only their colors, positions, and rotation angles differ. Use the BLUE and GREEN books as the size reference. The bottom yellow book currently looks undersized and thinner; restore its full book volume to match the others.
+Make the yellow book's cover depth and thick page block as substantial as those of the blue and green. Match the proportions of the complete book, not just the length of the front edge. Do not stretch the yellow into a longer narrower book. Do not make it a smaller copy because it is rotated. Treat all three as equally sized real objects viewed from the SAME camera, with natural perspective.
+Keep the current stronger staircase rotations: blue nearly level, green moderately counterclockwise, yellow distinctly further counterclockwise. Preserve the yellow's current strong angle while correcting its size. Do not flatten its angle again.
+Keep all three resting directly on one another in the approved staggered arrangement. Maintain realistic rounded spines, matching thick hardcover construction, muted blue/sage/gold colors, warm ivory pages, exactly two faint page lines per book, and the same illustration style. Leave the blue and green artwork as unchanged as possible.
+Keep a genuinely transparent background with clean antialiased edges. Fit the entire stack without clipping any book; the export pipeline will uniformly fit the whole stack to the horizontal canvas width. No tile, background, shadow, border, stars, text, binding bands, decorations, or extra objects. Exactly three equal-sized books.
