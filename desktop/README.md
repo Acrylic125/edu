@@ -1,39 +1,57 @@
-# Prune desktop
+# EdU desktop
 
-A standalone Electron tutoring harness alongside the web app. It keeps Prune’s
+The shipping EdU app is a standalone Electron tutoring harness. Web delivery is
+paused. It keeps EdU’s
 stylesheet and theme provider directly, with the same system typography, topic
 sidebar, learning suggestions, composer, study document, and tutor chat. Light,
 dark, and system appearance are included.
 
 ## Use the app
 
-Open **Runners → Model providers** and choose an account:
+Open **Settings → Providers → Add provider** and choose an account:
 
 - **Codex:** click **Sign in with ChatGPT** and finish sign-in in your browser.
   Your account needs Codex access. The app bundles the Codex app-server runtime.
 - **OpenRouter:** click **Connect account** and sign in in your browser.
   Your account needs model credits.
 
+- **Claude:** install Claude Code, sign in once with `claude auth login`, and save
+  the absolute path to `claude` in **Binary path**. Click **Check connection**.
+- **Antigravity:** install Antigravity CLI, sign in once with `agy`, and save the
+  absolute path to `agy` in **Binary path**. Click **Check connection**; this
+  sends a small model request using your account.
+
+Claude and Antigravity use their CLI's existing credential store. Disconnect
+only disables their use in EdU; it does not log the shared CLI out. These adapters
+support text and extracted PDF text; use ChatGPT or OpenRouter for visual sources.
+CLI models use their configured default; Claude also exposes Sonnet, Opus, and
+Haiku aliases, and Antigravity loads its catalog from `agy models`.
+
+Change the display name or binary path and click **Save changes**. ChatGPT uses
+its bundled runtime when its binary path is empty. Binary changes stop idle
+runners and require reconnecting a CLI provider. Settings persist across restarts.
+Use **Settings → Appearance** to select System, Light, or Dark.
+
 Lessons require an internet connection.
 The app supplies the runtime, agent loop, Tutor Me skill, references, source
-readers, PDF renderer, and persistence. Users do not install Node, Python, an
-agent CLI, or a skill.
+readers, PDF renderer, and persistence. Users do not install Node, Python, or
+a skill. ChatGPT and OpenRouter include their runtime; Claude and Antigravity
+require the provider CLI described above.
 
 Create a topic by describing your goal or attaching PDF, image, text, or code
 materials. The tutor proposes a plan; **Confirm plan & begin** authorizes teaching.
 It explains the material, asks Checks and Tests, and maintains revision notes.
-Use the provider/model picker beside the paperclip to choose Codex or OpenRouter.
+Use the provider/model picker beside the paperclip to choose your provider and model.
 Codex models and reasoning options come from the bundled runtime’s model catalog;
 **Default model** follows its current default. OpenRouter’s **Auto** routes model
 requests, and its catalog lists models that support tool calling. Visual sources
 require a model with vision support.
 
-Open **Runners** to add or edit tutors, start, stop, restart, or remove unused
-runners. A topic retains its provider; its model and reasoning setting can be
-changed while the runner is idle. Existing saved runners retain OpenRouter.
-Up to eight runners can work independently. A runner handles one
-turn at a time and can own several topics. Restarting a process preserves notes
-and pending questions; send a message to resume from the saved handoff.
+Tutors start automatically when you send a message. A topic retains its provider;
+its model and reasoning setting can be changed while its tutor is idle. Existing
+saved runners retain their provider. Up to eight tutors can work independently.
+Restarting a process preserves notes and pending questions; send a message to
+resume from the saved handoff.
 
 Use the paperclip to add sources and the download button to export study notes,
 the conversation, and source assets. PDF and image pages are rendered on demand
@@ -46,6 +64,7 @@ provider when tutoring. The app does not synchronize with the web account yet.
 From this directory:
 
 ```sh
+pnpm --dir ../packages/ui install --frozen-lockfile
 pnpm install
 pnpm dev
 ```
@@ -84,9 +103,16 @@ runner operations require Electron.
   Linux `basic_text` fallback is rejected. Disconnect stops runners and deletes
   the local credential; revoking the provider key is done in OpenRouter.
 - Codex manages ChatGPT sign-in, token refresh, cancellation, and logout through
-  its app-server protocol. Its account home is private to Prune and uses the OS
-  credential store. Prune does not import another CLI’s credentials or inherited
+  its app-server protocol. Its account home is private to EdU and uses the OS
+  credential store. EdU does not import another CLI’s credentials or inherited
   model API keys. Disconnect stops that provider’s runners before logging out.
+- Claude launches with built-in tools, MCP servers, hooks, and session persistence
+  disabled. Antigravity selects an EdU main agent with an empty tools list and
+  terminal sandboxing. Their schema-constrained responses request the same source
+  and save operations as the other providers; EdU validates and executes them.
+  Native subprocesses are tracked for stop/timeout cleanup. CLI output is bounded,
+  provider API keys are removed from the inherited environment, and invalid saves
+  must be corrected before a reply can be committed.
 - Each runner is an Electron utility process using Electron’s bundled Node
   runtime. Codex runners own a native app-server child, which is terminated on
   stop, timeout, crash, or quit. Turns have a five-minute deadline and validated
@@ -130,10 +156,10 @@ registration. Opt-in live tests use an already connected account:
 
 ```bash
 PRUNE_LIVE_DATA_DIR='/absolute/path/to/prune-desktop' pnpm exec vitest run tests/codex.live.test.ts
-PRUNE_LIVE_DATA_DIR='/absolute/path/to/prune-desktop' PRUNE_PACKAGED_APP='/absolute/path/to/Prune.app/Contents/MacOS/Prune' pnpm exec playwright test tests/codex.live.smoke.ts
+PRUNE_LIVE_DATA_DIR='/absolute/path/to/prune-desktop' PRUNE_PACKAGED_APP='/absolute/path/to/EdU.app/Contents/MacOS/EdU' pnpm exec playwright test tests/codex.live.smoke.ts
 ```
 
-The Vitest check replays the latest Codex topic in an isolated copy. Quit Prune
+The Vitest check replays the latest Codex topic in an isolated copy. Quit EdU
 before running the native check: it retries the latest learner request in the
 actual desktop workspace and verifies the reply, notes, handoff, and trace on disk.
 Both checks make real model requests; normal tests skip them. Browser account
@@ -146,4 +172,11 @@ Implementation references: [Electron utility processes](https://www.electronjs.o
 [T3 Code’s Codex provider](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/CodexProvider.ts)
 and [provider/model picker](https://github.com/pingdotgg/t3code/blob/main/apps/web/src/components/chat/ProviderModelPicker.tsx).
 T3 Code informed provider/account separation and runtime model discovery;
-Prune keeps its own web styling and Tutor Me harness.
+EdU keeps its own web styling and Tutor Me harness.
+
+CLI adapter references: [Claude Code CLI](https://code.claude.com/docs/en/cli-reference),
+[Antigravity headless mode](https://antigravity.google/docs/cli/headless/),
+[Antigravity agent capabilities](https://antigravity.google/docs/subagents/).
+Live Claude/Antigravity checks require installed provider CLIs and signed-in
+accounts; automated tests use executable protocol fixtures and make no account
+requests.

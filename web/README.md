@@ -1,3 +1,9 @@
+# EdU web (paused)
+
+The web version is not shipping. Use the [Electron app](../desktop/README.md).
+Web deploy and upload commands are disabled, and the legacy production workflow
+cannot run. The instructions below are retained as historical reference.
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
