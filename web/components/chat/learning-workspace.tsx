@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { FileTextIcon } from "lucide-react"
+import { BookOpenIcon, FileTextIcon } from "lucide-react"
 
+import { LearningBooks } from "@/components/learning/learning-books"
 import { BlockNoteViewer } from "@/components/chat/blocknote-viewer"
 import { ChatWorkspacePanes } from "@/components/chat/chat-frame"
 import { ChatComposerIsland } from "@/components/chat/chat-composer-island"
@@ -103,12 +104,18 @@ function WorkspaceShell() {
     documentBody = (
       <div className="relative h-full overflow-y-auto">
         <div className={cn("absolute right-6 top-5 max-w-[calc(100%-3rem)] text-right", status.label === "Online" && "sr-only")}>{connectionStatus}</div>
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-5 py-20 sm:px-8 lg:px-0">
-          <h1 className="mb-10 max-w-2xl text-3xl font-medium leading-[1.2] tracking-tight sm:text-4xl lg:text-[2.75rem]">
-            Drop in slides, tutorials and past year papers to learn
-          </h1>
+        <div className="mx-auto flex min-h-full w-full max-w-[850px] flex-col justify-center px-5 py-12 sm:px-8 lg:px-10">
+          <div className="mb-8 flex items-center justify-between gap-4 sm:mb-10">
+            <div className="max-w-lg">
+              <span className="mb-5 flex size-12 items-center justify-center rounded-full bg-learning-yellow text-primary"><BookOpenIcon className="size-5" aria-hidden="true" /></span>
+              <h1 className="text-3xl font-semibold leading-[1.12] tracking-[-0.045em] sm:text-4xl lg:text-[2.75rem]">What will you<br className="hidden sm:block" /> learn today?</h1>
+              <p className="mt-4 max-w-sm text-sm leading-6 text-muted-foreground">Drop in slides, tutorials and past year papers, or start with a question.</p>
+            </div>
+            <LearningBooks className="hidden w-[38%] max-w-60 shrink-0 sm:block" />
+          </div>
           {alerts}
           <ChatComposerIsland newTopicMode />
+          <p className="mt-4 text-center text-xs leading-5 text-muted-foreground">Your materials, questions, and learning plan. All in one place.</p>
         </div>
       </div>
     )
@@ -126,9 +133,9 @@ function WorkspaceShell() {
     documentBody = <div data-document-scroll className="h-full overflow-y-auto"><article className="mx-auto w-full max-w-[850px] px-6 pb-24 pt-12 sm:px-12 lg:pt-16"><div className="mx-auto max-w-[700px]">
       <h1 data-document-title className="min-w-0 break-words text-3xl font-semibold leading-tight tracking-tight sm:text-[2.5rem]">{session.title || "Untitled topic"}</h1>
       {files.size > 0 ? <div className="mt-5 flex flex-wrap gap-2">{[...files].map(([id, file]) => file.url ? <a key={id} href={file.url} target="_blank" rel="noopener noreferrer" className="flex max-w-full items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><FileTextIcon className="size-4 shrink-0" /><span className="truncate">{file.name}</span></a> : <span key={id} className="flex max-w-full items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground"><FileTextIcon className="size-4 shrink-0" /><span className="truncate">{file.name}</span></span>)}</div> : null}
-      {session.plan.length > 0 ? <nav className="mt-9 rounded-lg border border-border bg-card/40 px-5 py-5" aria-label="Table of contents"><h2 className="text-base font-semibold">Table of contents</h2><ol className="mt-3 space-y-2">{session.plan.map((step) => <li key={step.id} className="text-sm leading-snug text-muted-foreground" style={{ paddingLeft: step.parent ? "1.2rem" : undefined }}><button type="button" aria-current={session.currentStepId === step.id ? "step" : undefined} disabled={selectingStep || !canSelectStep} className="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed" onClick={() => void selectStep(step.id)}>{step.label}</button></li>)}</ol></nav> : null}
+      {session.plan.length > 0 ? <nav className="mt-9 rounded-[1.5rem] bg-learning-sage/50 px-6 py-6" aria-label="Table of contents"><h2 className="text-base font-semibold">Table of contents</h2><ol className="mt-3 space-y-2">{session.plan.map((step) => <li key={step.id} className="text-sm leading-snug text-muted-foreground" style={{ paddingLeft: step.parent ? "1.2rem" : undefined }}><button type="button" aria-current={session.currentStepId === step.id ? "step" : undefined} disabled={selectingStep || !canSelectStep} className="w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-learning-circle aria-[current=step]:bg-learning-circle aria-[current=step]:font-medium aria-[current=step]:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed" onClick={() => void selectStep(step.id)}>{step.label}</button></li>)}</ol></nav> : null}
       <div className="mt-9">{session.document.markdown.trim() ? <BlockNoteViewer text={session.document.markdown} showBlockHandles /> : <p className="text-sm text-muted-foreground">Your learning document is ready for notes.</p>}</div>
-      {session.plan.length > 1 ? <button type="button" className="mt-9 w-full rounded-md border border-border px-4 py-3 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => sendUserText("Continue to the next topic")}>Continue →</button> : null}
+      {session.plan.length > 1 ? <button type="button" className="mt-9 w-full rounded-full bg-learning-yellow px-4 py-3 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => sendUserText("Continue to the next topic")}>Continue →</button> : null}
     </div></article></div>
   }
 

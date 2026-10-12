@@ -26,7 +26,7 @@ export function AppearanceSettings() {
         </p>
       </div>
 
-      <div className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-card p-3.5 shadow-xs sm:flex-row sm:items-center sm:justify-between sm:p-4">
+      <div className="flex flex-col gap-2.5 rounded-[1.5rem] bg-background p-5 sm:flex-row sm:items-center sm:justify-between sm:p-5">
         <div className="space-y-1">
           <Label htmlFor="theme-mode-trigger" className="font-medium">
             Theme
@@ -42,7 +42,7 @@ export function AppearanceSettings() {
             render={
               <Button
                 variant="outline"
-                className="h-8 w-full justify-between bg-background sm:w-40"
+                className="h-10 w-full rounded-full justify-between bg-background sm:w-40"
               />
             }
           >

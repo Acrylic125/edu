@@ -11,6 +11,7 @@ import {
 import {
   AlertCircleIcon,
   ArrowUpIcon,
+  ArrowRightIcon,
   BookOpenIcon,
   CalculatorIcon,
   CodeIcon,
@@ -61,9 +62,9 @@ type ChatComposerProps = {
 }
 
 const LEARNING_SUGGESTIONS = [
-  { label: "Learn calculus", description: "Limits, derivatives and integrals", prompt: "Help me learn calculus, starting with limits, derivatives and integrals.", icon: CalculatorIcon },
-  { label: "Explore automata", description: "From finite states to languages", prompt: "Help me learn automata and formal languages, starting with finite automata.", icon: CodeIcon },
-  { label: "Prepare for an exam", description: "Turn your papers into practice", prompt: "Help me prepare for my exam using my slides and past year papers.", icon: BookOpenIcon },
+  { label: "Learn calculus", description: "Limits, derivatives and integrals", prompt: "Help me learn calculus, starting with limits, derivatives and integrals.", icon: CalculatorIcon, color: "bg-learning-yellow" },
+  { label: "Explore automata", description: "From finite states to languages", prompt: "Help me learn automata and formal languages, starting with finite automata.", icon: CodeIcon, color: "bg-learning-sage" },
+  { label: "Prepare for an exam", description: "Turn your papers into practice", prompt: "Help me prepare for my exam using my slides and past year papers.", icon: BookOpenIcon, color: "bg-learning-blue" },
 ]
 
 export function ChatComposer({
@@ -333,23 +334,24 @@ export function ChatComposer({
   return (
     <>
       {newTopicMode ? (
-        <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Learning suggestions">
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Learning suggestions">
           {LEARNING_SUGGESTIONS.map((suggestion) => (
             <button
               key={suggestion.label}
               type="button"
               disabled={isSubmitting || run.status === "running"}
-              className="flex min-h-20 flex-col items-start justify-center gap-3 rounded-xl border border-border bg-card/40 px-5 py-4 text-left transition-colors hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:min-h-32"
+              className={cn("group relative flex min-h-24 flex-row items-center gap-4 overflow-hidden rounded-[1.75rem] px-5 py-5 text-left text-learning-ink transition-shadow hover:ring-2 hover:ring-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:min-h-44 sm:flex-col sm:items-start sm:gap-5", suggestion.color)}
               onClick={() => {
                 setDraft(suggestion.prompt)
                 textareaRef.current?.focus()
               }}
             >
-              <suggestion.icon className="hidden size-5 text-primary sm:block" aria-hidden="true" />
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-learning-circle"><suggestion.icon className="size-5" aria-hidden="true" /></span>
               <span>
-                <span className="block text-sm font-medium">{suggestion.label}</span>
-                <span className="mt-1 block text-xs leading-5 text-muted-foreground">{suggestion.description}</span>
+                <span className="block text-sm font-semibold">{suggestion.label}</span>
+                <span className="mt-1 block text-xs leading-5 text-learning-subtle">{suggestion.description}</span>
               </span>
+              <ArrowRightIcon className="ml-auto size-4 shrink-0 text-learning-subtle sm:absolute sm:right-5 sm:top-8" aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -360,8 +362,8 @@ export function ChatComposer({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative flex min-h-28 w-full flex-col rounded-2xl border border-border/80 bg-input/25 shadow-lg backdrop-blur-xl",
-          newTopicMode && "min-h-44 border-input/60 bg-card shadow-sm focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/20",
+          "relative flex min-h-28 w-full flex-col rounded-[1.5rem] border border-border/70 bg-card shadow-sm",
+          newTopicMode && "min-h-44 rounded-[1.75rem] border-transparent bg-card p-2 shadow-none focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/20",
           isDragOver && "border-primary/60 ring-2 ring-primary/20",
           className
         )}
@@ -467,7 +469,7 @@ export function ChatComposer({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className={newTopicMode ? "size-11 sm:size-8" : undefined}
+              className={newTopicMode ? "size-10 rounded-full bg-muted" : "rounded-full"}
               aria-label="Attach files"
               disabled={
                 isSubmitting || images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
@@ -532,7 +534,7 @@ function ComposerActionButton({
       {...(!canSend ? { "aria-disabled": true as const, tabIndex: -1 } : {})}
       className={cn(
         buttonVariants({ size: "icon-sm" }),
-        "rounded-full",
+        "size-10 rounded-full",
         !canSend && "pointer-events-none opacity-50"
       )}
     >

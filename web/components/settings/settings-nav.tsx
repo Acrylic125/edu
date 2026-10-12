@@ -29,9 +29,9 @@ export function SettingsNav() {
             href={item.href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex h-7 min-w-24 items-center gap-1.5 rounded-md px-2 text-left text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:mb-0.5 md:w-full",
+              "flex h-11 min-w-24 items-center gap-2 rounded-full px-4 text-left text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 md:mb-0.5 md:w-full",
               isActive
-                ? "bg-foreground text-background"
+                ? "bg-learning-yellow text-learning-ink"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
