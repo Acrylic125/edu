@@ -1,8 +1,6 @@
-name: Deploy production
+name: Legacy production deployment (disabled)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -14,6 +12,8 @@ permissions:
 
 jobs:
   deploy:
+    # Web delivery is paused; keep the legacy configuration available for later.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     environment: production
     env:
