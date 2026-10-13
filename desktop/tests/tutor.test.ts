@@ -7,7 +7,8 @@ import { extractText, getDocumentProxy } from "unpdf"
 import OpenAI from "openai"
 import type { ChatCompletionMessage } from "openai/resources/chat/completions"
 import { afterEach, expect, test } from "vitest"
-import { newTopic } from "../src/main/workspace"
+import { newChat, newTopic } from "../src/main/workspace"
+import { topicMention } from "../src/shared/topic-mentions"
 import { runTutorTurn } from "../src/runners/tutor"
 import { generateTopicTitle } from "../src/runners/title"
 import { ProviderModelSchema } from "../src/shared/contracts"
@@ -84,23 +85,26 @@ function job() {
     provider: "openrouter" as const,
     model: "test",
   }
-  const topic = newTopic("Limits", runner.id)
-  topic.messages.push({
+  const topic = newTopic("Limits")
+  topic.learning.notes = `# Limits\n\n<topic-directory heading="Topic directory" items='[{"title":"1. Limits"}]' />`
+  const chat = newChat(runner.id)
+  chat.messages.push({
     id: randomUUID(),
     role: "user",
-    content: "Teach me limits",
+    content: `${topicMention(topic.id, topic.title)} Teach me limits`,
     createdAt: new Date().toISOString(),
+    topicIds: [topic.id],
   })
   return {
-    topic,
+    chat,
+    topics: [{ ...topic, assetDirectory: resolve("tests") }],
     runner,
     apiKey: "test-only",
-    action: "message",
     skillDirectory: resolve("resources/tutor-me"),
     assetDirectory: resolve("tests"),
   } satisfies WorkerJob
 }
-function save(state: LearningState): ChatCompletionMessage {
+function call(name: string, input: object): ChatCompletionMessage {
   return {
     role: "assistant",
     content: null,
@@ -109,13 +113,16 @@ function save(state: LearningState): ChatCompletionMessage {
       {
         id: randomUUID(),
         type: "function",
-        function: {
-          name: "save_learning_state",
-          arguments: JSON.stringify(state),
-        },
+        function: { name, arguments: JSON.stringify(input) },
       },
     ],
   }
+}
+function save(state: LearningState) {
+  return call("save_learning_state", state)
+}
+function saveTopic(topicId: string, learning: LearningState) {
+  return call("save_topic_state", { topicId, learning })
 }
 function reply(content: string): ChatCompletionMessage {
   return { role: "assistant", content, refusal: null }
@@ -124,10 +131,8 @@ function reply(content: string): ChatCompletionMessage {
 test("requires a valid saved handoff before returning a learner reply", async () => {
   const input = job()
   const state = {
-    ...input.topic.learning,
-    outline: ["1. Intuition", "2. Formal limits"],
-    notes: "# Limits\n\nDraft plan.",
-    workpad: "Awaiting confirmation",
+    ...input.chat.learning,
+    workpad: "Proposed a plan for Limits.",
   }
   const { client, requests } = await provider([
     reply("Unsaved plan"),
@@ -136,38 +141,80 @@ test("requires a valid saved handoff before returning a learner reply", async ()
   ])
   const result = await runTutorTurn(input, client, () => {})
   expect(result.learning).toEqual(state)
+  expect(result.topicUpdates).toEqual([])
   expect(requests).toHaveLength(3)
+  expect(requests[0]).toContain(input.topics[0].id)
   expect(requests[1]).toContain("Save the complete learning state")
 })
 
-test("prevents an unconfirmed plan from advancing to teaching", async () => {
+test("prevents a tagged topic's unconfirmed plan from advancing to teaching", async () => {
   const input = job()
+  const topic = input.topics[0]
   const invalid = {
-    ...input.topic.learning,
+    ...topic.learning,
     phase: "ready_to_continue" as const,
     notes: "Taught limits",
     workpad: "Skip confirmation",
   }
   const corrected = {
-    ...input.topic.learning,
+    ...topic.learning,
     outline: ["Limits"],
     workpad: "Wait for confirmation",
   }
   const { client, requests } = await provider([
-    save(invalid),
-    save(corrected),
+    saveTopic(topic.id, invalid),
+    saveTopic(topic.id, corrected),
+    save(input.chat.learning),
     reply("Please confirm this plan."),
   ])
   const result = await runTutorTurn(input, client, () => {})
-  expect(result.learning.phase).toBe("awaiting_plan_confirmation")
+  expect(result.topicUpdates).toEqual([
+    { topicId: topic.id, learning: corrected },
+  ])
   expect(requests[1]).toContain("Wait for the learner to confirm")
+})
+
+test("topic notes must render their directory as a topic-directory element", async () => {
+  const input = job()
+  const topic = input.topics[0]
+  const markdown = {
+    ...topic.learning,
+    outline: ["Limits"],
+    notes: "# Limits\n\n## Topic directory\n\n- 1. Limits",
+    workpad: "Wait for confirmation",
+  }
+  const { client, requests } = await provider([
+    saveTopic(topic.id, markdown),
+    saveTopic(topic.id, { ...markdown, notes: topic.learning.notes }),
+    save(input.chat.learning),
+    reply("Please confirm this plan."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  expect(result.topicUpdates).toEqual([
+    { topicId: topic.id, learning: { ...markdown, notes: topic.learning.notes } },
+  ])
+  expect(requests[0]).toContain("<topic-directory heading=")
+  expect(requests[1]).toContain("one <topic-directory /> element")
+})
+
+test("only tagged topics can be updated", async () => {
+  const input = job()
+  const untagged = newTopic("Integrals")
+  const { client, requests } = await provider([
+    saveTopic(untagged.id, { ...untagged.learning, outline: ["Integrals"] }),
+    save(input.chat.learning),
+    reply("Tag Integrals to plan it."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  expect(result.topicUpdates).toEqual([])
+  expect(requests[1]).toContain("Only tagged topics can be saved")
 })
 
 test("a rejected replacement save cannot publish an older staged state", async () => {
   const input = job()
-  const valid = { ...input.topic.learning, outline: ["Limits"] }
-  const invalid = { ...valid, notes: "" }
-  const corrected = { ...valid, notes: "# Limits\n\nRevised draft plan." }
+  const valid = { ...input.chat.learning, workpad: "Planned limits." }
+  const invalid = { ...valid, workpad: "" }
+  const corrected = { ...valid, workpad: "Revised the limits plan." }
   const { client, requests } = await provider([
     save(valid),
     save(invalid),
@@ -180,20 +227,22 @@ test("a rejected replacement save cannot publish an older staged state", async (
   expect(requests).toHaveLength(5)
 })
 
-test("resumes a pending question and withholds the checked key from visible output", async () => {
+test("resumes a tagged topic's pending question and withholds the checked key from visible output", async () => {
   const input = job()
-  input.topic.planConfirmed = true
+  const topic = input.topics[0]
+  topic.planConfirmed = true
   const state = {
-    ...input.topic.learning,
+    ...topic.learning,
     phase: "awaiting_answer" as const,
     pendingQuestion: "Explain what a limit describes.",
     privateAnswerKey:
       "A limit describes the approached value as the input approaches a point.",
     workpad: "Pending Check; no learner attempt.",
   }
-  input.topic.learning = state
+  topic.learning = state
   const { client, requests } = await provider([
-    save(state),
+    saveTopic(topic.id, state),
+    save(input.chat.learning),
     reply(state.pendingQuestion),
   ])
   const result = await runTutorTurn(input, client, () => {})
@@ -204,9 +253,10 @@ test("resumes a pending question and withholds the checked key from visible outp
 
 test("rejects a pending answer key echoed into the learner reply", async () => {
   const input = job()
-  input.topic.planConfirmed = true
+  const topic = input.topics[0]
+  topic.planConfirmed = true
   const state = {
-    ...input.topic.learning,
+    ...topic.learning,
     phase: "awaiting_answer" as const,
     pendingQuestion: "Explain limits.",
     privateAnswerKey:
@@ -214,7 +264,8 @@ test("rejects a pending answer key echoed into the learner reply", async () => {
     workpad: "Pending",
   }
   const { client } = await provider([
-    save(state),
+    saveTopic(topic.id, state),
+    save(input.chat.learning),
     reply(state.privateAnswerKey),
   ])
   await expect(runTutorTurn(input, client, () => {})).rejects.toThrow(
@@ -234,7 +285,8 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
   const input = job()
   const directory = await mkdtemp(join(tmpdir(), "prune-pdf-"))
   directories.push(directory)
-  input.assetDirectory = directory
+  const topic = input.topics[0]
+  topic.assetDirectory = directory
   await copyFile(
     resolve("tests/fixtures/limits.pdf"),
     join(directory, "limits.pdf"),
@@ -249,7 +301,7 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
     await pdf.loadingTask.destroy()
   }
   const id = randomUUID()
-  input.topic.materials.push({
+  topic.materials.push({
     id,
     name: "limits.pdf",
     kind: "pdf",
@@ -278,7 +330,7 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
   }
   const { client, requests } = await provider([
     read,
-    save(input.topic.learning),
+    save(input.chat.learning),
     reply("Please confirm the plan based on your slides."),
   ])
   await runTutorTurn(input, client, () => {})
@@ -300,7 +352,7 @@ test("OpenRouter title requests use the inexpensive model and bound the request"
   expect(JSON.parse(mock.requests[0])).toMatchObject({
     model: "cheap-title-model",
     max_tokens: 80,
-    messages: [{ role: "system" }, { role: "user", content: "Teach me limits" }],
+    messages: [{ role: "system" }, { role: "user", content: "@Limits Teach me limits" }],
   })
   expect(input.runner.model).toBe("test")
   await expect(generateTopicTitle(original, mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")

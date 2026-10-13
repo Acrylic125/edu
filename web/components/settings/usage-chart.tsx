@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
+import { Button } from "@/components/ui/button"
 import {
   ChartContainer,
   ChartTooltip,
@@ -95,7 +96,9 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
             const isActive = option.value === period
 
             return (
-              <button
+              <Button
+                variant="plain"
+                size="auto"
                 key={option.value}
                 type="button"
                 onClick={() => setPeriod(option.value)}
@@ -107,7 +110,7 @@ export function UsageChart({ usage }: { usage: UsagePayload }) {
                 )}
               >
                 {option.label}
-              </button>
+              </Button>
             )
           })}
         </div>

@@ -58,6 +58,7 @@ export const MessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string().max(200_000),
   createdAt: z.string().datetime(),
+  topicIds: z.array(IdSchema).default([]),
 })
 export const MaterialSchema = z.object({
   id: IdSchema,
@@ -103,18 +104,28 @@ export const TopicSchema = z.object({
   id: IdSchema,
   title: z.string().max(150),
   titleGenerated: z.boolean().default(false),
-  runnerId: IdSchema,
   createdAt: z.string().datetime(),
   planConfirmed: z.boolean(),
-  messages: z.array(MessageSchema),
   materials: z.array(MaterialSchema),
   learning: LearningStateSchema,
 })
+export const ChatSchema = TopicSchema.omit({ planConfirmed: true }).extend({
+  runnerId: IdSchema,
+  messages: z.array(MessageSchema),
+})
 export const WorkspaceSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   runners: z.array(RunnerSchema),
   topics: z.array(TopicSchema),
+  chats: z.array(ChatSchema),
   providerSettings: z.array(ProviderSettingsSchema).default([]),
+})
+// Version 1 stored one conversation per topic; it is migrated into independent chats on load.
+export const LegacyWorkspaceSchema = WorkspaceSchema.omit({ chats: true }).extend({
+  version: z.literal(1),
+  topics: z.array(
+    TopicSchema.extend({ runnerId: IdSchema, messages: z.array(MessageSchema) }),
+  ),
 })
 export const TraceDetailsSchema = z.record(
   z.string(),
@@ -132,7 +143,7 @@ export type Diagnostic = (
 export const RuntimeSchema = z.object({
   runnerId: IdSchema,
   status: z.enum(["stopped", "ready", "running", "error"]),
-  topicId: IdSchema.optional(),
+  chatId: IdSchema.optional(),
   activity: z.string(),
   error: z.string().optional(),
   pid: z.number().optional(),
@@ -153,24 +164,40 @@ export const PublicTopicSchema = TopicSchema.omit({
   }),
   materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
 })
+export const PublicChatSchema = ChatSchema.omit({
+  learning: true,
+  materials: true,
+}).extend({
+  materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
+})
 export const SnapshotSchema = z.object({
   runners: z.array(RunnerSchema),
   topics: z.array(PublicTopicSchema),
+  chats: z.array(PublicChatSchema),
   runtime: z.array(RuntimeSchema),
   connected: z.boolean(),
   providers: z.array(ProviderStatusSchema),
 })
 export const CreateTopicSchema = z.object({
-  runnerId: IdSchema,
   title: z.string().trim().min(1).max(150),
 })
+export const CreateChatSchema = z.object({ runnerId: IdSchema })
 export const SendSchema = z.object({
-  topicId: IdSchema,
+  chatId: IdSchema,
   content: z.string().trim().min(1).max(30_000),
-  action: z.enum(["message", "confirm_plan"]).default("message"),
+  confirmTopicId: IdSchema.optional(),
+})
+export const MaterialOwnerSchema = z.object({
+  kind: z.enum(["topic", "chat"]),
+  id: IdSchema,
+})
+export const TopicUpdateSchema = z.object({
+  topicId: IdSchema,
+  learning: LearningStateSchema,
 })
 export const WorkerJobSchema = z.object({
-  topic: TopicSchema,
+  chat: ChatSchema,
+  topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
   runner: RunnerSchema,
   apiKey: z.string().default(""),
   codex: CodexConnectionSchema.optional(),
@@ -178,7 +205,7 @@ export const WorkerJobSchema = z.object({
   titleModel: ProviderModelSchema.optional(),
   skillDirectory: z.string(),
   assetDirectory: z.string(),
-  action: SendSchema.shape.action,
+  confirmTopicId: IdSchema.optional(),
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
@@ -196,6 +223,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     type: z.literal("result"),
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
+    topicUpdates: z.array(TopicUpdateSchema).default([]),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
@@ -213,6 +241,7 @@ export const Channel = {
   startRunner: "prune:start-runner",
   stopRunner: "prune:stop-runner",
   createTopic: "prune:create-topic",
+  createChat: "prune:create-chat",
   send: "prune:send",
   importMaterials: "prune:import-materials",
   exportNotes: "prune:export-notes",
@@ -223,6 +252,7 @@ export const Channel = {
 export type Snapshot = z.infer<typeof SnapshotSchema>
 export type Workspace = z.infer<typeof WorkspaceSchema>
 export type Topic = z.infer<typeof TopicSchema>
+export type Chat = z.infer<typeof ChatSchema>
 export type LearningState = z.infer<typeof LearningStateSchema>
 export type WorkerJob = z.infer<typeof WorkerJobSchema>
 export type DesktopBridge = {
@@ -244,9 +274,10 @@ export type DesktopBridge = {
   startRunner: (id: string) => Promise<void>
   stopRunner: (id: string) => Promise<void>
   createTopic: (input: z.infer<typeof CreateTopicSchema>) => Promise<string>
-  send: (input: z.input<typeof SendSchema>) => Promise<void>
-  importMaterials: (topicId: string) => Promise<void>
+  createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
+  send: (input: z.infer<typeof SendSchema>) => Promise<void>
+  importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>) => Promise<void>
   exportNotes: (topicId: string) => Promise<void>
-  openDiagnostics: (topicId: string) => Promise<void>
+  openDiagnostics: (chatId: string) => Promise<void>
   openWorkspace: (topicId: string) => Promise<void>
 }

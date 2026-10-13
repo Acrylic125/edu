@@ -11,14 +11,13 @@ import {
 import {
   AlertCircleIcon,
   ArrowUpIcon,
-  ArrowRightIcon,
-  BookOpenIcon,
-  CalculatorIcon,
-  CodeIcon,
   PaperclipIcon,
   SquareIcon,
   XIcon,
 } from "lucide-react"
+
+import { ChatComposerLayout } from "@edu/ui/chat"
+import { LearningSuggestions } from "@edu/ui/learning"
 
 import { useSession } from "@/lib/auth-client"
 import {
@@ -27,7 +26,7 @@ import {
 } from "@/components/chat/composer-attachments"
 import { ComposerHighlightText } from "@/components/chat/composer-highlight-text"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { compressImageForUpload, jpegFilename } from "@/lib/chat/compress-image"
 import {
@@ -53,35 +52,36 @@ import type {
 import { cn } from "@/lib/utils"
 
 type ChatComposerProps = {
-  onSend: (content: string, attachments: ChatMessageAttachment[]) => Promise<void>
+  draft: string
+  onDraftChange: (value: string) => void
+  onSend: (
+    content: string,
+    attachments: ChatMessageAttachment[],
+  ) => Promise<void>
   onStop: () => void
   socket: SocketFact
   run: RunFact
   className?: string
   newTopicMode?: boolean
+  showSuggestions?: boolean
 }
 
-const LEARNING_SUGGESTIONS = [
-  { label: "Learn calculus", description: "Limits, derivatives and integrals", prompt: "Help me learn calculus, starting with limits, derivatives and integrals.", icon: CalculatorIcon, color: "bg-learning-yellow" },
-  { label: "Explore automata", description: "From finite states to languages", prompt: "Help me learn automata and formal languages, starting with finite automata.", icon: CodeIcon, color: "bg-learning-sage" },
-  { label: "Prepare for an exam", description: "Turn your papers into practice", prompt: "Help me prepare for my exam using my slides and past year papers.", icon: BookOpenIcon, color: "bg-learning-blue" },
-]
-
 export function ChatComposer({
+  draft,
+  onDraftChange: setDraft,
   onSend,
   onStop,
   socket,
   run,
   className,
   newTopicMode = false,
+  showSuggestions = newTopicMode,
 }: ChatComposerProps) {
   const session = useSession()
-  const [draft, setDraft] = useState("")
   const [images, setImages] = useState<ComposerImageAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
-  const [expandedImage, setExpandedImage] = useState<ComposerImageAttachment | null>(
-    null
-  )
+  const [expandedImage, setExpandedImage] =
+    useState<ComposerImageAttachment | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -95,7 +95,7 @@ export function ChatComposer({
     run,
     draft,
     images.length > 0,
-    composerImagesReady(images) && !isSubmitting
+    composerImagesReady(images) && !isSubmitting,
   )
   const canSend =
     gate === "send" &&
@@ -103,7 +103,7 @@ export function ChatComposer({
 
   function patchImage(
     imageId: string,
-    patch: Partial<ComposerImageAttachment>
+    patch: Partial<ComposerImageAttachment>,
   ) {
     setImages((current) =>
       current.map((image) => {
@@ -111,7 +111,7 @@ export function ChatComposer({
           return image
         }
         return { ...image, ...patch }
-      })
+      }),
     )
   }
 
@@ -148,10 +148,15 @@ export function ChatComposer({
   async function uploadAttachment(
     image: ComposerImageAttachment,
     token: string,
-    signal: AbortSignal
+    signal: AbortSignal,
   ) {
     if (image.assetId && image.status === "ready" && image.mimeType) {
-      return { id: image.assetId, name: image.name, mimeType: image.mimeType, previewUrl: image.previewUrl }
+      return {
+        id: image.assetId,
+        name: image.name,
+        mimeType: image.mimeType,
+        previewUrl: image.previewUrl,
+      }
     }
     patchImage(image.id, { status: "uploading", progress: 0, error: null })
     let blob: Blob = image.file
@@ -246,7 +251,9 @@ export function ChatComposer({
       const attachments: ChatMessageAttachment[] = []
       if (token) {
         for (const image of snapshot) {
-          attachments.push(await uploadAttachment(image, token, controller.signal))
+          attachments.push(
+            await uploadAttachment(image, token, controller.signal),
+          )
         }
       }
 
@@ -268,7 +275,7 @@ export function ChatComposer({
             return image
           }
           return { ...image, status: "error", error: message }
-        })
+        }),
       )
     } finally {
       if (submitAbortRef.current === controller) {
@@ -293,7 +300,7 @@ export function ChatComposer({
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(event.clipboardData.files)
     const supportedFiles = files.filter(
-      (file) => file.type.startsWith("image/") || isPdfFile(file)
+      (file) => file.type.startsWith("image/") || isPdfFile(file),
     )
     if (supportedFiles.length === 0) {
       return
@@ -316,7 +323,10 @@ export function ChatComposer({
       return
     }
     const nextTarget = event.relatedTarget
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+    if (
+      nextTarget instanceof Node &&
+      event.currentTarget.contains(nextTarget)
+    ) {
       return
     }
     setIsDragOver(false)
@@ -333,158 +343,164 @@ export function ChatComposer({
 
   return (
     <>
-      {newTopicMode ? (
-        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Learning suggestions">
-          {LEARNING_SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion.label}
-              type="button"
-              disabled={isSubmitting || run.status === "running"}
-              className={cn("group relative flex min-h-24 flex-row items-center gap-4 overflow-hidden rounded-[1.75rem] px-5 py-5 text-left text-learning-ink transition-shadow hover:ring-2 hover:ring-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none sm:min-h-44 sm:flex-col sm:items-start sm:gap-5", suggestion.color)}
-              onClick={() => {
-                setDraft(suggestion.prompt)
-                textareaRef.current?.focus()
-              }}
-            >
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-learning-circle"><suggestion.icon className="size-5" aria-hidden="true" /></span>
-              <span>
-                <span className="block text-sm font-semibold">{suggestion.label}</span>
-                <span className="mt-1 block text-xs leading-5 text-learning-subtle">{suggestion.description}</span>
-              </span>
-              <ArrowRightIcon className="ml-auto size-4 shrink-0 text-learning-subtle sm:absolute sm:right-5 sm:top-8" aria-hidden="true" />
-            </button>
-          ))}
-        </div>
+      {showSuggestions ? (
+        <LearningSuggestions
+          disabled={isSubmitting || run.status === "running"}
+          onSelect={(prompt) => {
+            setDraft(prompt)
+            textareaRef.current?.focus()
+          }}
+        />
       ) : null}
-      <form
+      <ChatComposerLayout
+        newTopicMode={newTopicMode}
         onSubmit={handleSubmit}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "relative flex min-h-28 w-full flex-col rounded-[1.5rem] border border-border/70 bg-card shadow-sm",
-          newTopicMode && "min-h-44 rounded-[1.75rem] border-transparent bg-card p-2 shadow-none focus-within:border-ring/50 focus-within:ring-2 focus-within:ring-ring/20",
           isDragOver && "border-primary/60 ring-2 ring-primary/20",
-          className
+          className,
         )}
-      >
-        {isDragOver ? (
-          <div
-            className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/50 bg-primary/5"
-            aria-hidden
-          >
-            <div className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2 text-sm font-medium shadow-lg">
-              <PaperclipIcon className="size-4 text-primary" aria-hidden />
-              Drop images or PDFs to attach
+        overlay={
+          isDragOver ? (
+            <div
+              className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/50 bg-primary/5"
+              aria-hidden
+            >
+              <div className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2 text-sm font-medium shadow-lg">
+                <PaperclipIcon className="size-4 text-primary" aria-hidden />
+                Drop images or PDFs to attach
+              </div>
             </div>
-          </div>
-        ) : null}
-
-        {attachmentError ? (
-          <Alert variant="destructive" className="mx-3 mt-3 border-destructive/30 py-2">
-            <AlertCircleIcon />
-            <AlertDescription className="flex items-start justify-between gap-2">
-              <span>{attachmentError}</span>
+          ) : null
+        }
+        alerts={
+          attachmentError ? (
+            <Alert
+              variant="destructive"
+              className="mx-3 mt-3 border-destructive/30 py-2"
+            >
+              <AlertCircleIcon />
+              <AlertDescription className="flex items-start justify-between gap-2">
+                <span>{attachmentError}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="shrink-0 text-destructive hover:text-destructive"
+                  aria-label="Dismiss error"
+                  onClick={() => {
+                    setAttachmentError(null)
+                  }}
+                >
+                  <XIcon />
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : null
+        }
+        attachments={
+          images.length > 0 ? (
+            <ComposerImageStrip
+              images={images}
+              onRemove={removeImage}
+              onExpand={setExpandedImage}
+              className="px-4 pt-3"
+            />
+          ) : null
+        }
+        input={
+          <>
+            <div
+              ref={mirrorRef}
+              className="pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              aria-hidden
+            >
+              <ComposerHighlightText text={draft} />
+            </div>
+            {draft.length === 0 ? (
+              <div
+                className="pointer-events-none absolute inset-0 px-4 pt-3 pb-2 text-sm leading-relaxed text-muted-foreground"
+                aria-hidden
+              >
+                {newTopicMode
+                  ? "What would you like to learn?"
+                  : "Ask or answer questions"}
+              </div>
+            ) : null}
+            <Textarea
+              ref={textareaRef}
+              aria-label="Message"
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value)
+              }}
+              onScroll={(event) => {
+                if (mirrorRef.current) {
+                  mirrorRef.current.scrollTop = event.currentTarget.scrollTop
+                }
+              }}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder=""
+              rows={1}
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              className={cn(
+                "min-h-16 max-h-40 w-full flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-4 pt-3 pb-2 text-sm leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
+                newTopicMode && "min-h-28",
+                "relative text-transparent caret-foreground selection:bg-primary/25",
+              )}
+            />
+          </>
+        }
+        toolbar={
+          <>
+            <div className="flex min-w-0 items-center gap-1">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/gif,image/jpeg,image/png,image/webp,application/pdf"
+                multiple
+                className="sr-only"
+                tabIndex={-1}
+                onChange={(event) => {
+                  addImageFiles(Array.from(event.target.files ?? []))
+                  event.target.value = ""
+                }}
+              />
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-xs"
-                className="shrink-0 text-destructive hover:text-destructive"
-                aria-label="Dismiss error"
+                size="icon-sm"
+                className={
+                  newTopicMode
+                    ? "size-10 rounded-full bg-muted"
+                    : "rounded-full"
+                }
+                aria-label="Attach files"
+                disabled={
+                  isSubmitting ||
+                  images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+                }
                 onClick={() => {
-                  setAttachmentError(null)
+                  fileInputRef.current?.click()
                 }}
               >
-                <XIcon />
+                <PaperclipIcon />
               </Button>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {images.length > 0 ? (
-          <ComposerImageStrip
-            images={images}
-            onRemove={removeImage}
-            onExpand={setExpandedImage}
-            className="px-4 pt-3"
-          />
-        ) : null}
-
-        <div className="relative min-h-16 flex-1">
-          <div ref={mirrorRef} className="pointer-events-none absolute inset-0 max-h-40 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words px-4 pt-3 pb-2 text-sm leading-relaxed text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-hidden>
-            <ComposerHighlightText text={draft} />
-          </div>
-          {draft.length === 0 ? (
-            <div
-              className="pointer-events-none absolute inset-0 px-4 pt-3 pb-2 text-sm leading-relaxed text-muted-foreground"
-              aria-hidden
-            >
-              {newTopicMode
-                ? "What would you like to learn?"
-                : "Ask or answer questions"}
             </div>
-          ) : null}
-          <Textarea
-            ref={textareaRef}
-            aria-label="Message"
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value)
-            }}
-            onScroll={(event) => {
-              if (mirrorRef.current) {
-                mirrorRef.current.scrollTop = event.currentTarget.scrollTop
-              }
-            }}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder=""
-            rows={1}
-            spellCheck={false}
-            autoCorrect="off"
-            autoCapitalize="off"
-            className={cn(
-              "min-h-16 max-h-40 w-full flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-4 pt-3 pb-2 text-sm leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
-              newTopicMode && "min-h-28",
-              "relative text-transparent caret-foreground selection:bg-primary/25"
-            )}
-          />
-        </div>
 
-        <div className="flex items-center justify-between gap-2 px-3 pb-3">
-          <div className="flex min-w-0 items-center gap-1">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/gif,image/jpeg,image/png,image/webp,application/pdf"
-              multiple
-              className="sr-only"
-              tabIndex={-1}
-              onChange={(event) => {
-                addImageFiles(Array.from(event.target.files ?? []))
-                event.target.value = ""
-              }}
+            <ComposerActionButton
+              gate={gate}
+              canSend={canSend}
+              onStop={onStop}
             />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              className={newTopicMode ? "size-10 rounded-full bg-muted" : "rounded-full"}
-              aria-label="Attach files"
-              disabled={
-                isSubmitting || images.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
-              }
-              onClick={() => {
-                fileInputRef.current?.click()
-              }}
-            >
-              <PaperclipIcon />
-            </Button>
-          </div>
-
-          <ComposerActionButton gate={gate} canSend={canSend} onStop={onStop} />
-        </div>
-      </form>
+          </>
+        }
+      />
 
       <ImagePreviewDialog
         open={expandedImage !== null}
@@ -528,17 +544,17 @@ function ComposerActionButton({
   }
 
   return (
-    <button
+    <Button
+      size="icon-sm"
       type="submit"
       aria-label="Send"
       {...(!canSend ? { "aria-disabled": true as const, tabIndex: -1 } : {})}
       className={cn(
-        buttonVariants({ size: "icon-sm" }),
         "size-10 rounded-full",
-        !canSend && "pointer-events-none opacity-50"
+        !canSend && "pointer-events-none opacity-50",
       )}
     >
       <ArrowUpIcon />
-    </button>
+    </Button>
   )
 }

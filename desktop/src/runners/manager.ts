@@ -9,6 +9,7 @@ import {
   type RunnerSchema,
   type WorkerJob,
 } from "../shared/contracts"
+import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions"
 import { WorkspaceRepository } from "../main/workspace"
 import { TurnTrace } from "./trace"
 
@@ -19,7 +20,7 @@ export class RunnerManager {
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private locks = new Set<string>()
   private committing = new Set<string>()
-  private traces = new Map<string, { topicId: string; trace: TurnTrace }>()
+  private traces = new Map<string, { chatId: string; trace: TurnTrace }>()
 
   constructor(
     private repository: WorkspaceRepository,
@@ -42,7 +43,7 @@ export class RunnerManager {
       if (!diagnostic) return runtime
       return {
         ...runtime,
-        topicId: diagnostic.topicId,
+        chatId: diagnostic.chatId,
         traceId: diagnostic.trace.id,
         diagnostics: diagnostic.trace.entries,
       }
@@ -128,8 +129,8 @@ export class RunnerManager {
   }
 
   async send(input: z.infer<typeof SendSchema>) {
-    const topic = this.repository.topic(input.topicId)
-    const id = topic.runnerId
+    const chat = this.repository.chat(input.chatId)
+    const id = chat.runnerId
     if (this.runtime.get(id)?.status === "running" || this.locks.has(id))
       throw new Error(
         "This runner is already working. Use another runner or wait for it to finish.",
@@ -141,35 +142,48 @@ export class RunnerManager {
       )
       if (!runner) throw new Error("Runner not found.")
       const connection = await this.getConnection(runner)
-      if (
-        input.action === "confirm_plan" &&
-        (topic.planConfirmed || !topic.learning.outline.length)
-      )
-        throw new Error("There is no draft plan to confirm.")
+      const topicIds = [
+        ...new Set(parseTopicMentions(input.content).map((mention) => mention.id)),
+      ]
+      for (const topicId of topicIds) this.repository.topic(topicId)
+      if (input.confirmTopicId) {
+        const topic = this.repository.topic(input.confirmTopicId)
+        if (topic.planConfirmed || !topic.learning.outline.length)
+          throw new Error("There is no draft plan to confirm.")
+        if (!topicIds.includes(topic.id)) topicIds.push(topic.id)
+      }
       this.start(id)
       const trace = new TurnTrace(
-        join(this.repository.directory, "topics", topic.id, "diagnostics"),
+        join(this.repository.directory, "chats", chat.id, "diagnostics"),
       )
-      this.traces.set(id, { topicId: topic.id, trace })
+      this.traces.set(id, { chatId: chat.id, trace })
       trace.record("harness.start", {
         traceId: trace.id,
-        topicId: topic.id,
+        chatId: chat.id,
         runnerId: id,
         provider: runner.provider,
         model: runner.model,
         effort: runner.reasoningEffort ?? null,
-        action: input.action,
+        taggedTopics: topicIds.length,
+        confirmPlan: !!input.confirmTopicId,
       })
       await trace.flush()
       await this.repository.mutate((workspace) => {
-        const current = workspace.topics.find((item) => item.id === topic.id)
-        if (!current) throw new Error("Topic not found.")
-        if (input.action === "confirm_plan") current.planConfirmed = true
+        const current = workspace.chats.find((item) => item.id === chat.id)
+        if (!current) throw new Error("Chat not found.")
+        // CLI providers skip title generation, so the first request names the chat until a title is generated.
+        if (!current.titleGenerated && current.messages.length === 0)
+          current.title = stripTopicMentions(input.content).slice(0, 80)
+        const confirmed = workspace.topics.find(
+          (item) => item.id === input.confirmTopicId,
+        )
+        if (confirmed) confirmed.planConfirmed = true
         current.messages.push({
           id: randomUUID(),
           role: "user",
           content: input.content,
           createdAt: new Date().toISOString(),
+          topicIds,
         })
       })
       const child = this.processes.get(id)
@@ -177,7 +191,7 @@ export class RunnerManager {
       this.runtime.set(id, {
         runnerId: id,
         status: "running",
-        topicId: topic.id,
+        chatId: chat.id,
         activity: "Preparing your lesson",
         pid: child.pid,
       })
@@ -192,22 +206,35 @@ export class RunnerManager {
         }, 5 * 60_000),
       )
       child.postMessage({
-        topic: this.repository.topic(topic.id),
+        chat: this.repository.chat(chat.id),
+        topics: this.contextTopics(chat.id).map((topic) => ({
+          ...topic,
+          assetDirectory: join(this.repository.directory, "topics", topic.id, "assets"),
+        })),
         runner,
         ...connection,
         skillDirectory: this.skillDirectory,
-        assetDirectory: join(
-          this.repository.directory,
-          "topics",
-          topic.id,
-          "assets",
-        ),
-        action: input.action,
+        assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
+        confirmTopicId: input.confirmTopicId,
       })
       this.notify()
     } finally {
       this.locks.delete(id)
     }
+  }
+
+  // Tags persist for the whole chat; the most recently tagged topics stay in context within the prompt budget.
+  private contextTopics(chatId: string) {
+    const { chats, topics } = this.repository.stateSnapshot
+    const ids = [
+      ...new Set(
+        chats
+          .find((chat) => chat.id === chatId)
+          ?.messages.flatMap((message) => message.topicIds)
+          .reverse(),
+      ),
+    ].slice(0, 8)
+    return topics.filter((topic) => ids.includes(topic.id))
   }
 
   private async handleEvent(
@@ -223,7 +250,8 @@ export class RunnerManager {
       return
     }
     const runtime = this.runtime.get(id)
-    if (!runtime || runtime.status !== "running" || !runtime.topicId) return
+    if (!runtime || runtime.status !== "running" || !runtime.chatId) return
+    const chatId = runtime.chatId
     const trace = this.traces.get(id)?.trace
     if (event.type === "trace") {
       trace?.record(event.event, event.details)
@@ -236,13 +264,19 @@ export class RunnerManager {
       return
     }
     if (event.type === "title") {
-      const topicId = runtime.topicId
       await this.repository.mutate((workspace) => {
-        const topic = workspace.topics.find((item) => item.id === topicId)
-        if (!topic || topic.titleGenerated) return
-        topic.learning.notes = topic.learning.notes.replace(`# ${topic.title}\n`, `# ${event.title}\n`)
-        topic.title = event.title
-        topic.titleGenerated = true
+        const chat = workspace.chats.find((item) => item.id === chatId)
+        if (!chat || chat.titleGenerated) return
+        chat.title = event.title
+        chat.titleGenerated = true
+        // A topic started from the new-topic composer is still named after the raw request.
+        const tagged = chat.messages[0]?.topicIds ?? []
+        for (const topic of workspace.topics) {
+          if (!tagged.includes(topic.id) || topic.titleGenerated) continue
+          topic.learning.notes = topic.learning.notes.replace(`# ${topic.title}\n`, `# ${event.title}\n`)
+          topic.title = event.title
+          topic.titleGenerated = true
+        }
       })
       this.notify()
       return
@@ -254,30 +288,39 @@ export class RunnerManager {
     }
     this.committing.add(id)
     try {
-      const topicId = runtime.topicId
       trace?.record("harness.commit_started", {
         replyCharacters: event.reply.length,
         phase: event.learning.phase,
+        topicUpdates: event.topicUpdates.length,
       })
+      const context = this.contextTopics(chatId).map((topic) => topic.id)
+      const updates = event.topicUpdates.filter((update) =>
+        context.includes(update.topicId),
+      )
       await this.repository.mutate((workspace) => {
-        const topic = workspace.topics.find((item) => item.id === topicId)
-        if (!topic) throw new Error("Topic not found.")
-        topic.learning = event.learning
-        topic.messages.push({
+        const chat = workspace.chats.find((item) => item.id === chatId)
+        if (!chat) throw new Error("Chat not found.")
+        chat.learning = event.learning
+        chat.messages.push({
           id: randomUUID(),
           role: "assistant",
           content: event.reply,
           createdAt: new Date().toISOString(),
+          topicIds: [],
         })
+        for (const update of updates) {
+          const topic = workspace.topics.find((item) => item.id === update.topicId)
+          if (topic) topic.learning = update.learning
+        }
       })
       // JSON is the authoritative transaction; markdown mirrors can be rebuilt without losing the lesson.
-      await this.repository
-        .mirrorHandoff(this.repository.topic(topicId))
-        .catch(() => {})
+      for (const update of updates)
+        await this.repository
+          .mirrorHandoff(this.repository.topic(update.topicId))
+          .catch(() => {})
       trace?.record("harness.committed", {
-        topicId,
-        notesCharacters: event.learning.notes.length,
-        outlineSections: event.learning.outline.length,
+        chatId,
+        topicsUpdated: updates.length,
       })
       await trace?.flush()
       this.runtime.set(id, {

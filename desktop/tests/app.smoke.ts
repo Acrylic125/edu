@@ -40,7 +40,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
       page.getByRole("button", { name: /Learn calculus/ }),
     ).toHaveCSS("background-color", "rgb(246, 231, 175)")
     await page.getByRole("button", { name: /Learn calculus/ }).click()
-    await expect(page.getByLabel("Message your tutor")).toHaveValue(
+    await expect(page.getByLabel("Message your tutor")).toHaveText(
       "Help me learn calculus, starting with limits, derivatives and integrals.",
     )
     await expect(page.getByLabel("Message your tutor")).toBeFocused()
@@ -99,7 +99,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.getByRole("combobox", { name: "Search models" }).fill("openrouter/auto")
     await page.getByRole("option", { name: "Auto", exact: true }).click()
     await expect(modelTrigger).toHaveText(/Auto/)
-    await expect(page.getByRole("listbox")).not.toBeVisible()
+    await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
     await modelTrigger.click()
     await page.getByRole("button", { name: "My ChatGPT", exact: true }).click()
     await page
@@ -119,7 +119,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
       .press("ArrowDown")
     await page.getByRole("combobox", { name: "Search models" }).press("Enter")
     await expect(modelTrigger).toHaveText(codexModel.name)
-    await expect(page.getByRole("listbox")).not.toBeVisible()
+    await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
     await page.getByRole("button", { name: "Choose reasoning effort" }).click()
     await page
       .getByRole("menuitemradio", {
@@ -149,7 +149,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page
       .getByRole("heading", { name: /What will you.*learn today\?/ })
       .click()
-    await expect(page.getByRole("listbox")).not.toBeVisible()
+    await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
     await modelTrigger.click()
     await page.getByRole("button", { name: /More models/ }).click()
     await page
@@ -187,7 +187,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
         filePaths: [source],
       })
     }, resolve("tests/fixtures/limits.pdf"))
-    await page.getByRole("button", { name: "Add learning materials" }).click()
+    await page.getByRole("button", { name: "Add sources to this topic" }).click()
     await expect(page.getByText("limits.pdf", { exact: true })).toBeVisible()
     await app.close()
     app = await launch()
@@ -222,7 +222,8 @@ test("native sandboxed app manages runners and restores topics across restarts",
     const topic = snapshot?.topics.find(
       (topic) => topic.title === "Teach me calculus",
     )
-    if (!snapshot || !topic) throw new Error("Missing restored topic")
+    const chat = snapshot?.chats[0]
+    if (!snapshot || !topic || !chat) throw new Error("Missing restored topic or chat")
     await expect(page.getByRole("navigation", { name: "Your topics" }).locator("svg")).toHaveCount(0)
 
     await page.setViewportSize({ width: 390, height: 844 })
@@ -238,12 +239,39 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.getByRole("button", { name: "Open chat", exact: true }).click()
     const tutorChat = page.getByRole("complementary", { name: "Tutor chat" })
     await expect(tutorChat).toBeVisible()
-    await expect(tutorChat.getByLabel("Message your tutor")).toBeVisible()
+    await expect(tutorChat.getByLabel("Message this chat")).toBeVisible()
     await tutorChat
       .getByRole("button", { name: "Close chat", exact: true })
       .click()
     await expect(tutorChat).not.toBeVisible()
     await page.setViewportSize({ width: 1280, height: 800 })
+    await expect(tutorChat).toBeVisible()
+
+    const topicPane = page.locator("[data-document-pane]")
+    const editor = tutorChat.getByLabel("Message this chat")
+    const draft = await editor.innerText()
+    await page.getByRole("button", { name: "Collapse chat panel", exact: true }).click()
+    await expect(tutorChat).not.toBeVisible()
+    await expect(topicPane).toBeVisible()
+    await page.getByRole("button", { name: "Expand chat panel", exact: true }).click()
+    await expect(editor).toBeVisible()
+    await expect(editor).toHaveText(draft)
+    const splitWidth = (await tutorChat.boundingBox())?.width ?? 0
+    await page.getByRole("button", { name: "Collapse topic panel", exact: true }).click()
+    await expect(topicPane).not.toBeVisible()
+    expect((await tutorChat.boundingBox())?.width).toBeGreaterThan(splitWidth)
+    await page.getByRole("button", { name: "Collapse chat panel", exact: true }).click()
+    await expect(topicPane).toBeVisible()
+    await expect(tutorChat).not.toBeVisible()
+    await page.getByRole("button", { name: "Expand chat panel", exact: true }).click()
+    await page.getByRole("button", { name: "Collapse topics", exact: true }).click()
+    await expect(navigation).not.toBeVisible()
+    await page.getByRole("button", { name: "Expand topics", exact: true }).click()
+    await expect(navigation).toBeVisible()
+    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await expect(tutorChat).not.toBeVisible()
+    await expect(page.getByRole("textbox")).toHaveCount(1)
+    await page.getByRole("button", { name: topic.title, exact: true }).click()
     await expect(tutorChat).toBeVisible()
 
     await expect(
@@ -262,9 +290,16 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect
       .poll(() => app.evaluate(() => process.env.PRUNE_TEST_OPENED_WORKSPACE))
       .toBe(join(directory, "workspace", "topics", topic.id))
+    await tutorChat.getByRole("tab", { name: chat.title, exact: true }).first().click()
+    await page.getByLabel("Message this chat").pressSequentially("Compare with @Teach")
+    await page.screenshot({ path: "test-results/topic-mentions.png" })
+    await page.getByRole("option", { name: topic.title }).click()
+    await expect(
+      page.getByLabel("Message this chat").getByText(`@${topic.title}`),
+    ).toBeVisible()
     const runtime = {
-      runnerId: topic.runnerId,
-      topicId: topic.id,
+      runnerId: chat.runnerId,
+      chatId: chat.id,
       status: "error" as const,
       activity: "Needs attention",
       error: "Test save failure",
@@ -329,18 +364,18 @@ test("native Claude and Antigravity providers save settings and commit validated
     }
     await page.screenshot({ path: "test-results/provider-editor.png" })
     for (const provider of ["claude", "antigravity"] as const) {
-      const topicId = await page.evaluate(async (provider) => {
+      const chatId = await page.evaluate(async (provider) => {
         const bridge = window.prune
         if (!bridge) throw new Error("Missing native bridge")
         const runnerId = await bridge.addRunner({ name: `${provider} tutor`, provider, model: "default" })
-        const topicId = await bridge.createTopic({ runnerId, title: `${provider} lesson` })
-        await bridge.send({ topicId, content: "Teach me limits" })
-        return topicId
+        const chatId = await bridge.createChat({ runnerId })
+        await bridge.send({ chatId, content: "Teach me limits" })
+        return chatId
       }, provider)
       await expect.poll(async () => page.evaluate(async (id) => {
         const snapshot = await window.prune?.snapshot()
-        return snapshot?.topics.find((topic) => topic.id === id)?.messages.at(-1)?.role
-      }, topicId)).toBe("assistant")
+        return snapshot?.chats.find((chat) => chat.id === id)?.messages.at(-1)?.role
+      }, chatId)).toBe("assistant")
     }
     await app.close()
     app = await launch()
@@ -355,7 +390,7 @@ test("native Claude and Antigravity providers save settings and commit validated
     await page.getByRole("button", { name: "Disconnect", exact: true }).click()
     await expect(page.getByRole("button", { name: "Check connection", exact: true })).toBeVisible()
     const snapshot = await page.evaluate(async () => window.prune?.snapshot())
-    expect(snapshot?.topics.filter((topic) => topic.messages.at(-1)?.role === "assistant")).toHaveLength(2)
+    expect(snapshot?.chats.filter((chat) => chat.messages.at(-1)?.role === "assistant")).toHaveLength(2)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

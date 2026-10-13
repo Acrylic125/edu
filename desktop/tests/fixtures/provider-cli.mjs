@@ -20,7 +20,7 @@ if (args[0] === "auth") {
       action = { reply: "", calls: [{ name: "save_learning_state", arguments: JSON.stringify({
         phase: "awaiting_plan_confirmation", outline: ["Limits"], currentSection: "",
         pendingQuestion: "", privateAnswerKey: "", nextAction: "Wait for confirmation",
-        notes: results.length === 1 ? "" : "# Limits\n\nA proposed learning plan.", workpad: "Plan is awaiting confirmation.",
+        notes: "# Limits\n\nA proposed learning plan.", workpad: results.length === 1 ? "" : "Plan is awaiting confirmation.",
       }) }] }
     } else action = { reply: "Here is your learning plan. Confirm it to begin.", calls: [] }
   }

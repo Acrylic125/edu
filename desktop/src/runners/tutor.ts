@@ -15,6 +15,10 @@ import {
   type LearningState,
   type Diagnostic,
 } from "../shared/contracts"
+import {
+  topicDirectoryFormat,
+  validateTopicDirectory,
+} from "../shared/topic-directory"
 
 export const skillFiles = [
   "references/FILE_STRUCTURE.md",
@@ -30,6 +34,17 @@ export const skillFiles = [
   "assets/BEHAVIOUR_TEMPLATE.md",
 ] as const
 
+const ReadMaterialSchema = z.object({
+  id: z.string().uuid(),
+  firstPage: z.number().int().min(1),
+  lastPage: z.number().int().min(1),
+  includeVisuals: z.boolean().default(false),
+})
+const SaveTopicSchema = z.object({
+  topicId: z.string().uuid(),
+  learning: LearningStateSchema,
+})
+
 const tools: ChatCompletionTool[] = [
   {
     type: "function",
@@ -44,15 +59,17 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "read_material",
       description:
-        "Read a supplied source. Pages are 1-based. Set includeVisuals=true for slides, diagrams, scanned PDFs, or image sources; images are provided after the tool results. Read up to 15 text pages or 3 visual pages at a time. Embed discussed source images using the returned prune-source URL.",
-      parameters: z.toJSONSchema(
-        z.object({
-          id: z.string().uuid(),
-          firstPage: z.number().int().min(1),
-          lastPage: z.number().int().min(1),
-          includeVisuals: z.boolean().default(false),
-        }),
-      ),
+        "Read a chat or tagged-topic source. Pages are 1-based. Set includeVisuals=true for slides, diagrams, scanned PDFs, or image sources; images are provided after the tool results. Read up to 15 text pages or 3 visual pages at a time. Embed discussed source images using the returned prune-source URL.",
+      parameters: z.toJSONSchema(ReadMaterialSchema),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_topic_state",
+      description:
+        "Stage complete study notes and a private handoff for one tagged topic. Call it for each tagged topic you planned, taught, or assessed this turn. Keep checked keys only in privateAnswerKey/workpad. Preserve prior questions and actual answers.",
+      parameters: z.toJSONSchema(SaveTopicSchema),
     },
   },
   {
@@ -60,7 +77,7 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "save_learning_state",
       description:
-        "Stage complete study notes and a private handoff. Required on every turn before your final reply. Keep checked keys only in privateAnswerKey/workpad. Preserve prior questions and actual answers.",
+        "Stage this chat's private handoff. Required on every turn before your final reply. Record a pending cross-topic question here; keep checked keys only in privateAnswerKey/workpad.",
       parameters: z.toJSONSchema(LearningStateSchema),
     },
   },
@@ -77,13 +94,38 @@ export async function createTutorSession(
         `${file}\n${await readFile(join(job.skillDirectory, file), "utf8")}`,
     ),
   )
+  const describe = (materials: WorkerJob["chat"]["materials"]) =>
+    materials.map((material) => ({
+      id: material.id,
+      name: material.name,
+      kind: material.kind,
+      pageCount: material.pages.length || 1,
+    }))
   const instructions = `${guide}\n\n${references.join("\n\n")}\n\nDesktop harness contract:
 Follow the bundled skill. Use read_skill for its additional references. This harness supplies source reads and verified persistence instead of Python scripts or shell commands. No external tools, search, or delegation are available; never pretend to use them. For Tests, inspect supplied assets first, then author and clearly label a question when no asset fits; online search is unavailable.
-The learner must use the Confirm plan action before teaching a new topic. Plan confirmed: ${job.topic.planConfirmed}. Action on this turn: ${job.action}. If false, propose or revise the draft outline and remain awaiting_plan_confirmation; do not begin lessons or questions. Do not infer confirmation from a thread change or a generic message.
-Read supplied materials to establish the actual outline before proposing a plan. Explain lecture material before checking it. Use the saved current question and checked key; resume them before moving forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
-Call save_learning_state before the final reply, then deliver the explanation/question/choice in that reply. Saving alone is not a lesson. Full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned. Workpad is private. The reply is learner-visible.
-Supplied materials: ${JSON.stringify(job.topic.materials.map((material) => ({ id: material.id, name: material.name, kind: material.kind, pageCount: material.pages.length || 1 })))}
-Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
+This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); every topic tagged in this chat is listed below with its study notes and private handoff. Without a tagged topic, answer directly and suggest tagging a topic for structured study.
+A tagged topic with planConfirmed=false needs an approved plan before lessons: read its materials, propose or revise its outline with save_topic_state, keep it awaiting_plan_confirmation, and do not teach or question it. Only the Confirm plan action approves a plan; do not infer approval from a message. Plan approved on this turn: ${job.confirmTopicId ?? "none"}.
+Explain lecture material before checking it. Resume a topic's saved question and checked key before moving it forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
+Call save_topic_state for each tagged topic you planned, taught, or assessed. Full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned.
+In topic notes, replace the template's "## Topic directory" heading and bullet list with exactly one <topic-directory /> element in the same position. heading is the section heading text. items is single-quoted JSON following the directory rules: title is the source section number and title; anchor is the in-document anchor id, set only when that part's notes exist; sources are its compact source links; children are its subparts in source order. Write any apostrophe inside items as \\u0027. Example:
+${topicDirectoryFormat}
+Call save_learning_state with this chat's private handoff before the final reply, then deliver the explanation/question/choice in that reply. Saving alone is not a lesson. Workpads are private. The reply is learner-visible.
+Chat materials: ${JSON.stringify(describe(job.chat.materials))}
+Chat handoff: ${JSON.stringify(job.chat.learning)}
+Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), learning: topic.learning })))}`
+  const sources = [
+    ...job.chat.materials.map((material) => ({
+      material,
+      directory: job.assetDirectory,
+    })),
+    ...job.topics.flatMap((topic) =>
+      topic.materials.map((material) => ({
+        material,
+        directory: topic.assetDirectory,
+      })),
+    ),
+  ]
+  const topicUpdates = new Map<string, LearningState>()
   let saved: LearningState | undefined
   let saveError: string | undefined
   return {
@@ -102,16 +144,11 @@ Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
           activity("Reading tutoring guidance")
           result = await readFile(join(job.skillDirectory, path), "utf8")
         } else if (name === "read_material") {
-          const { id, firstPage, lastPage, includeVisuals } = z
-            .object({
-              id: z.string().uuid(),
-              firstPage: z.number().int().min(1),
-              lastPage: z.number().int().min(1),
-              includeVisuals: z.boolean().default(false),
-            })
-            .parse(input)
-          const material = job.topic.materials.find((item) => item.id === id)
-          if (!material) throw new Error("Material not found.")
+          const { id, firstPage, lastPage, includeVisuals } =
+            ReadMaterialSchema.parse(input)
+          const entry = sources.find((item) => item.material.id === id)
+          if (!entry) throw new Error("Material not found.")
+          const { material, directory } = entry
           if (lastPage < firstPage || lastPage - firstPage >= 15)
             throw new Error("Read 1–15 pages at a time.")
           activity(`Reading ${material.name}`)
@@ -130,9 +167,7 @@ Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
           ) {
             if (lastPage - firstPage >= 3)
               throw new Error("Read at most 3 visual pages at a time.")
-            const bytes = await readFile(
-              join(job.assetDirectory, material.name),
-            )
+            const bytes = await readFile(join(directory, material.name))
             const pdf =
               material.kind === "pdf"
                 ? await getDocumentProxy(new Uint8Array(bytes))
@@ -163,7 +198,7 @@ Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
                   png = canvas.toBuffer("image/png")
                 }
                 await writeFile(
-                  join(job.assetDirectory, `source-${id}-${page}.png`),
+                  join(directory, `source-${id}-${page}.png`),
                   png,
                   { mode: 0o600 },
                 )
@@ -186,36 +221,49 @@ Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
               await pdf?.loadingTask.destroy()
             }
           }
-        } else if (name === "save_learning_state") {
-          saved = undefined
-          const candidate = LearningStateSchema.parse(input)
+        } else if (name === "save_topic_state") {
+          const { topicId, learning } = SaveTopicSchema.parse(input)
+          const topic = job.topics.find((item) => item.id === topicId)
+          if (!topic) throw new Error("Only tagged topics can be saved.")
           if (
-            !job.topic.planConfirmed &&
-            candidate.phase !== "awaiting_plan_confirmation"
+            !topic.planConfirmed &&
+            learning.phase !== "awaiting_plan_confirmation"
           )
             throw new Error(
               "Wait for the learner to confirm the proposed plan.",
             )
           if (
-            !candidate.notes.trim() ||
-            !candidate.workpad.trim() ||
-            !candidate.nextAction.trim()
+            !learning.notes.trim() ||
+            !learning.workpad.trim() ||
+            !learning.nextAction.trim()
           )
             throw new Error(
               "Notes, a private handoff, and a concrete next action are required.",
             )
+          validateTopicDirectory(learning.notes)
+          topicUpdates.set(topicId, learning)
+          activity(`Saving ${topic.title} notes`)
+          result = `Study notes for ${topic.title} staged. Save the chat handoff with save_learning_state before the final reply.`
+        } else if (name === "save_learning_state") {
+          saved = undefined
+          const candidate = LearningStateSchema.parse(input)
+          if (!candidate.workpad.trim() || !candidate.nextAction.trim())
+            throw new Error(
+              "A private handoff and a concrete next action are required.",
+            )
           saved = candidate
           saveError = undefined
-          activity("Saving study notes")
+          activity("Saving the chat handoff")
           result =
-            "Learning state staged. Provide the learner-facing lesson/question/choice now. The harness will atomically save and verify it before displaying your reply."
+            "Chat handoff staged. Provide the learner-facing lesson/question/choice now. The harness will atomically save and verify it before displaying your reply."
         } else {
           throw new Error("This tool is not available.")
         }
       } catch (error) {
         success = false
         result = `Tool error: ${error instanceof Error ? error.message : "Invalid tool arguments."}`
-        if (name === "save_learning_state") saveError = result
+        if (name === "save_learning_state" || name === "save_topic_state")
+          saveError = result
       }
       return { text: result, images: sourceImages, success }
     },
@@ -233,17 +281,28 @@ Saved handoff and study notes: ${JSON.stringify(job.topic.learning)}`
         )
       if (!reply.trim())
         throw new Error("The runner returned no lesson. Retry this turn.")
-      const pendingKey = saved.privateAnswerKey.trim()
-      if (
-        saved.phase === "awaiting_answer" &&
-        pendingKey.length > 20 &&
-        (reply.includes(pendingKey) || saved.notes.includes(pendingKey))
-      ) {
-        throw new Error(
-          "The runner included a private assessment key in the lesson. Retry with a different runner.",
+      const states = [saved, ...topicUpdates.values()]
+      for (const state of states) {
+        const pendingKey = state.privateAnswerKey.trim()
+        if (
+          state.phase === "awaiting_answer" &&
+          pendingKey.length > 20 &&
+          states.some(
+            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey),
+          )
         )
+          throw new Error(
+            "The runner included a private assessment key in the lesson. Retry with a different runner.",
+          )
       }
-      return { reply, learning: saved }
+      return {
+        reply,
+        learning: saved,
+        topicUpdates: [...topicUpdates].map(([topicId, learning]) => ({
+          topicId,
+          learning,
+        })),
+      }
     },
   }
 }
@@ -257,7 +316,7 @@ export async function runTutorTurn(
   const session = await createTutorSession(job, activity)
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: session.instructions },
-    ...job.topic.messages
+    ...job.chat.messages
       .slice(-30)
       .map((message) => ({ role: message.role, content: message.content })),
   ]

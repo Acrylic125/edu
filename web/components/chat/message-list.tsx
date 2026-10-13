@@ -1,5 +1,7 @@
 "use client"
 
+import { ChatConversation, ChatMessage as ChatMessageView } from "@edu/ui/chat"
+
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { memo, useEffect, useRef, useState } from "react"
@@ -163,12 +165,9 @@ const MessageRow = memo(function MessageRow({
     case "user": {
       const text = textFromParts(message.parts)
       return (
-        <div data-message-role="user" aria-label="Your message" className="group flex flex-col items-end py-3">
-          <div className="max-w-[90%] min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-secondary-foreground [overflow-wrap:anywhere]">
-            <UserMessage text={text} attachments={attachments} onExpandImage={onExpandImage} />
-          </div>
-          <div className="mt-1 flex justify-end"><CopyMessageButton text={text} /></div>
-        </div>
+        <ChatMessageView role="user" actions={<CopyMessageButton text={text} />}>
+          <UserMessage text={text} attachments={attachments} onExpandImage={onExpandImage} />
+        </ChatMessageView>
       )
     }
     case "assistant": {
@@ -177,8 +176,7 @@ const MessageRow = memo(function MessageRow({
       const progress = message.progress ?? []
       const hasPlan = message.parts.some((part) => part.type === "plan")
       return (
-        <div data-message-role="assistant" aria-label="Prune's message" className="group py-4">
-          <p className="mb-3 text-xs font-medium text-muted-foreground">Prune</p>
+        <ChatMessageView role="assistant">
           <div className="flex w-full min-w-0 flex-col gap-3 text-sm leading-relaxed">
             {progress.length > 0 && message.status === "streaming" ? (
               <ThinkingStatus steps={progress} />
@@ -215,7 +213,7 @@ const MessageRow = memo(function MessageRow({
           <div className="mt-1 flex items-center gap-1">
             <CopyMessageButton text={textFromParts(message.parts)} />
           </div>
-        </div>
+        </ChatMessageView>
       )
     }
     default: {
@@ -438,7 +436,7 @@ export function MessageList({
 
   return (
     <>
-      <div ref={scrollRef} className="h-full min-h-0 overflow-y-auto px-5 pt-4 pb-60" onScroll={(event) => {
+      <ChatConversation ref={scrollRef} onScroll={(event) => {
         const element = event.currentTarget
         atBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120
       }}>
@@ -462,7 +460,7 @@ export function MessageList({
             </div>
           })}
         </div>
-      </div>
+      </ChatConversation>
       <ImagePreviewDialog
         open={expandedImage !== null}
         onOpenChange={(open) => {

@@ -16,7 +16,7 @@ import { CodexProvider, readCodexModels } from "../src/providers/codex"
 import { runCodexTutorTurn } from "../src/runners/codex"
 import { generateTopicTitle } from "../src/runners/title"
 import { createTutorSession } from "../src/runners/tutor"
-import { newTopic } from "../src/main/workspace"
+import { newChat } from "../src/main/workspace"
 import { WorkerJobSchema, WorkspaceSchema } from "../src/shared/contracts"
 
 const directories: string[] = []
@@ -45,25 +45,26 @@ async function fixture(mode = "completed") {
     model: "test-model",
     reasoningEffort: "high",
   }
-  const topic = newTopic("Limits", runner.id)
-  topic.messages.push({
+  const chat = newChat(runner.id)
+  chat.messages.push({
     id: randomUUID(),
     role: "user",
     content: "Propose a plan",
     createdAt: new Date().toISOString(),
+    topicIds: [],
   })
   const job = WorkerJobSchema.parse({
-    topic,
+    chat,
+    topics: [],
     runner,
     codex: { home: join(home, "providers", "codex"), executable },
     skillDirectory: resolve("resources/tutor-me"),
-    assetDirectory: join(home, "topics", topic.id, "assets"),
-    action: "message",
+    assetDirectory: join(home, "chats", chat.id, "assets"),
   })
   await writeFile(
     join(home, "state.json"),
     JSON.stringify({
-      ...topic.learning,
+      ...chat.learning,
       outline: ["Limits", "Derivatives"],
       notes: "# Limits\n\nDraft outline.",
       workpad: "Waiting for plan confirmation.",
@@ -114,7 +115,7 @@ createInterface({input:process.stdin}).on("line",line=>{
    return
   }
   const state=JSON.parse(readFileSync(join(home,"state.json"),"utf8"))
-  if(${JSON.stringify(mode)}==="invalid-save" || (${JSON.stringify(mode)}==="corrected-save" && turns===1)) state.phase="ready_to_continue"
+  if(${JSON.stringify(mode)}==="invalid-save" || (${JSON.stringify(mode)}==="corrected-save" && turns===1)) state.workpad=""
   send({id:"tool-call",method:"item/tool/call",params:{threadId:"thread",turnId:"turn",callId:"call",tool:"save_learning_state",arguments:state}})
  } else if(message.id==="tool-call") {
   let text="Here is your proposed plan. Please review it."
@@ -196,7 +197,7 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
     (pid) => processes.push(pid),
   )
   expect(result.learning.outline).toEqual(["Limits", "Derivatives"])
-  expect(result.learning.phase).toBe("awaiting_plan_confirmation")
+  expect(result.learning.workpad).toBe("Waiting for plan confirmation.")
   expect(result.reply).toContain("review")
   expect(processes[0]).toBeGreaterThan(0)
   expect(processes.at(-1)).toBeNull()
@@ -216,10 +217,11 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
       cwd: z.string(),
     })
     .parse(requests.find((entry) => entry.method === "thread/start")?.params)
-  expect(thread.baseInstructions).toContain("Saved handoff and study notes")
+  expect(thread.baseInstructions).toContain("Chat handoff")
   expect(thread.dynamicTools.map((tool) => tool.name)).toEqual([
     "read_skill",
     "read_material",
+    "save_topic_state",
     "save_learning_state",
   ])
   expect(thread.sandbox).toBe("read-only")
@@ -232,7 +234,7 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
   expect(runtime.cwd).not.toContain("providers")
 })
 
-test("Codex cannot advance an unconfirmed plan or publish a failed turn", async () => {
+test("Codex cannot publish a rejected save or a failed turn", async () => {
   const invalid = await fixture("invalid-save")
   await expect(
     runCodexTutorTurn(
@@ -240,7 +242,7 @@ test("Codex cannot advance an unconfirmed plan or publish a failed turn", async 
       () => {},
       () => {},
     ),
-  ).rejects.toThrow("Wait for the learner to confirm")
+  ).rejects.toThrow("A private handoff and a concrete next action are required")
   const failed = await fixture("failed")
   await expect(
     runCodexTutorTurn(
@@ -281,7 +283,7 @@ test("Codex retries a rejected save with its validation feedback", async () => {
     () => {},
     () => {},
   )
-  expect(result.learning.phase).toBe("awaiting_plan_confirmation")
+  expect(result.learning.workpad).toBe("Waiting for plan confirmation.")
   const requests = (await readFile(join(home, "requests.jsonl"), "utf8"))
     .split("\n")
     .filter(Boolean)
@@ -293,7 +295,7 @@ test("Codex retries a rejected save with its validation feedback", async () => {
   const turns = requests.filter((request) => request.method === "turn/start")
   expect(turns).toHaveLength(2)
   expect(JSON.stringify(turns[1].params)).toContain(
-    "Wait for the learner to confirm",
+    "A private handoff and a concrete next action are required",
   )
 })
 
@@ -355,9 +357,10 @@ test("Codex RPC correlates out-of-order responses and rejects malformed wire dat
 test("existing runners retain OpenRouter when provider metadata is introduced", () => {
   const id = randomUUID()
   const workspace = WorkspaceSchema.parse({
-    version: 1,
+    version: 2,
     runners: [{ id, name: "Existing tutor", model: "openrouter/auto" }],
     topics: [],
+    chats: [],
   })
   expect(workspace.runners[0].provider).toBe("openrouter")
 })

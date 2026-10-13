@@ -7,32 +7,44 @@ body {
   font-family: var(--font-sans);
 }
 
+.workspace-titlebar {
+  -webkit-app-region: drag;
+}
+
+.native-titlebar {
+  padding-left: 6rem;
+}
+
+.workspace-titlebar button {
+  -webkit-app-region: no-drag;
+}
+
 .theme-preview {
-  --preview-background: #f3f4f0;
-  --preview-sidebar: #fafbf7;
-  --preview-border: #dce0d5;
-  --preview-line: #dce0d5;
+  --preview-background: #f4f4f1;
+  --preview-sidebar: #fafaf8;
+  --preview-border: #dfdfd9;
+  --preview-line: #dfdfd9;
   --preview-mark: #f6e7af;
   --preview-tile: #dce9df;
   background: var(--preview-background);
 }
 .theme-preview-dark {
-  --preview-background: #191d19;
-  --preview-sidebar: #202620;
-  --preview-border: #384035;
-  --preview-line: #485044;
+  --preview-background: #1a1a19;
+  --preview-sidebar: #20201f;
+  --preview-border: #3c3c38;
+  --preview-line: #4c4c47;
   --preview-mark: #49432c;
-  --preview-tile: #30443b;
+  --preview-tile: #343e39;
 }
 .theme-preview-system {
-  background: linear-gradient(110deg, #f3f4f0 50%, #191d19 50%);
+  background: linear-gradient(110deg, #f4f4f1 50%, #1a1a19 50%);
 }
 .theme-preview-window {
   background: var(--preview-background);
   border-color: var(--preview-border);
 }
 .theme-preview-system .theme-preview-window {
-  background: linear-gradient(110deg, #f3f4f0 50%, #191d19 50%);
+  background: linear-gradient(110deg, #f4f4f1 50%, #1a1a19 50%);
 }
 .theme-preview-sidebar {
   background: var(--preview-sidebar);

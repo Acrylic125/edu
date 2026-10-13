@@ -29,12 +29,13 @@ const bridge: DesktopBridge = {
   startRunner: (id) => ipcRenderer.invoke(Channel.startRunner, id),
   stopRunner: (id) => ipcRenderer.invoke(Channel.stopRunner, id),
   createTopic: (input) => ipcRenderer.invoke(Channel.createTopic, input),
+  createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
-  importMaterials: (topicId) =>
-    ipcRenderer.invoke(Channel.importMaterials, topicId),
+  importMaterials: (owner) =>
+    ipcRenderer.invoke(Channel.importMaterials, owner),
   exportNotes: (topicId) => ipcRenderer.invoke(Channel.exportNotes, topicId),
-  openDiagnostics: (topicId) =>
-    ipcRenderer.invoke(Channel.openDiagnostics, topicId),
+  openDiagnostics: (chatId) =>
+    ipcRenderer.invoke(Channel.openDiagnostics, chatId),
   openWorkspace: (topicId) =>
     ipcRenderer.invoke(Channel.openWorkspace, topicId),
 }

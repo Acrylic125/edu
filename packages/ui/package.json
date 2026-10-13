@@ -7,6 +7,7 @@
     "./workspace": "./learning/workspace-layout.tsx",
     "./learning": "./learning/learning-view.tsx",
     "./chat": "./chat/chat-layout.tsx",
+    "./scroll-area": "./primitives/scroll-area.tsx",
     "./button": "./primitives/button.tsx",
     "./learning-books": "./learning/learning-books.tsx",
     "./theme": "./theme/index.ts",

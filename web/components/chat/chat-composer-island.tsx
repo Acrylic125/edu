@@ -1,6 +1,7 @@
 "use client"
 
 import { ChatComposer } from "@/components/chat/chat-composer"
+import { useChatFrame } from "@/components/chat/chat-frame"
 import { useChatSend } from "@/components/chat/chat-socket-island"
 import { activeTopicIdForSend } from "@/lib/chat/active-topic"
 import { clientMessageId } from "@/lib/chat/ids"
@@ -15,19 +16,27 @@ import {
 export function ChatComposerIsland({
   className,
   newTopicMode = false,
+  showSuggestions,
 }: {
   className?: string
   newTopicMode?: boolean
+  showSuggestions?: boolean
 }) {
   const store = useChatStoreApi()
   const socket = useChatStore((state) => state.socket)
   const run = useChatStore((state) => state.run)
   const { sendJsonMessage, sendChatRequest } = useChatSend()
+  const { drafts, setDraft } = useChatFrame()
+  const session = useChatStore((state) => state.session)
+  const draftId = session.kind === "topic" ? session.topicId : "new"
 
   return (
     <ChatComposer
+      draft={drafts[draftId] ?? ""}
+      onDraftChange={(value) => setDraft(draftId, value)}
       className={className}
       newTopicMode={newTopicMode}
+      showSuggestions={showSuggestions}
       socket={socket}
       run={run}
       onSend={async (content, attachments) => {

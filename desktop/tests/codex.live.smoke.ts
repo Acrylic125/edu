@@ -43,20 +43,20 @@ test("connected packaged Codex commits a real reply, notes, and diagnostics", as
       )
       .toBe(true)
     const snapshot = await page.evaluate(async () => window.prune?.snapshot())
-    const topic = snapshot?.topics.find((topic) =>
+    const chat = snapshot?.chats.find((chat) =>
       snapshot.runners.some(
-        (runner) => runner.id === topic.runnerId && runner.provider === "codex",
+        (runner) => runner.id === chat.runnerId && runner.provider === "codex",
       ),
     )
-    if (!topic) throw new Error("No Codex topic to validate")
-    const request = topic.messages.findLast(
+    if (!chat) throw new Error("No Codex chat to validate")
+    const request = chat.messages.findLast(
       (message) => message.role === "user",
     )
     if (!request) throw new Error("No learner request to retry")
-    await page.getByRole("button", { name: topic.title, exact: true }).click()
+    await page.getByRole("tab", { name: chat.title, exact: true }).click()
     await page.evaluate(
-      async ({ topicId, content }) => window.prune?.send({ topicId, content }),
-      { topicId: topic.id, content: request.content },
+      async ({ chatId, content }) => window.prune?.send({ chatId, content }),
+      { chatId: chat.id, content: request.content },
     )
     await expect
       .poll(
@@ -66,14 +66,14 @@ test("connected packaged Codex commits a real reply, notes, and diagnostics", as
               (await window.prune?.snapshot())?.runtime.find(
                 (state) => state.runnerId === runnerId,
               )?.status,
-            topic.runnerId,
+            chat.runnerId,
           ),
         { timeout: 240_000 },
       )
       .toMatch(/^(ready|error)$/)
     const completed = await page.evaluate(async () => window.prune?.snapshot())
     const runtime = completed?.runtime.find(
-      (state) => state.runnerId === topic.runnerId,
+      (state) => state.runnerId === chat.runnerId,
     )
     expect(runtime?.error).toBeUndefined()
     expect(runtime?.status).toBe("ready")
@@ -84,25 +84,14 @@ test("connected packaged Codex commits a real reply, notes, and diagnostics", as
     const saved = WorkspaceSchema.parse(
       JSON.parse(await readFile(join(directory, "workspace.json"), "utf8")),
     )
-    const savedTopic = saved.topics.find((entry) => entry.id === topic.id)
-    expect(savedTopic?.messages.at(-1)?.role).toBe("assistant")
-    expect(savedTopic?.messages.length).toBe(topic.messages.length + 2)
-    expect(savedTopic?.learning.notes.trim()).not.toBe("")
-    expect(savedTopic?.learning.workpad.trim()).not.toBe("")
-    const notes = await readFile(
-      join(directory, "topics", topic.id, "topic.md"),
-      "utf8",
-    )
-    const workpad = await readFile(
-      join(directory, "topics", topic.id, "agent.workpad.md"),
-      "utf8",
-    )
-    expect(notes).toContain(savedTopic?.learning.notes)
-    expect(workpad).toContain(savedTopic?.learning.workpad)
+    const savedChat = saved.chats.find((entry) => entry.id === chat.id)
+    expect(savedChat?.messages.at(-1)?.role).toBe("assistant")
+    expect(savedChat?.messages.length).toBe(chat.messages.length + 2)
+    expect(savedChat?.learning.workpad.trim()).not.toBe("")
     const tracePath = join(
       directory,
-      "topics",
-      topic.id,
+      "chats",
+      chat.id,
       "diagnostics",
       `${runtime?.traceId}.jsonl`,
     )
@@ -122,16 +111,13 @@ test("connected packaged Codex commits a real reply, notes, and diagnostics", as
       true,
     )
     await expect(page.getByText(/^Diagnostics ·/)).toHaveCount(0)
-    await expect(
-      page.getByRole("button", { name: "Open workspace in Finder" }),
-    ).toBeVisible()
     await page.screenshot({ path: "test-results/live-codex-diagnostics.png" })
     console.info("Validated connected desktop turn", {
-      model: saved.runners.find((runner) => runner.id === topic.runnerId)
+      model: saved.runners.find((runner) => runner.id === chat.runnerId)
         ?.model,
-      topicId: topic.id,
+      chatId: chat.id,
       tracePath,
-      replyCharacters: savedTopic?.messages.at(-1)?.content.length,
+      replyCharacters: savedChat?.messages.at(-1)?.content.length,
     })
   } finally {
     await app.close()

@@ -11,6 +11,7 @@ export const useWorkspace = create<{
   snapshot: {
     runners: [],
     topics: [],
+    chats: [],
     runtime: [],
     connected: false,
     providers: [],

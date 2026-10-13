@@ -10,15 +10,20 @@ import {
 import { join } from "node:path"
 import {
   LearningStateSchema,
+  ChatSchema,
+  LegacyWorkspaceSchema,
+  PublicChatSchema,
   PublicTopicSchema,
   TopicSchema,
   WorkspaceSchema,
   type Topic,
   type Workspace,
 } from "../shared/contracts"
+import { topicDirectoryMarkdown } from "../shared/topic-directory"
+import { z } from "zod"
 
 export class WorkspaceRepository {
-  private state: Workspace = WorkspaceSchema.parse({ version: 1, runners: [], topics: [] })
+  private state: Workspace = WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] })
   private writes = Promise.resolve()
 
   constructor(readonly directory: string) {}
@@ -26,11 +31,36 @@ export class WorkspaceRepository {
   async load() {
     await mkdir(this.directory, { recursive: true })
     try {
-      this.state = WorkspaceSchema.parse(
-        JSON.parse(
-          await readFile(join(this.directory, "workspace.json"), "utf8"),
-        ),
-      )
+      const raw = await readFile(join(this.directory, "workspace.json"), "utf8")
+      const stored = z
+        .discriminatedUnion("version", [WorkspaceSchema, LegacyWorkspaceSchema])
+        .parse(JSON.parse(raw))
+      if (stored.version === 2) {
+        this.state = stored
+      } else {
+        const chats = stored.topics
+          .filter((topic) => topic.messages.length > 0)
+          .map((topic) => ({
+            ...newChat(topic.runnerId, topic.title),
+            titleGenerated: true,
+            createdAt: topic.createdAt,
+            messages: topic.messages.map((message) => ({
+              ...message,
+              topicIds: [topic.id],
+            })),
+          }))
+        // Keep the original file so a failed migration can be recovered by hand.
+        await writeFile(join(this.directory, "workspace.v1.json"), raw, {
+          mode: 0o600,
+          flag: "wx",
+        }).catch((error) => {
+          if (!(error instanceof Error && "code" in error && error.code === "EEXIST"))
+            throw error
+        })
+        await this.commit(
+          WorkspaceSchema.parse({ ...stored, version: 2, chats }),
+        )
+      }
     } catch (error) {
       if (!(
         error instanceof Error &&
@@ -70,6 +100,21 @@ export class WorkspaceRepository {
         })),
       })
     })
+  }
+
+  get publicChats() {
+    return this.state.chats.map((chat) =>
+      PublicChatSchema.parse({
+        ...chat,
+        materials: chat.materials.map(({ id, name, kind }) => ({ id, name, kind })),
+      }),
+    )
+  }
+
+  chat(id: string) {
+    const chat = this.state.chats.find((entry) => entry.id === id)
+    if (!chat) throw new Error("This chat no longer exists.")
+    return structuredClone(chat)
   }
 
   topic(id: string) {
@@ -113,19 +158,10 @@ export class WorkspaceRepository {
         /prune-source:\/\/([a-f0-9-]+)\/(\d+)/g,
         "assets/source-$1-$2.png",
       )
-    await writeFile(
-      join(directory, "topic.md"),
-      portable(topic.learning.notes),
-      { mode: 0o600 },
-    )
     // The private handoff stays in app storage; learner exports never include checked answer keys.
     await writeFile(
-      join(directory, "conversation.md"),
-      portable(
-        topic.messages
-          .map((message) => `## ${message.role}\n\n${message.content}`)
-          .join("\n\n"),
-      ),
+      join(directory, "topic.md"),
+      portable(topicDirectoryMarkdown(topic.learning.notes)),
       { mode: 0o600 },
     )
   }
@@ -144,14 +180,12 @@ export class WorkspaceRepository {
   }
 }
 
-export function newTopic(title: string, runnerId: string) {
+export function newTopic(title: string) {
   return TopicSchema.parse({
     id: randomUUID(),
     title,
-    runnerId,
     createdAt: new Date().toISOString(),
     planConfirmed: false,
-    messages: [],
     materials: [],
     learning: LearningStateSchema.parse({
       phase: "awaiting_plan_confirmation",
@@ -163,5 +197,26 @@ export function newTopic(title: string, runnerId: string) {
       notes: `# ${title}\n\nYour proposed learning plan will appear here.`,
       workpad: "New topic; plan is not confirmed.",
     }),
+  })
+}
+
+export function newChat(runnerId: string, title = "New chat") {
+  return ChatSchema.parse({
+    id: randomUUID(),
+    title,
+    runnerId,
+    createdAt: new Date().toISOString(),
+    messages: [],
+    materials: [],
+    learning: {
+      phase: "ready_to_continue",
+      outline: [],
+      currentSection: "",
+      pendingQuestion: "",
+      privateAnswerKey: "",
+      nextAction: "Respond to the learner's request.",
+      notes: "",
+      workpad: "New chat.",
+    },
   })
 }

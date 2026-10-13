@@ -5,7 +5,7 @@ import "./env"
 
 const nextConfig: NextConfig = {
   turbopack: { root: path.resolve(__dirname, "..") },
-  transpilePackages: ["@edu/chat-contract"],
+  transpilePackages: ["@edu/chat-contract", "@edu/ui"],
 }
 
 export default nextConfig

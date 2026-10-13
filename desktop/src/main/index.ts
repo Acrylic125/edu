@@ -15,8 +15,10 @@ import {
 import { z } from "zod"
 import {
   Channel,
+  CreateChatSchema,
   CreateTopicSchema,
   IdSchema,
+  MaterialOwnerSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
   RunnerInputSchema,
@@ -25,7 +27,7 @@ import {
 } from "../shared/contracts"
 import { ProviderRegistry } from "../providers/registry"
 import { importMaterials } from "./materials"
-import { newTopic, WorkspaceRepository } from "./workspace"
+import { newChat, newTopic, WorkspaceRepository } from "./workspace"
 import { RunnerManager } from "../runners/manager"
 
 const environment = z
@@ -68,17 +70,23 @@ else {
         const page = /^\/(\d+)$/.exec(url.pathname)?.[1]
         if (!id.success || !page)
           return new Response("Source not found", { status: 404 })
-        const topic = repository.stateSnapshot.topics.find((topic) =>
-          topic.materials.some((material) => material.id === id.data),
-        )
-        if (!topic) return new Response("Source not found", { status: 404 })
+        const { topics, chats } = repository.stateSnapshot
+        const owns = (owner: { materials: { id: string }[] }) =>
+          owner.materials.some((material) => material.id === id.data)
+        let collection = "topics"
+        let owner = topics.find(owns)?.id
+        if (!owner) {
+          collection = "chats"
+          owner = chats.find(owns)?.id
+        }
+        if (!owner) return new Response("Source not found", { status: 404 })
         return net
           .fetch(
             pathToFileURL(
               join(
                 directory,
-                "topics",
-                topic.id,
+                collection,
+                owner,
                 "assets",
                 `source-${id.data}-${page}.png`,
               ),
@@ -118,6 +126,7 @@ else {
         return SnapshotSchema.parse({
           runners: repository.stateSnapshot.runners,
           topics: repository.publicTopics,
+          chats: repository.publicChats,
           runtime: runnerManager.statuses,
           connected: registry.openrouter.connected,
           providers: registry.statuses,
@@ -216,10 +225,10 @@ else {
         if (!runner) throw new Error("Runner not found.")
         if (
           runner.provider !== input.provider &&
-          repository.stateSnapshot.topics.some((topic) => topic.runnerId === id)
+          repository.stateSnapshot.chats.some((chat) => chat.runnerId === id)
         )
           throw new Error(
-            "Add another runner to change providers for a new topic.",
+            "Add another runner to change providers for a new chat.",
           )
         if (
           runnerManager.statuses.some(
@@ -254,10 +263,10 @@ else {
         trusted(event)
         const id = IdSchema.parse(raw)
         if (
-          repository.stateSnapshot.topics.some((topic) => topic.runnerId === id)
+          repository.stateSnapshot.chats.some((chat) => chat.runnerId === id)
         )
           throw new Error(
-            "This runner owns saved topics. Keep it stopped to preserve their handoffs.",
+            "This runner owns saved chats. Keep it stopped to preserve their handoffs.",
           )
         runnerManager.stop(id)
         await repository.mutate((workspace) => {
@@ -277,15 +286,23 @@ else {
       })
       ipcMain.handle(Channel.createTopic, async (event, raw) => {
         trusted(event)
-        const { title, runnerId } = CreateTopicSchema.parse(raw)
-        const topic = newTopic(title, runnerId)
+        const topic = newTopic(CreateTopicSchema.parse(raw).title)
         await repository.mutate((workspace) => {
-          if (!workspace.runners.some((runner) => runner.id === runnerId))
-            throw new Error("Runner not found.")
           workspace.topics.unshift(topic)
         })
         notify()
         return topic.id
+      })
+      ipcMain.handle(Channel.createChat, async (event, raw) => {
+        trusted(event)
+        const chat = newChat(CreateChatSchema.parse(raw).runnerId)
+        await repository.mutate((workspace) => {
+          if (!workspace.runners.some((runner) => runner.id === chat.runnerId))
+            throw new Error("Runner not found.")
+          workspace.chats.unshift(chat)
+        })
+        notify()
+        return chat.id
       })
       ipcMain.handle(Channel.send, async (event, raw) => {
         trusted(event)
@@ -293,14 +310,20 @@ else {
       })
       ipcMain.handle(Channel.importMaterials, async (event, raw) => {
         trusted(event)
-        const id = IdSchema.parse(raw)
-        if (
-          runnerManager.statuses.some(
-            (runtime) => runtime.topicId === id && runtime.status === "running",
+        const owner = MaterialOwnerSchema.parse(raw)
+        const { chats } = repository.stateSnapshot
+        const busy = runnerManager.statuses.some((runtime) => {
+          if (runtime.status !== "running") return false
+          if (owner.kind === "chat") return runtime.chatId === owner.id
+          return chats.some(
+            (chat) =>
+              chat.id === runtime.chatId &&
+              chat.messages.some((message) => message.topicIds.includes(owner.id)),
           )
-        )
+        })
+        if (busy)
           throw new Error("Wait for the current lesson before adding sources.")
-        await importMaterials(repository, id)
+        await importMaterials(repository, owner)
         notify()
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
@@ -315,8 +338,8 @@ else {
       })
       ipcMain.handle(Channel.openDiagnostics, async (event, raw) => {
         trusted(event)
-        const topic = repository.topic(IdSchema.parse(raw))
-        const path = join(directory, "topics", topic.id, "diagnostics")
+        const chat = repository.chat(IdSchema.parse(raw))
+        const path = join(directory, "chats", chat.id, "diagnostics")
         await mkdir(path, { recursive: true, mode: 0o700 })
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
@@ -337,6 +360,8 @@ else {
           minWidth: 960,
           minHeight: 640,
           title: "EdU",
+          titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+          trafficLightPosition: { x: 18, y: 20 },
           backgroundColor: "#fafafa",
           webPreferences: {
             preload: join(__dirname, "../preload/index.js"),

@@ -54,7 +54,9 @@ export function ComposerImageStrip({
                 </span>
               </div>
             ) : (
-              <button
+              <Button
+                variant="plain"
+                size="auto"
                 type="button"
                 className="h-full w-full cursor-zoom-in"
                 aria-label={`Preview ${image.name}`}
@@ -65,7 +67,7 @@ export function ComposerImageStrip({
                   alt={image.name}
                   className="h-full w-full object-cover"
                 />
-              </button>
+              </Button>
             )}
             {showOverlay ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/50">
@@ -135,7 +137,9 @@ export function MessageImageGrid({
               <span className="max-w-64 truncate">{image.name}</span>
             </a>
           ) : (
-            <button
+            <Button
+              variant="plain"
+              size="auto"
               type="button"
               className="h-full w-full cursor-zoom-in"
               aria-label={`Preview ${image.name}`}
@@ -146,7 +150,7 @@ export function MessageImageGrid({
                 alt={image.name}
                 className="block h-auto max-h-[220px] w-full object-cover"
               />
-            </button>
+            </Button>
           )}
         </div>
       ))}

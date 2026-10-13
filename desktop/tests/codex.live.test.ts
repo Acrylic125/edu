@@ -15,7 +15,7 @@ const environment = z
   .parse(process.env)
 
 test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
-  "connected Codex saves the latest learner request in an isolated topic copy",
+  "connected Codex saves the latest learner request in an isolated chat copy",
   async () => {
     if (!environment.PRUNE_LIVE_DATA_DIR)
       throw new Error("Missing live workspace")
@@ -28,29 +28,35 @@ test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
         await readFile(join(workspaceDirectory, "workspace.json"), "utf8"),
       ),
     )
-    const topic = workspace.topics.find((topic) =>
+    const chat = workspace.chats.find((chat) =>
       workspace.runners.some(
-        (runner) => runner.id === topic.runnerId && runner.provider === "codex",
+        (runner) => runner.id === chat.runnerId && runner.provider === "codex",
       ),
     )
-    if (!topic) throw new Error("No Codex topic is available to validate")
+    if (!chat) throw new Error("No Codex chat is available to validate")
     const runner = workspace.runners.find(
-      (runner) => runner.id === topic.runnerId,
+      (runner) => runner.id === chat.runnerId,
     )
     const directory = await mkdtemp(join(tmpdir(), "prune-live-validation-"))
-    const assetDirectory = join(directory, "topic", "assets")
-    await mkdir(assetDirectory, { recursive: true })
-    for (const material of topic.materials) {
-      await cp(
-        join(workspaceDirectory, "topics", topic.id, "assets", material.name),
-        join(assetDirectory, material.name),
-      )
+    const copy = async (collection: string, owner: { id: string; materials: { name: string }[] }) => {
+      const assets = join(directory, collection, owner.id, "assets")
+      await mkdir(assets, { recursive: true })
+      for (const material of owner.materials)
+        await cp(
+          join(workspaceDirectory, collection, owner.id, "assets", material.name),
+          join(assets, material.name),
+        )
+      return assets
     }
+    const tagged = chat.messages.flatMap((message) => message.topicIds)
+    const topics = []
+    for (const topic of workspace.topics.filter((topic) => tagged.includes(topic.id)))
+      topics.push({ ...topic, assetDirectory: await copy("topics", topic) })
     const job = WorkerJobSchema.parse({
-      topic,
+      chat,
+      topics,
       runner,
-      assetDirectory,
-      action: "message",
+      assetDirectory: await copy("chats", chat),
       skillDirectory: resolve("resources/tutor-me"),
       codex: {
         executable: resolve(
@@ -72,12 +78,11 @@ test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
             console.info(event, details)
         },
       )
-      expect(result.learning.notes.trim()).not.toBe("")
       expect(result.learning.workpad.trim()).not.toBe("")
       expect(result.reply.trim()).not.toBe("")
-      console.info("Validated live reply and saved notes", {
+      console.info("Validated live reply and saved handoff", {
         replyCharacters: result.reply.length,
-        outlineSections: result.learning.outline.length,
+        topicUpdates: result.topicUpdates.length,
       })
     } finally {
       await writeFile(

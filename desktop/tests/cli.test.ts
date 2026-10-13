@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { afterEach, expect, test, vi } from "vitest"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "../src/providers/cli"
 import { runCliTutorTurn } from "../src/runners/cli"
-import { newTopic } from "../src/main/workspace"
+import { newChat } from "../src/main/workspace"
 import { randomUUID } from "node:crypto"
 import { WorkerJobSchema } from "../src/shared/contracts"
 
@@ -24,11 +24,11 @@ async function connection(provider: "claude" | "antigravity") {
 
 test.each(["claude", "antigravity"] as const)("%s completes tutoring with source tools and rejects an invalid save before committing", async (provider) => {
   const cli = await connection(provider)
-  const topic = newTopic("Limits", randomUUID())
-  topic.messages.push({ id: randomUUID(), role: "user", content: "Teach me limits", createdAt: new Date().toISOString() })
+  const chat = newChat(randomUUID())
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Teach me limits", createdAt: new Date().toISOString(), topicIds: [] })
   const job = WorkerJobSchema.parse({
-    topic, runner: { id: topic.runnerId, name: "Tutor", provider, model: "default" }, cli,
-    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory, action: "message",
+    chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
   })
   const diagnostic = vi.fn()
   const processChanged = vi.fn()

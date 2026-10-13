@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Block } from "@blocknote/core";
 
 import { useThemeMode } from "@/components/theme/theme-provider";
+import { Button } from "@/components/ui/button";
 
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
@@ -448,7 +449,9 @@ export default function BlockNoteViewerClient({
             </svg>
           ) : null}
           {positions.map((position, index) => (
-            <button
+            <Button
+              variant="plain"
+              size="auto"
               key={position.id}
               type="button"
               aria-label={`Select document block ${index + 1}`}
@@ -473,7 +476,7 @@ export default function BlockNoteViewerClient({
                 }
                 aria-hidden="true"
               />
-            </button>
+            </Button>
           ))}
         </>
       ) : null}

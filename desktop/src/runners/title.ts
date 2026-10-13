@@ -4,12 +4,13 @@ import { z } from "zod"
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import type { WorkerJob, Diagnostic } from "../shared/contracts"
+import { stripTopicMentions } from "../shared/topic-mentions"
 
 const TitleSchema = z.object({
   title: z.string().trim().min(1).max(150).regex(/^[^\r\n]+$/),
 })
 const instructions =
-  "Generate a concise topic title of 3–8 words from the learner's request. Use the learner's language. Do not include markdown or explanation."
+  "Generate a concise title of 3–8 words from the learner's request. Use the learner's language. Do not include markdown or explanation."
 
 export async function generateTopicTitle(
   job: WorkerJob,
@@ -17,11 +18,11 @@ export async function generateTopicTitle(
   processChanged: (pid: number | null) => void,
   diagnostic: Diagnostic,
 ) {
-  const request = job.topic.messages.find(
+  const request = job.chat.messages.find(
     (message) => message.role === "user",
   )?.content
-  if (!request) throw new Error("A learner request is needed to name the topic.")
-  const input = request.slice(0, 1800)
+  if (!request) throw new Error("A learner request is needed to name the chat.")
+  const input = stripTopicMentions(request).slice(0, 1800)
   if (job.runner.provider === "openrouter") {
     if (!client || !job.titleModel)
       throw new Error("No priced title model is available from OpenRouter.")

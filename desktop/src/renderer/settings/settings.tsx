@@ -1,7 +1,9 @@
 import { useRef, useState } from "react"
-import { ArrowLeft, Check, Plus, RotateCcw, X } from "lucide-react"
+import { ArrowLeft, Check, Plus, RotateCcw, Settings, X } from "lucide-react"
 import { useThemeMode } from "@edu/ui/theme"
+import { WorkspaceFrame, WorkspaceSidebar, useWorkspaceLayout } from "@edu/ui/workspace"
 import { desktop } from "../store"
+import appIcon from "../assets/app-icon.png"
 import { ProviderSettingsSchema, type Snapshot } from "../../shared/contracts"
 
 export function DesktopSettings({ snapshot, busy, perform, onBack, error, onDismissError }: {
@@ -15,18 +17,14 @@ export function DesktopSettings({ snapshot, busy, perform, onBack, error, onDism
   const [section, setSection] = useState<"appearance" | "providers">("appearance")
 
   return (
-    <main className="flex h-dvh gap-4 bg-background p-4 text-foreground" aria-label="Settings">
-      <nav className="w-44 shrink-0 border-r border-border pr-4 pt-6" aria-label="Settings sections">
-        <button className="mb-6 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-sm text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onBack}>
-          <ArrowLeft className="size-4" aria-hidden="true" /> Back
-        </button>
-        {(["appearance", "providers"] as const).map((item) => (
-          <button key={item} aria-current={section === item ? "page" : undefined} onClick={() => setSection(item)} className={`mb-1 h-11 w-full rounded-lg px-3 text-left text-sm font-medium ${section === item ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
-            {item === "appearance" ? "Appearance" : "Providers"}
-          </button>
-        ))}
-      </nav>
-      <div className="min-w-0 flex-1 overflow-y-auto rounded-[1.75rem] bg-card">
+    <WorkspaceFrame
+      title="Settings"
+      appName="EdU"
+      nativeTitlebar={navigator.userAgent.includes("Macintosh")}
+      navigationName="settings"
+      sidebar={<SettingsSidebar section={section} onSection={setSection} onBack={onBack} />}
+    >
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-card md:rounded-[1.75rem]" aria-label="Settings">
         <div className="mx-auto max-w-4xl px-8 py-14 lg:px-16 lg:py-16">
           {error && (
             <div className="mb-6 flex items-start justify-between gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
@@ -36,8 +34,75 @@ export function DesktopSettings({ snapshot, busy, perform, onBack, error, onDism
           )}
           {section === "appearance" ? <AppearanceSettings /> : <ProviderSettings snapshot={snapshot} busy={busy} perform={perform} />}
         </div>
-      </div>
-    </main>
+      </main>
+    </WorkspaceFrame>
+  )
+}
+
+function SettingsSidebar({
+  section,
+  onSection,
+  onBack,
+}: {
+  section: "appearance" | "providers"
+  onSection: (section: "appearance" | "providers") => void
+  onBack: () => void
+}) {
+  const { closeNavigation } = useWorkspaceLayout()
+  const sections = [
+    { id: "appearance", label: "Appearance" },
+    { id: "providers", label: "Providers" },
+  ] as const
+
+  return (
+    <WorkspaceSidebar
+      label="Settings"
+      brand={
+        <button
+          onClick={() => {
+            closeNavigation()
+            onBack()
+          }}
+          className="flex items-center gap-3 rounded-xl text-left text-xl font-semibold tracking-tight"
+        >
+          <img src={appIcon} alt="" className="size-11 shrink-0 object-contain" />
+          EdU
+        </button>
+      }
+      footer={
+        <button
+          className="ml-auto rounded-full bg-sidebar-accent p-2 text-sidebar-accent-foreground"
+          aria-label="Settings"
+          aria-current="page"
+          title="Settings"
+        >
+          <Settings className="size-5" />
+        </button>
+      }
+    >
+      <nav className="space-y-1.5" aria-label="Settings sections">
+        <button
+          className="mb-6 flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-3 text-left text-sm text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"
+          onClick={() => {
+            closeNavigation()
+            onBack()
+          }}
+        >
+          <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
+          Back
+        </button>
+        {sections.map((item) => (
+          <button
+            key={item.id}
+            aria-current={section === item.id ? "page" : undefined}
+            onClick={() => onSection(item.id)}
+            className={`flex min-h-11 w-full items-center rounded-2xl px-3 py-3 text-left text-sm leading-snug ${section === item.id ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground"}`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+    </WorkspaceSidebar>
   )
 }
 

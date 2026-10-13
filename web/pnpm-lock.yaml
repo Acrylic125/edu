@@ -23,6 +23,9 @@ importers:
       '@edu/chat-contract':
         specifier: link:../packages/chat-contract
         version: link:../packages/chat-contract
+      '@edu/ui':
+        specifier: link:../packages/ui
+        version: link:../packages/ui
       '@mantine/core':
         specifier: ^9.6.3
         version: 9.6.3(@mantine/hooks@9.6.3(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -115,10 +118,10 @@ importers:
         specifier: ^26.4.1
         version: 26.4.1
       '@types/react':
-        specifier: ^19
+        specifier: 19.2.18
         version: 19.2.18
       '@types/react-dom':
-        specifier: ^19
+        specifier: 19.2.4
         version: 19.2.4(@types/react@19.2.18)
       eslint:
         specifier: ^9

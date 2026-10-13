@@ -139,7 +139,7 @@ export async function runCodexTutorTurn(
           reply = item.data.item.text ?? reply
       },
     )
-    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.topic.messages.slice(-30).map(({ role, content }) => ({ role, content })))}`
+    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.chat.messages.slice(-30).map(({ role, content }) => ({ role, content })))}`
     for (let attempt = 0; attempt < 3; attempt++) {
       reply = ""
       const completion = client.waitFor(

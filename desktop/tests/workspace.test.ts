@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -23,8 +24,7 @@ async function repository() {
 
 test("persists concurrent changes without losing topics and restores private pending state", async () => {
   const store = await repository()
-  const runner = store.stateSnapshot.runners[0]
-  const first = newTopic("Calculus", runner.id)
+  const first = newTopic("Calculus")
   first.planConfirmed = true
   first.learning = {
     ...first.learning,
@@ -36,7 +36,7 @@ test("persists concurrent changes without losing topics and restores private pen
   }
   await Promise.all([
     store.mutate((state) => state.topics.push(first)),
-    store.mutate((state) => state.topics.push(newTopic("Physics", runner.id))),
+    store.mutate((state) => state.topics.push(newTopic("Physics"))),
   ])
   const restored = new WorkspaceRepository(store.directory)
   await restored.load()
@@ -66,6 +66,37 @@ test("rejects invalid mutations and keeps the last valid disk snapshot", async (
   expect(store.stateSnapshot.runners[0].name).toBe("Recovered")
 })
 
+test("migrates per-topic conversations into independent chats and keeps the original file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prune-store-"))
+  directories.push(directory)
+  const runnerId = randomUUID()
+  const topic = newTopic("Calculus")
+  const legacy = JSON.stringify({
+    version: 1,
+    runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "default" }],
+    topics: [
+      {
+        ...topic,
+        runnerId,
+        messages: [
+          { id: randomUUID(), role: "user", content: "Teach me", createdAt: topic.createdAt },
+        ],
+      },
+      { ...newTopic("Unused"), runnerId, messages: [] },
+    ],
+  })
+  await writeFile(join(directory, "workspace.json"), legacy)
+  const store = new WorkspaceRepository(directory)
+  await store.load()
+  const { topics, chats } = store.stateSnapshot
+  expect(topics).toHaveLength(2)
+  expect(topics[0]).not.toHaveProperty("messages")
+  expect(chats).toHaveLength(1)
+  expect(chats[0]).toMatchObject({ title: "Calculus", runnerId })
+  expect(chats[0].messages[0]).toMatchObject({ content: "Teach me", topicIds: [topic.id] })
+  expect(await readFile(join(directory, "workspace.v1.json"), "utf8")).toBe(legacy)
+})
+
 test("does not replace a corrupt workspace with an empty one", async () => {
   const store = await repository()
   await writeFile(join(store.directory, "workspace.json"), "invalid json")
@@ -79,7 +110,7 @@ test("does not replace a corrupt workspace with an empty one", async () => {
 
 test("learner exports omit the private handoff and assessment keys", async () => {
   const store = await repository()
-  const topic = newTopic("Algebra", store.stateSnapshot.runners[0].id)
+  const topic = newTopic("Algebra")
   topic.learning.notes = "# Algebra\n\nA learner-facing explanation."
   topic.learning.privateAnswerKey = "Secret marking key"
   topic.learning.workpad = "Secret marking key"

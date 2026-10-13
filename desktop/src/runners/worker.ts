@@ -31,13 +31,12 @@ process.parentPort.on("message", async (event) => {
         timeout: 120_000,
         maxRetries: 1,
       })
-    if (!job.cli && !job.topic.titleGenerated && !job.topic.messages.some((message) => message.role === "assistant")) {
-      activity("Naming your topic")
+    if (!job.cli && !job.chat.titleGenerated && !job.chat.messages.some((message) => message.role === "assistant")) {
+      activity("Naming your chat")
       try {
         const title = await generateTopicTitle(job, client, processChanged, diagnostic)
-        job.topic.learning.notes = job.topic.learning.notes.replace(`# ${job.topic.title}\n`, `# ${title}\n`)
-        job.topic.title = title
-        job.topic.titleGenerated = true
+        job.chat.title = title
+        job.chat.titleGenerated = true
         process.parentPort.postMessage({ type: "title", title })
       } catch (error) {
         diagnostic("title.failed", { error: error instanceof Error ? error.message : "Could not generate a title." })

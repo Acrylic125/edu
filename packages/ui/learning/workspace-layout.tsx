@@ -1,9 +1,18 @@
 "use client"
 
 import { createContext, useContext, useState, type ReactNode } from "react"
-import { MenuIcon, MessageSquareIcon, XIcon } from "lucide-react"
+import { flushSync } from "react-dom"
+import {
+  MenuIcon,
+  MessageSquareIcon,
+  PanelLeftIcon,
+  PanelsTopLeftIcon,
+  PanelRightIcon,
+  XIcon,
+} from "lucide-react"
 
 import { Button } from "../primitives/button"
+import { ScrollArea } from "../primitives/scroll-area"
 import { cn } from "../utils"
 
 export { TopicNavigation, TopicNavigationItem } from "./topic-navigation"
@@ -11,9 +20,14 @@ export { TopicNavigation, TopicNavigationItem } from "./topic-navigation"
 const WorkspaceLayoutContext = createContext<{
   sidebarOpen: boolean
   chatOpen: boolean
+  sidebarCollapsed: boolean
+  documentCollapsed: boolean
+  chatCollapsed: boolean
   closeNavigation: () => void
   setSidebarOpen: (open: boolean) => void
   setChatOpen: (open: boolean) => void
+  sidebarId: string
+  navigationName: string
 } | null>(null)
 
 export function useWorkspaceLayout() {
@@ -29,19 +43,44 @@ export function WorkspaceFrame({
   sidebar,
   banner,
   children,
+  navigationName = "topics",
+  appName = "Prune",
+  nativeTitlebar = false,
+  workspaceId = title,
 }: {
   title: string
   hasChat?: boolean
   sidebar: ReactNode
   banner?: ReactNode
   children: ReactNode
+  navigationName?: string
+  appName?: string
+  nativeTitlebar?: boolean
+  workspaceId?: string
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [collapsedDocumentId, setCollapsedDocumentId] = useState<string | null>(null)
+  const [collapsedChatId, setCollapsedChatId] = useState<string | null>(null)
+  const documentCollapsed = collapsedDocumentId === workspaceId
+  const chatCollapsed = collapsedChatId === workspaceId
+  const sidebarId = `${navigationName}-sidebar`
 
   function closeNavigation() {
     setSidebarOpen(false)
     setChatOpen(false)
+  }
+
+  function updatePanels(update: () => void) {
+    if (
+      !document.startViewTransition ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      update()
+      return
+    }
+    document.startViewTransition(() => flushSync(update))
   }
 
   return (
@@ -49,48 +88,105 @@ export function WorkspaceFrame({
       value={{
         sidebarOpen,
         chatOpen,
+        sidebarCollapsed,
+        documentCollapsed,
+        chatCollapsed,
         closeNavigation,
         setSidebarOpen,
         setChatOpen,
+        sidebarId,
+        navigationName,
       }}
     >
-      <div className="flex h-dvh min-h-0 gap-3 overflow-hidden bg-background text-foreground md:p-3 lg:gap-4 lg:p-4">
-        {sidebar}
-        <div className="relative flex min-w-0 flex-1 flex-col">
-          <header
-            className={cn(
-              "flex h-16 shrink-0 items-center gap-3 px-4",
-              hasChat ? "lg:hidden" : "md:hidden",
-            )}
-          >
+      <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+        <header
+          className={cn(
+            "workspace-titlebar flex h-14 shrink-0 items-center gap-3 border-b border-border/50 px-4 md:px-5",
+            nativeTitlebar && "native-titlebar",
+          )}
+        >
+          <span className="hidden shrink-0 text-sm font-semibold md:block">{appName}</span>
+          <div className="flex shrink-0 items-center">
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Open topics"
+              aria-label={`Open ${navigationName}`}
               aria-expanded={sidebarOpen}
-              aria-controls="topics-sidebar"
+              aria-controls={sidebarId}
               className="size-9 rounded-full p-2 md:hidden"
               onClick={() => setSidebarOpen(true)}
             >
               <MenuIcon className="size-5" />
             </Button>
-            <span className="truncate text-sm font-medium">{title}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={sidebarCollapsed ? `Expand ${navigationName}` : `Collapse ${navigationName}`}
+              title={sidebarCollapsed ? `Expand ${navigationName}` : `Collapse ${navigationName}`}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls={sidebarId}
+              className="hidden size-8 rounded-lg text-muted-foreground md:inline-flex"
+              onClick={() => updatePanels(() => setSidebarCollapsed(!sidebarCollapsed))}
+            >
+              <PanelLeftIcon className="size-4" />
+            </Button>
+          </div>
+          <span className="hidden text-sm text-border md:block" aria-hidden="true">/</span>
+          <span className="min-w-0 truncate text-sm font-medium text-muted-foreground" title={title}>{title}</span>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             {hasChat ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Open chat"
-                aria-expanded={chatOpen}
-                aria-controls="learning-chat"
-                className="ml-auto size-9 rounded-full p-2"
-                onClick={() => setChatOpen(true)}
-              >
-                <MessageSquareIcon className="size-5" />
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={documentCollapsed ? "Expand topic panel" : "Collapse topic panel"}
+                  title={documentCollapsed ? "Expand topic panel" : "Collapse topic panel"}
+                  aria-expanded={!documentCollapsed}
+                  aria-controls="learning-document"
+                  className="hidden size-8 rounded-lg text-muted-foreground lg:inline-flex"
+                  onClick={() => updatePanels(() => {
+                    setCollapsedDocumentId(documentCollapsed ? null : workspaceId)
+                    setCollapsedChatId(null)
+                  })}
+                >
+                  <PanelsTopLeftIcon className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={chatCollapsed ? "Expand chat panel" : "Collapse chat panel"}
+                  title={chatCollapsed ? "Expand chat panel" : "Collapse chat panel"}
+                  aria-expanded={!chatCollapsed}
+                  aria-controls="learning-chat"
+                  className="hidden size-8 rounded-lg text-muted-foreground lg:inline-flex"
+                  onClick={() => updatePanels(() => {
+                    setCollapsedChatId(chatCollapsed ? null : workspaceId)
+                    setCollapsedDocumentId(null)
+                  })}
+                >
+                  <PanelRightIcon className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Open chat"
+                  aria-expanded={chatOpen}
+                  aria-controls="learning-chat"
+                  className="size-9 rounded-full p-2 lg:hidden"
+                  onClick={() => setChatOpen(true)}
+                >
+                  <MessageSquareIcon className="size-5" />
+                </Button>
+              </>
             ) : null}
-          </header>
-          {banner}
-          <div className="flex min-h-0 flex-1 gap-3 lg:gap-4">{children}</div>
+          </div>
+        </header>
+        <div className="flex min-h-0 flex-1 gap-3 md:p-3 lg:gap-4 lg:p-4">
+          {sidebar}
+          <div className="relative flex min-w-0 flex-1 flex-col">
+            {banner}
+            <div className="flex min-h-0 flex-1">{children}</div>
+          </div>
         </div>
       </div>
     </WorkspaceLayoutContext.Provider>
@@ -110,26 +206,28 @@ export function WorkspaceSidebar({
   footer: ReactNode
   label?: string
 }) {
-  const { sidebarOpen, setSidebarOpen } = useWorkspaceLayout()
+  const { sidebarOpen, sidebarCollapsed, setSidebarOpen, sidebarId, navigationName } =
+    useWorkspaceLayout()
   return (
     <>
       {sidebarOpen ? (
         <Button
           variant="plain"
           size="auto"
-          aria-label="Close topics"
+          aria-label={`Close ${navigationName}`}
           className="fixed inset-0 z-30 bg-black/60 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
       <aside
-        id="topics-sidebar"
+        id={sidebarId}
         aria-label={label}
         className={cn(
           "fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col bg-sidebar transition-transform duration-200 motion-reduce:transition-none md:static md:w-56 md:translate-x-0 md:rounded-[1.75rem] lg:w-60",
           sidebarOpen
             ? "visible translate-x-0"
             : "invisible -translate-x-full md:visible",
+          sidebarCollapsed && "md:hidden",
         )}
       >
         <div className="flex h-24 shrink-0 items-center justify-between px-5">
@@ -137,16 +235,19 @@ export function WorkspaceSidebar({
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Close topics"
+            aria-label={`Close ${navigationName}`}
             className="size-9 rounded-full p-2 text-muted-foreground md:hidden"
             onClick={() => setSidebarOpen(false)}
           >
             <XIcon className="size-5" />
           </Button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5">
+        <ScrollArea
+          className="min-h-0 flex-1"
+          viewportProps={{ className: "px-3 pb-5" }}
+        >
           {children}
-        </div>
+        </ScrollArea>
         {actions ? <div className="px-3 pb-3">{actions}</div> : null}
         <div className="mx-3 flex h-20 shrink-0 items-center gap-2 border-t border-sidebar-border px-1">
           {footer}
@@ -169,57 +270,62 @@ export function WorkspacePanes({
   documentActions?: ReactNode
   chatLabel?: string
 }) {
-  const { chatOpen, setChatOpen } = useWorkspaceLayout()
+  const { chatOpen, documentCollapsed, chatCollapsed, setChatOpen } = useWorkspaceLayout()
   return (
     <>
       <main
+        id="learning-document"
         data-document-pane
-        className="relative min-h-0 min-w-0 flex-1 overflow-hidden md:rounded-[1.75rem] data-[has-chat=true]:bg-card"
-        data-has-chat={chat ? "true" : undefined}
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 overflow-hidden bg-card md:rounded-[1.75rem]",
+          chat && documentCollapsed && "lg:hidden",
+        )}
       >
         {documentActions}
         {body}
       </main>
-      {chat ? (
-        <>
-          {chatOpen ? (
-            <Button
-              variant="plain"
-              size="auto"
-              aria-label="Close chat"
-              className="fixed inset-0 z-30 bg-black/60 lg:hidden"
-              onClick={() => setChatOpen(false)}
-            />
-          ) : null}
-          <aside
-            id="learning-chat"
-            aria-label={chatLabel}
-            className={cn(
-              "fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col bg-sidebar transition-transform duration-200 motion-reduce:transition-none lg:static lg:w-[22rem] lg:shrink-0 lg:translate-x-0 lg:rounded-[1.75rem] xl:w-[25rem]",
-              chatOpen
-                ? "visible translate-x-0"
-                : "invisible translate-x-full lg:visible",
-            )}
-          >
-            <div className="flex h-18 shrink-0 items-center gap-3 border-b border-sidebar-border px-5">
-              <h2 className="text-sm font-semibold">Chat</h2>
-              <span className="ml-auto text-xs text-muted-foreground">
-                {status}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close chat"
-                className="size-9 rounded-full p-2 text-muted-foreground lg:hidden"
-                onClick={() => setChatOpen(false)}
-              >
-                <XIcon className="size-5" />
-              </Button>
-            </div>
-            <div className="min-h-0 flex-1">{chat}</div>
-          </aside>
-        </>
+      {chat && chatOpen ? (
+        <Button
+          variant="plain"
+          size="auto"
+          aria-label="Close chat"
+          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
+          onClick={() => setChatOpen(false)}
+        />
       ) : null}
+      <aside
+        id="learning-chat"
+        aria-label={chatLabel}
+        aria-hidden={!chat}
+        inert={!chat}
+        className={cn(
+          "workspace-chat-pane fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col overflow-hidden bg-sidebar transition-transform duration-200 motion-reduce:transition-none lg:static lg:shrink-0 lg:translate-x-0 lg:rounded-[1.75rem]",
+          chat && chatOpen
+            ? "visible translate-x-0"
+            : "invisible translate-x-full lg:visible",
+          !chat && "hidden",
+          chatCollapsed && "lg:hidden",
+          documentCollapsed
+            ? "lg:min-w-0 lg:flex-1"
+            : "lg:ml-4 lg:w-[22rem] xl:w-[25rem]",
+        )}
+      >
+        <div className="flex h-12 shrink-0 items-center gap-3 px-3 lg:sr-only">
+          <span role="status" className="mr-auto text-xs text-muted-foreground">
+            {status}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Close chat"
+            className="size-9 rounded-full p-2 text-muted-foreground lg:hidden"
+            onClick={() => setChatOpen(false)}
+          >
+            <XIcon className="size-5" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1">{chat}</div>
+      </aside>
     </>
   )
 }

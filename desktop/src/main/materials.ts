@@ -4,14 +4,17 @@ import { basename, extname, join } from "node:path"
 import { dialog } from "electron"
 import { extractText, getDocumentProxy } from "unpdf"
 import { z } from "zod"
-import { MaterialSchema } from "../shared/contracts"
+import { MaterialOwnerSchema, MaterialSchema } from "../shared/contracts"
 import { WorkspaceRepository } from "./workspace"
 
 export async function importMaterials(
   repository: WorkspaceRepository,
-  topicId: string,
+  owner: z.infer<typeof MaterialOwnerSchema>,
 ) {
-  repository.topic(topicId)
+  const collection = owner.kind === "topic" ? "topics" : "chats"
+  const current = () =>
+    owner.kind === "topic" ? repository.topic(owner.id) : repository.chat(owner.id)
+  current()
   const selection = await dialog.showOpenDialog({
     title: "Add learning materials",
     properties: ["openFile", "multiSelections"],
@@ -40,7 +43,7 @@ export async function importMaterials(
   if (selection.filePaths.length > 12)
     throw new Error("Add up to 12 materials at a time.")
   const materials: z.infer<typeof MaterialSchema>[] = []
-  const assetDirectory = join(repository.directory, "topics", topicId, "assets")
+  const assetDirectory = join(repository.directory, collection, owner.id, "assets")
   await mkdir(assetDirectory, { recursive: true })
   for (const source of selection.filePaths) {
     const info = await stat(source)
@@ -75,9 +78,8 @@ export async function importMaterials(
       text = buffer.toString("utf8")
     }
     const name = basename(source)
-    const topic = repository.topic(topicId)
     if (
-      topic.materials.some((item) => item.name === name) ||
+      current().materials.some((item) => item.name === name) ||
       materials.some((item) => item.name === name)
     )
       throw new Error(
@@ -94,10 +96,10 @@ export async function importMaterials(
     await copyFile(source, join(assetDirectory, name))
   }
   await repository.mutate((workspace) => {
-    const topic = workspace.topics.find((item) => item.id === topicId)
-    if (!topic) throw new Error("Topic not found.")
+    const target = workspace[collection].find((item) => item.id === owner.id)
+    if (!target) throw new Error("This topic or chat no longer exists.")
     if (
-      topic.materials.reduce(
+      target.materials.reduce(
         (size, material) => size + material.text.length,
         0,
       ) +
@@ -105,8 +107,8 @@ export async function importMaterials(
       1_000_000
     )
       throw new Error(
-        "This topic has too much source text. Split the materials into smaller topics.",
+        "This has too much source text. Split the materials into smaller topics.",
       )
-    topic.materials.push(...materials)
+    target.materials.push(...materials)
   })
 }

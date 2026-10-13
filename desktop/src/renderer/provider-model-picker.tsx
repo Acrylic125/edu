@@ -256,7 +256,7 @@ export function ProviderModelPicker({
                   else if (status?.connecting) connection = "Connecting…"
                   else if (status?.loading) connection = "Checking…"
                   let title = `${name}: ${connection}`
-                  if (lockProvider && id !== value.provider) title = "This topic keeps its provider"
+                  if (lockProvider && id !== value.provider) title = "This chat keeps its provider"
                   return (
                     <Toolbar.Button
                       key={id}

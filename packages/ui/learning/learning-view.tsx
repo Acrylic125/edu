@@ -8,6 +8,7 @@ import {
 
 import { LearningBooks } from "./learning-books"
 import { Button } from "../primitives/button"
+import { ScrollArea } from "../primitives/scroll-area"
 import { cn } from "../utils"
 
 const learningSuggestions = [
@@ -93,18 +94,15 @@ export function NewTopicView({
   footer?: ReactNode
 }) {
   return (
-    <div className="relative h-full overflow-y-auto">
+    <ScrollArea className="h-full">
       {status ? (
         <div className="absolute right-6 top-5 max-w-[calc(100%-3rem)] text-right">
           {status}
         </div>
       ) : null}
-      <div className="mx-auto flex min-h-full w-full max-w-[850px] flex-col justify-center px-5 py-12 sm:px-8 lg:px-10">
+      <div className="mx-auto flex min-h-full w-full max-w-[850px] flex-1 flex-col justify-center px-5 py-12 sm:px-8 lg:px-10">
         <div className="mb-8 flex items-center justify-between gap-4 sm:mb-10">
           <div className="max-w-lg">
-            <span className="mb-5 flex size-12 items-center justify-center rounded-full bg-learning-yellow text-primary">
-              <BookOpenIcon className="size-5" aria-hidden="true" />
-            </span>
             <h1 className="text-3xl font-semibold leading-[1.12] tracking-[-0.045em] sm:text-4xl lg:text-[2.75rem]">
               What will you
               <br className="hidden sm:block" /> learn today?
@@ -126,7 +124,7 @@ export function NewTopicView({
           </p>
         ) : null}
       </div>
-    </div>
+    </ScrollArea>
   )
 }
 
@@ -144,7 +142,10 @@ export function LearningDocumentLayout({
   actions?: ReactNode
 }) {
   return (
-    <div data-document-scroll className="h-full overflow-y-auto">
+    <ScrollArea
+      className="workspace-document-enter h-full"
+      viewportProps={{ render: <div data-document-scroll /> }}
+    >
       <article className="mx-auto w-full max-w-[850px] px-6 pb-24 pt-12 sm:px-12 lg:pt-16">
         <div className="mx-auto max-w-[700px]">
           <h1
@@ -161,7 +162,7 @@ export function LearningDocumentLayout({
           {actions}
         </div>
       </article>
-    </div>
+    </ScrollArea>
   )
 }
 

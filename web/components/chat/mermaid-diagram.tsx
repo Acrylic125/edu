@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react"
 import { useThemeMode } from "@/components/theme/theme-provider"
 
 import { ImagePreviewDialog } from "@/components/chat/composer-attachments"
+import { Button } from "@/components/ui/button"
 
 const mermaidSvgCache = new Map<string, string>()
 let renderQueue = Promise.resolve()
@@ -135,7 +136,9 @@ export function MermaidDiagram({
 
   return (
     <>
-      <button
+      <Button
+        variant="plain"
+        size="auto"
         type="button"
         className="block w-full cursor-zoom-in text-left"
         aria-label="Preview Mermaid diagram"
@@ -147,7 +150,7 @@ export function MermaidDiagram({
           className="mermaid-diagram block h-[min(70vh,32rem)] w-full overflow-auto rounded-md border border-border bg-card p-3 [&_svg]:h-auto [&_svg]:w-full [&_svg]:max-w-none!"
           dangerouslySetInnerHTML={{ __html: svg }}
         />
-      </button>
+      </Button>
       <ImagePreviewDialog
         image={{ name: "Mermaid diagram", previewUrl }}
         open={previewOpen}
