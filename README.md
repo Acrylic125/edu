@@ -1,8 +1,7 @@
 # EdU
 
-EdU ships as a standalone Electron tutoring app. The web version is paused and is
-not part of the release. The legacy production deployment workflow is disabled;
-web deployment and upload commands exit with an explanation.
+EdU ships as a standalone Electron tutoring app. The deprecated web app and its
+legacy deployment workflow have been removed.
 
 ## Desktop development
 
@@ -24,4 +23,15 @@ runtime; OpenRouter connects through browser sign-in. Claude and Antigravity use
 your installed, signed-in CLI, configured with an absolute binary path.
 
 See [desktop/README.md](desktop/README.md) for account setup, packaging, and harness
-boundaries. The backend and Next.js source remain available for future work.
+boundaries. The repository contains the desktop app, its shared UI package, and
+an Astro landing page.
+
+## Landing page
+
+```sh
+pnpm --dir landing install --frozen-lockfile
+pnpm landing:dev
+pnpm landing:build
+```
+
+See [landing/README.md](landing/README.md) for checks and button link configuration.

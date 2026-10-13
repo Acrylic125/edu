@@ -3,6 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.26.0",
   "scripts": {
+    "landing:dev": "pnpm --dir landing dev",
+    "landing:build": "pnpm --dir landing build",
+    "landing:check": "pnpm --dir landing check",
     "test": "pnpm --dir desktop test",
     "test:e2e": "pnpm --dir desktop test:smoke",
     "e2e:dev": "pnpm --dir desktop exec playwright test --ui",
