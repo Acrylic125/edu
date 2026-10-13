@@ -1,7 +1,15 @@
 "use client"
 
-import { createContext, useContext, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { flushSync } from "react-dom"
+import { Group, Panel, usePanelRef } from "react-resizable-panels"
 import {
   MenuIcon,
   MessageSquareIcon,
@@ -14,6 +22,8 @@ import {
 import { Button } from "../primitives/button"
 import { ScrollArea } from "../primitives/scroll-area"
 import { cn } from "../utils"
+import { useWorkspaceMedia } from "./use-workspace-media"
+import { WorkspaceResizeHandle } from "./workspace-resize-handle"
 
 export { TopicNavigation, TopicNavigationItem } from "./topic-navigation"
 
@@ -66,6 +76,15 @@ export function WorkspaceFrame({
   const documentCollapsed = collapsedDocumentId === workspaceId
   const chatCollapsed = collapsedChatId === workspaceId
   const sidebarId = `${navigationName}-sidebar`
+  const desktopNavigation = useWorkspaceMedia("(min-width: 48rem)")
+  const showSidebar = desktopNavigation && !sidebarCollapsed
+  const sidebarPanel = usePanelRef()
+  const sidebarWidth = useRef(240)
+
+  // Drawer constraints set the panel to zero, so restore its preferred desktop width.
+  useLayoutEffect(() => {
+    if (showSidebar) sidebarPanel.current?.resize(sidebarWidth.current)
+  }, [showSidebar, sidebarPanel])
 
   function closeNavigation() {
     setSidebarOpen(false)
@@ -181,12 +200,45 @@ export function WorkspaceFrame({
             ) : null}
           </div>
         </header>
-        <div className="flex min-h-0 flex-1 gap-3 md:p-3 lg:gap-4 lg:p-4">
-          {sidebar}
-          <div className="relative flex min-w-0 flex-1 flex-col">
-            {banner}
-            <div className="flex min-h-0 flex-1">{children}</div>
-          </div>
+        <div className="flex min-h-0 flex-1 md:p-3 lg:p-4">
+          <Group
+            id="workspace-navigation"
+            className="min-h-0 min-w-0 flex-1"
+            disabled={!showSidebar}
+            style={{ overflow: "visible" }}
+            onLayoutChanged={(_layout, { isUserInteraction }) => {
+              if (isUserInteraction && showSidebar && sidebarPanel.current) {
+                sidebarWidth.current = sidebarPanel.current.getSize().inPixels
+              }
+            }}
+          >
+            <Panel
+              id="workspace-sidebar-panel"
+              panelRef={sidebarPanel}
+              defaultSize="15rem"
+              minSize={showSidebar ? "12rem" : 0}
+              maxSize={showSidebar ? "20rem" : 0}
+              groupResizeBehavior="preserve-pixel-size"
+              style={{ overflow: "visible" }}
+              className="flex min-h-0 flex-col"
+            >
+              {sidebar}
+            </Panel>
+            <WorkspaceResizeHandle
+              aria-label={`Resize ${navigationName} panel`}
+              className={cn("hidden md:flex", !showSidebar && "md:hidden")}
+              disabled={!showSidebar}
+            />
+            <Panel
+              id="workspace-content-panel"
+              minSize="20rem"
+              className="relative flex min-h-0 flex-col"
+              style={{ overflow: "visible" }}
+            >
+              {banner}
+              <div className="flex min-h-0 flex-1">{children}</div>
+            </Panel>
+          </Group>
         </div>
       </div>
     </WorkspaceLayoutContext.Provider>
@@ -223,7 +275,7 @@ export function WorkspaceSidebar({
         id={sidebarId}
         aria-label={label}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col bg-sidebar transition-transform duration-200 motion-reduce:transition-none md:static md:w-56 md:translate-x-0 md:rounded-[1.75rem] lg:w-60",
+          "fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col bg-sidebar transition-transform duration-200 motion-reduce:transition-none md:static md:h-full md:w-full md:translate-x-0 md:rounded-[1.75rem]",
           sidebarOpen
             ? "visible translate-x-0"
             : "invisible -translate-x-full md:visible",
@@ -271,19 +323,54 @@ export function WorkspacePanes({
   chatLabel?: string
 }) {
   const { chatOpen, documentCollapsed, chatCollapsed, setChatOpen } = useWorkspaceLayout()
+  const desktopPanes = useWorkspaceMedia("(min-width: 64rem)")
+  const showDocument = !desktopPanes || !chat || !documentCollapsed
+  const showChat = desktopPanes && !!chat && !chatCollapsed
+  const canResize = showDocument && showChat
+  const chatPanel = usePanelRef()
+  const chatSize = useRef("25rem")
+
+  // Preserve the user's split while collapse and mobile drawers override panel sizes.
+  useLayoutEffect(() => {
+    if (canResize) chatPanel.current?.resize(chatSize.current)
+  }, [canResize, chatPanel])
+
   return (
-    <>
-      <main
-        id="learning-document"
-        data-document-pane
-        className={cn(
-          "relative min-h-0 min-w-0 flex-1 overflow-hidden bg-card md:rounded-[1.75rem]",
-          chat && documentCollapsed && "lg:hidden",
-        )}
+    <Group
+      id="workspace-panes"
+      className="min-h-0 min-w-0 flex-1"
+      disabled={!canResize}
+      style={{ overflow: "visible" }}
+      onLayoutChanged={(layout, { isUserInteraction, requestedLayout }) => {
+        if (isUserInteraction && canResize) {
+          const preferredLayout = requestedLayout ?? layout
+          chatSize.current = `${preferredLayout["workspace-chat-panel"]}%`
+        }
+      }}
+    >
+      <Panel
+        id="workspace-document-panel"
+        minSize={desktopPanes && showDocument ? "20rem" : 0}
+        maxSize={showDocument ? "100%" : 0}
+        className="flex min-h-0 flex-col"
       >
-        {documentActions}
-        {body}
-      </main>
+        <main
+          id="learning-document"
+          data-document-pane
+          className={cn(
+            "relative min-h-0 min-w-0 flex-1 overflow-hidden bg-card md:rounded-[1.75rem]",
+            chat && documentCollapsed && "lg:hidden",
+          )}
+        >
+          {documentActions}
+          {body}
+        </main>
+      </Panel>
+      <WorkspaceResizeHandle
+        aria-label="Resize topic and chat panels"
+        className={cn("hidden lg:flex", !canResize && "lg:hidden")}
+        disabled={!canResize}
+      />
       {chat && chatOpen ? (
         <Button
           variant="plain"
@@ -293,39 +380,46 @@ export function WorkspacePanes({
           onClick={() => setChatOpen(false)}
         />
       ) : null}
-      <aside
-        id="learning-chat"
-        aria-label={chatLabel}
-        aria-hidden={!chat}
-        inert={!chat}
-        className={cn(
-          "workspace-chat-pane fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col overflow-hidden bg-sidebar transition-transform duration-200 motion-reduce:transition-none lg:static lg:shrink-0 lg:translate-x-0 lg:rounded-[1.75rem]",
-          chat && chatOpen
-            ? "visible translate-x-0"
-            : "invisible translate-x-full lg:visible",
-          !chat && "hidden",
-          chatCollapsed && "lg:hidden",
-          documentCollapsed
-            ? "lg:min-w-0 lg:flex-1"
-            : "lg:ml-4 lg:w-[22rem] xl:w-[25rem]",
-        )}
+      <Panel
+        id="workspace-chat-panel"
+        panelRef={chatPanel}
+        defaultSize="25rem"
+        minSize={showChat ? "20rem" : 0}
+        maxSize={showChat ? "100%" : 0}
+        className="flex min-h-0 flex-col"
+        style={{ overflow: "visible" }}
       >
-        <div className="flex h-12 shrink-0 items-center gap-3 px-3 lg:sr-only">
-          <span role="status" className="mr-auto text-xs text-muted-foreground">
-            {status}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close chat"
-            className="size-9 rounded-full p-2 text-muted-foreground lg:hidden"
-            onClick={() => setChatOpen(false)}
-          >
-            <XIcon className="size-5" />
-          </Button>
-        </div>
-        <div className="min-h-0 flex-1">{chat}</div>
-      </aside>
-    </>
+        <aside
+          id="learning-chat"
+          aria-label={chatLabel}
+          aria-hidden={!chat}
+          inert={!chat}
+          className={cn(
+            "workspace-chat-pane fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col overflow-hidden bg-sidebar transition-transform duration-200 motion-reduce:transition-none lg:static lg:h-full lg:w-full lg:translate-x-0 lg:rounded-[1.75rem]",
+            chat && chatOpen
+              ? "visible translate-x-0"
+              : "invisible translate-x-full lg:visible",
+            !chat && "hidden",
+            chatCollapsed && "lg:hidden",
+          )}
+        >
+          <div className="flex h-12 shrink-0 items-center gap-3 px-3 lg:sr-only">
+            <span role="status" className="mr-auto text-xs text-muted-foreground">
+              {status}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close chat"
+              className="size-9 rounded-full p-2 text-muted-foreground lg:hidden"
+              onClick={() => setChatOpen(false)}
+            >
+              <XIcon className="size-5" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1">{chat}</div>
+        </aside>
+      </Panel>
+    </Group>
   )
 }
