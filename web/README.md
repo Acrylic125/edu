@@ -63,6 +63,7 @@ routes `edu.benapps.dev` to `edu-web-production-ben`.
 
 ```bash
 cd ../../web
+pnpm --dir ../packages/ui install --frozen-lockfile
 pnpm install --frozen-lockfile
 pnpm run deploy:production-ben
 ```
