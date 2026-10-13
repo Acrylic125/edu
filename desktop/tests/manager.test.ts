@@ -12,6 +12,7 @@ import {
 import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
 import { RunnerManager } from "../src/runners/manager"
 import { topicMention } from "../src/shared/topic-mentions"
+import * as titles from "../src/runners/title"
 
 class ManagedProcess extends EventEmitter {
   pid = 1234
@@ -39,6 +40,7 @@ vi.mock("electron", () => ({
 const directories: string[] = []
 const managers: RunnerManager[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(managers.splice(0).map((manager) => manager.shutdown()))
   await Promise.all(
     directories
@@ -192,6 +194,43 @@ test("rejects tags for missing topics and confirms only a drafted plan", async (
   expect(children[0].jobs[0].topics[0].planConfirmed).toBe(true)
 })
 
+test("passes the open topic and its saved progress to the worker without modifying the learner's message", async () => {
+  const { manager, repository, first, topic } = await fixture()
+  await repository.mutate((state) => {
+    const current = state.topics.find((item) => item.id === topic.id)
+    if (!current) throw new Error("Missing fixture topic")
+    current.learning.nextAction = "Explain derivatives next."
+  })
+  await manager.send({ chatId: first.id, content: "What is next?", openedTopicId: topic.id })
+  const job = children[0].jobs[0]
+  expect(job.openedTopicId).toBe(topic.id)
+  expect(job.topics.map((item) => item.id)).toEqual([topic.id])
+  expect(job.topics[0].learning.nextAction).toBe("Explain derivatives next.")
+  expect(repository.chat(first.id).messages[0].content).toBe("What is next?")
+  expect(repository.chat(first.id).messages[0].topicIds).toEqual([topic.id])
+  expect(repository.topic(topic.id).planConfirmed).toBe(false)
+})
+
+test("keeps explicit topic mentions alongside the current open topic", async () => {
+  const { manager, first, topic, other } = await fixture()
+  await manager.send({
+    chatId: first.id,
+    content: `${topicMention(other.id, other.title)} Compare this with the open topic`,
+    openedTopicId: topic.id,
+  })
+  expect(children[0].jobs[0].openedTopicId).toBe(topic.id)
+  expect(children[0].jobs[0].topics.map((item) => item.id)).toEqual(expect.arrayContaining([topic.id, other.id]))
+  expect(children[0].jobs[0].topics).toHaveLength(2)
+})
+
+test("rejects a missing open topic before saving a message or starting a worker", async () => {
+  const { manager, repository, first } = await fixture()
+  await expect(manager.send({ chatId: first.id, content: "Continue", openedTopicId: randomUUID() }))
+    .rejects.toThrow("This topic no longer exists")
+  expect(repository.chat(first.id).messages).toHaveLength(0)
+  expect(children).toHaveLength(0)
+})
+
 test("restarts cleanly after a model failure", async () => {
   const { manager, first } = await fixture()
   await manager.send({ chatId: first.id, content: "Explain" })
@@ -243,7 +282,7 @@ test("persists failed-turn tool diagnostics with a trace ID and redacts credenti
   })
 })
 
-test("names the chat and a topic started from it, without replacing either on retry", async () => {
+test("names the chat without renaming its tagged topic, including on retry", async () => {
   const { manager, repository, first, topic } = await fixture()
   await manager.send({
     chatId: first.id,
@@ -252,8 +291,8 @@ test("names the chat and a topic started from it, without replacing either on re
   children[0].emit("message", { type: "title", title: "Introduction to Calculus" })
   await vi.waitFor(() => expect(repository.chat(first.id).titleGenerated).toBe(true))
   expect(repository.chat(first.id).title).toBe("Introduction to Calculus")
-  expect(repository.topic(topic.id).title).toBe("Introduction to Calculus")
-  expect(repository.topic(topic.id).learning.notes).toContain("# Introduction to Calculus")
+  expect(repository.topic(topic.id).title).toBe("Calculus")
+  expect(repository.topic(topic.id).learning.notes).toContain("# Calculus")
   expect(manager.statuses[0].status).toBe("running")
   children[0].emit("message", { type: "error", error: "Lesson failed" })
   const restored = new WorkspaceRepository(repository.directory)
@@ -264,5 +303,66 @@ test("names the chat and a topic started from it, without replacing either on re
   children[1].emit("message", { type: "title", title: "Another title" })
   await repository.mutate(() => {})
   expect(repository.chat(first.id).title).toBe("Introduction to Calculus")
-  expect(repository.topic(topic.id).title).toBe("Introduction to Calculus")
+  expect(repository.topic(topic.id).title).toBe("Calculus")
+})
+
+test("generates a topic title from the suggestion before persisting it", async () => {
+  const { manager, repository, second } = await fixture()
+  let finish = (_title: string) => {}
+  const generation = vi.spyOn(titles, "generateTopicTitle").mockImplementation(
+    () => new Promise<string>((resolve) => { finish = resolve }),
+  )
+  const suggestion = "Help me learn calculus, starting with limits and derivatives."
+  const creation = manager.createTopic({ title: suggestion, runnerId: second.runnerId })
+  await vi.waitFor(() => expect(generation).toHaveBeenCalled())
+  expect(repository.stateSnapshot.topics).toHaveLength(2)
+  expect(generation).toHaveBeenCalledWith(
+    expect.objectContaining({ runner: expect.objectContaining({ id: second.runnerId }) }),
+    suggestion, undefined, expect.any(Function), expect.any(Function),
+  )
+  finish("Introduction to Calculus")
+  const id = await creation
+  expect(repository.topic(id)).toMatchObject({ title: "Introduction to Calculus", titleGenerated: true })
+  expect(await readFile(join(repository.directory, "topics", id, "topic.md"), "utf8")).toMatch(/^# Introduction to Calculus\n/)
+  expect((await new WorkspaceRepository(repository.directory).load()).topics.find((topic) => topic.id === id)?.title).toBe("Introduction to Calculus")
+})
+
+test("does not create a topic when naming fails and allows retry", async () => {
+  const { manager, repository } = await fixture()
+  const generation = vi.spyOn(titles, "generateTopicTitle")
+    .mockRejectedValueOnce(new Error("Naming failed"))
+    .mockResolvedValueOnce("Introduction to Geometry")
+  await expect(manager.createTopic({ title: "Teach me geometry" })).rejects.toThrow("Naming failed")
+  expect(repository.stateSnapshot.topics).toHaveLength(2)
+  await expect(manager.createTopic({ title: "Teach me geometry" })).resolves.toBeDefined()
+  expect(generation).toHaveBeenCalledTimes(2)
+  await expect(manager.createTopic({ title: "Geometry", runnerId: randomUUID() })).rejects.toThrow("Runner not found")
+})
+
+
+test("marks a native session pending before dispatch and commits its binding with the reply", async () => {
+  const { manager, repository, first } = await fixture()
+  const session = { provider: "codex" as const, threadId: "native-thread", home: "/private/codex", executable: "/bundled/codex", toolVersion: 1 as const, status: "ready" as const }
+  await repository.mutate((state) => { state.chats[0].providerSession = session })
+  await manager.send({ chatId: first.id, content: "Continue" })
+  expect(children[0].jobs[0].chat.providerSession).toEqual(session)
+  expect(repository.chat(first.id).providerSession?.status).toBe("pending")
+  const before = await new WorkspaceRepository(repository.directory).load()
+  expect(before.chats.find((chat) => chat.id === first.id)?.providerSession?.status).toBe("pending")
+  children[0].emit("message", { type: "result", reply: "A committed reply.", learning: first.learning, providerSession: session })
+  await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
+  const after = await new WorkspaceRepository(repository.directory).load()
+  expect(after.chats.find((chat) => chat.id === first.id)?.providerSession).toEqual(session)
+  expect(after.chats.find((chat) => chat.id === first.id)?.messages.at(-1)?.content).toBe("A committed reply.")
+  expect(repository.publicChats[0]).not.toHaveProperty("providerSession")
+})
+
+test("keeps interrupted native sessions pending across restart", async () => {
+  const { manager, repository, first } = await fixture()
+  await repository.mutate((state) => { state.chats[0].providerSession = { provider: "codex", threadId: "native-thread", home: "/private/codex", executable: "/bundled/codex", toolVersion: 1, status: "ready" } })
+  await manager.send({ chatId: first.id, content: "Interrupted" })
+  manager.stop(first.runnerId)
+  await manager.send({ chatId: first.id, content: "Retry" })
+  expect(children[1].jobs[0].chat.providerSession?.status).toBe("pending")
+  expect((await new WorkspaceRepository(repository.directory).load()).chats.find((chat) => chat.id === first.id)?.providerSession?.status).toBe("pending")
 })

@@ -1,8 +1,44 @@
 import { spawn } from "node:child_process"
-import { mkdir, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { access, constants, mkdir, stat, writeFile } from "node:fs/promises"
+import { delimiter, isAbsolute, join, resolve } from "node:path"
+import { homedir } from "node:os"
 import { z } from "zod"
 import { CliConnectionSchema } from "../shared/contracts"
+
+export async function resolveCliExecutable(provider: z.infer<typeof CliConnectionSchema>["provider"], binaryPath?: string) {
+  if (binaryPath) {
+    if (!(await stat(binaryPath)).isFile()) throw new Error("The configured CLI is not an executable file.")
+    await access(binaryPath, constants.X_OK)
+    return binaryPath
+  }
+  const environment = z.object({ PATH: z.string().default(""), LOCALAPPDATA: z.string().optional(), APPDATA: z.string().optional() }).parse(process.env)
+  let name = "claude"
+  if (provider === "antigravity") name = "agy"
+  const names = [name]
+  if (process.platform === "win32") names.unshift(`${name}.exe`)
+  // Finder-launched apps do not inherit the user's shell PATH.
+  const directories = [
+    ...environment.PATH.split(delimiter).filter(isAbsolute),
+    join(homedir(), ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ]
+  if (environment.LOCALAPPDATA) directories.push(join(environment.LOCALAPPDATA, "agy", "bin"))
+  if (environment.APPDATA) directories.push(join(environment.APPDATA, "npm"))
+  for (const directory of new Set(directories)) {
+    for (const name of names) {
+      const executable = resolve(directory, name)
+      try {
+        if (!(await stat(executable)).isFile()) continue
+        await access(executable, constants.X_OK)
+        return executable
+      } catch {
+        // Missing or inaccessible candidates are expected while searching installations.
+      }
+    }
+  }
+  throw new Error(`Install ${provider === "claude" ? "Claude Code" : "Antigravity CLI"}, then click Connect. For a custom installation, set its binary path in provider settings.`)
+}
 
 export async function prepareCliWorkspace(connection: z.infer<typeof CliConnectionSchema>) {
   await mkdir(connection.directory, { recursive: true, mode: 0o700 })

@@ -9,7 +9,7 @@ import type { ChatCompletionMessage } from "openai/resources/chat/completions"
 import { afterEach, expect, test } from "vitest"
 import { newChat, newTopic } from "../src/main/workspace"
 import { topicMention } from "../src/shared/topic-mentions"
-import { runTutorTurn } from "../src/runners/tutor"
+import { createTutorSession, runTutorTurn } from "../src/runners/tutor"
 import { generateTopicTitle } from "../src/runners/title"
 import { ProviderModelSchema } from "../src/shared/contracts"
 import type { LearningState, WorkerJob } from "../src/shared/contracts"
@@ -127,6 +127,22 @@ function saveTopic(topicId: string, learning: LearningState) {
 function reply(content: string): ChatCompletionMessage {
   return { role: "assistant", content, refusal: null }
 }
+
+test("the tutor receives the currently open topic and saved next action alongside older chat topics", async () => {
+  const input = job()
+  const topic = newTopic("Automata")
+  topic.learning.nextAction = "Discuss deterministic finite automata."
+  const session = await createTutorSession({
+    ...input,
+    openedTopicId: topic.id,
+    topics: [...input.topics, { ...topic, assetDirectory: resolve("tests") }],
+  }, () => {})
+  expect(session.instructions).toContain(`Currently open topic: ${topic.id}`)
+  expect(session.instructions).toContain(topic.learning.nextAction)
+  expect(session.instructions).toContain("Explicit topic mentions or instructions take precedence")
+  const withoutOpenTopic = await createTutorSession(input, () => {})
+  expect(withoutOpenTopic.instructions).toContain("Currently open topic: none")
+})
 
 test("requires a valid saved handoff before returning a learner reply", async () => {
   const input = job()
@@ -288,7 +304,7 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
   const topic = input.topics[0]
   topic.assetDirectory = directory
   await copyFile(
-    resolve("tests/fixtures/limits.pdf"),
+    resolve("tests/fixtures/diagram.pdf"),
     join(directory, "limits.pdf"),
   )
   const pdf = await getDocumentProxy(
@@ -348,13 +364,13 @@ test("OpenRouter title requests use the inexpensive model and bound the request"
     ...original,
     titleModel: ProviderModelSchema.parse({ id: "cheap-title-model", name: "Cheap title model" }),
   }
-  expect(await generateTopicTitle(input, mock.client, () => {}, () => {})).toBe("Introduction to Limits")
+  expect(await generateTopicTitle(input, input.chat.messages.find((message) => message.role === "user")?.content ?? "", mock.client, () => {}, () => {})).toBe("Introduction to Limits")
   expect(JSON.parse(mock.requests[0])).toMatchObject({
     model: "cheap-title-model",
     max_tokens: 80,
     messages: [{ role: "system" }, { role: "user", content: "@Limits Teach me limits" }],
   })
   expect(input.runner.model).toBe("test")
-  await expect(generateTopicTitle(original, mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")
+  await expect(generateTopicTitle(original, original.chat.messages.find((message) => message.role === "user")?.content ?? "", mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")
   expect(mock.requests).toHaveLength(1)
 })

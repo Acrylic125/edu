@@ -34,7 +34,8 @@ process.parentPort.on("message", async (event) => {
     if (!job.cli && !job.chat.titleGenerated && !job.chat.messages.some((message) => message.role === "assistant")) {
       activity("Naming your chat")
       try {
-        const title = await generateTopicTitle(job, client, processChanged, diagnostic)
+        const request = job.chat.messages.find((message) => message.role === "user")?.content ?? ""
+        const title = await generateTopicTitle(job, request, client, processChanged, diagnostic)
         job.chat.title = title
         job.chat.titleGenerated = true
         process.parentPort.postMessage({ type: "title", title })

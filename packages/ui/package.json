@@ -13,11 +13,11 @@
     "./theme": "./theme/index.ts",
     "./theme-provider": "./theme/provider.tsx",
     "./theme-utils": "./theme/utils.ts",
-    "./dropdown-menu": "./primitives/dropdown-menu.tsx",
     "./theme.css": "./theme.css",
     "./math.css": "./math.css"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.18",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "react-resizable-panels": "^4.14.5",

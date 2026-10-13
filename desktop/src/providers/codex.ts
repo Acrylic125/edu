@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises"
+import { access, constants, mkdir } from "node:fs/promises"
 import { z } from "zod"
 import {
   ProviderStatusSchema,
@@ -149,22 +149,32 @@ export class CodexProvider {
     this.state.loading = true
     this.state.error = undefined
     this.notify()
+    let accountChecked = false
     try {
+      this.state.installed = false
+      await access(this.connection.executable, constants.X_OK)
+      this.state.installed = true
       const client = await this.server()
       const { account } = await client.request(
         "account/read",
         { refreshToken: false },
         AccountSchema,
       )
+      accountChecked = true
       this.state.connected = account !== null
       this.state.account = account?.email
       if (!this.state.account && account) this.state.account = "OpenAI account"
       this.state.models = await readCodexModels(client)
     } catch (error) {
+      if (!accountChecked) {
+        this.state.connected = false
+        this.state.account = undefined
+      }
       this.state.error =
         error instanceof Error ? error.message : "Could not refresh Codex."
     } finally {
       this.state.loading = false
+      this.state.checkedAt = new Date().toISOString()
       this.notify()
     }
   }

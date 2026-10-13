@@ -1,8 +1,15 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 
 const args = process.argv.slice(2)
+if (process.env.EDU_TEST_CLI_FAIL_CONNECTION === "1" && args[0] !== "models" && args[0] !== "auth") process.exit(1)
 if (args[0] === "auth") {
+  const authFile = process.env.EDU_TEST_CLI_AUTH_FILE
+  if (authFile && args[1] === "login") writeFileSync(authFile, "signed-in")
+  if (authFile && !existsSync(authFile)) {
+    console.log(JSON.stringify({ loggedIn: false, authMethod: "none" }))
+    process.exit(1)
+  }
   console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "learner@example.test" }))
 } else if (args[0] === "models") {
   console.log("gemini-test  Gemini fixture model")
@@ -11,6 +18,8 @@ if (args[0] === "auth") {
 } else {
   const input = readFileSync(0, "utf8")
   let action = { ready: true }
+  if (input.includes("Suggested topic:\n"))
+    action = { title: "Introduction to Limits" }
   const delimiter = "Conversation and tool results:\n"
   if (input.includes(delimiter)) {
     const transcript = JSON.parse(input.split(delimiter)[1])

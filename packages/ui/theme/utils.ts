@@ -2,12 +2,6 @@ export type ThemeMode = "light" | "dark" | "system"
 
 export const THEME_STORAGE_KEY = "edu-theme"
 
-export const THEME_MODES = [
-  "system",
-  "light",
-  "dark",
-] as const satisfies ReadonlyArray<ThemeMode>
-
 export function isThemeMode(
   value: string | null | undefined,
 ): value is ThemeMode {
@@ -66,19 +60,4 @@ export function applyThemeMode(
     "dark",
     resolveIsDark(mode, systemPrefersDark),
   )
-}
-
-export function themeModeLabel(mode: ThemeMode): string {
-  switch (mode) {
-    case "light":
-      return "Light"
-    case "dark":
-      return "Dark"
-    case "system":
-      return "System"
-    default: {
-      const _exhaustive: never = mode
-      return _exhaustive
-    }
-  }
 }

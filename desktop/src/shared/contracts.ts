@@ -30,6 +30,8 @@ export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   name: z.string(),
   connected: z.boolean(),
+  installed: z.boolean().default(false),
+  checkedAt: z.string().datetime().optional(),
   connecting: z.boolean().default(false),
   loading: z.boolean().default(false),
   account: z.string().optional(),
@@ -109,9 +111,18 @@ export const TopicSchema = z.object({
   materials: z.array(MaterialSchema),
   learning: LearningStateSchema,
 })
+export const ProviderSessionSchema = z.object({
+  provider: z.literal("codex"),
+  threadId: z.string().min(1),
+  home: z.string().min(1),
+  executable: z.string().min(1),
+  toolVersion: z.literal(1),
+  status: z.enum(["ready", "pending"]),
+})
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true }).extend({
   runnerId: IdSchema,
   messages: z.array(MessageSchema),
+  providerSession: ProviderSessionSchema.optional(),
 })
 export const WorkspaceSchema = z.object({
   version: z.literal(2),
@@ -165,6 +176,7 @@ export const PublicTopicSchema = TopicSchema.omit({
   materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
 })
 export const PublicChatSchema = ChatSchema.omit({
+  providerSession: true,
   learning: true,
   materials: true,
 }).extend({
@@ -179,17 +191,29 @@ export const SnapshotSchema = z.object({
   providers: z.array(ProviderStatusSchema),
 })
 export const CreateTopicSchema = z.object({
-  title: z.string().trim().min(1).max(150),
+  title: z.string().trim().min(1).max(30_000),
+  runnerId: IdSchema.optional(),
 })
 export const CreateChatSchema = z.object({ runnerId: IdSchema })
 export const SendSchema = z.object({
   chatId: IdSchema,
   content: z.string().trim().min(1).max(30_000),
   confirmTopicId: IdSchema.optional(),
+  openedTopicId: IdSchema.optional(),
 })
 export const MaterialOwnerSchema = z.object({
   kind: z.enum(["topic", "chat"]),
   id: IdSchema,
+})
+export const MaterialDraftSchema = MaterialSchema.pick({ id: true, name: true })
+export const MaterialDraftIdsSchema = z.array(IdSchema).max(12)
+export const DroppedMaterialsSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1).max(12),
+  draftIds: MaterialDraftIdsSchema.default([]),
+})
+export const ImportMaterialsSchema = z.object({
+  owner: MaterialOwnerSchema,
+  draftIds: MaterialDraftIdsSchema.default([]),
 })
 export const TopicUpdateSchema = z.object({
   topicId: IdSchema,
@@ -206,6 +230,7 @@ export const WorkerJobSchema = z.object({
   skillDirectory: z.string(),
   assetDirectory: z.string(),
   confirmTopicId: IdSchema.optional(),
+  openedTopicId: IdSchema.optional(),
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
@@ -224,6 +249,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
     topicUpdates: z.array(TopicUpdateSchema).default([]),
+    providerSession: ProviderSessionSchema.optional(),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
@@ -244,9 +270,12 @@ export const Channel = {
   createChat: "prune:create-chat",
   send: "prune:send",
   importMaterials: "prune:import-materials",
+  selectMaterials: "prune:select-materials",
+  dropMaterials: "prune:drop-materials",
   exportNotes: "prune:export-notes",
   openDiagnostics: "prune:open-diagnostics",
   openWorkspace: "prune:open-workspace",
+  openMaterial: "prune:open-material",
 } as const
 
 export type Snapshot = z.infer<typeof SnapshotSchema>
@@ -263,7 +292,7 @@ export type DesktopBridge = {
   cancelConnection: (
     provider: z.infer<typeof ProviderIdSchema>,
   ) => Promise<void>
-  refreshProviders: () => Promise<void>
+  refreshProviders: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
   saveProvider: (input: z.input<typeof ProviderSettingsSchema>) => Promise<void>
   updateRunner: (
     id: string,
@@ -276,8 +305,11 @@ export type DesktopBridge = {
   createTopic: (input: z.infer<typeof CreateTopicSchema>) => Promise<string>
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
-  importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>) => Promise<void>
+  selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
+  dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
+  importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>, draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
   exportNotes: (topicId: string) => Promise<void>
   openDiagnostics: (chatId: string) => Promise<void>
   openWorkspace: (topicId: string) => Promise<void>
+  openMaterial: (materialId: string) => Promise<void>
 }

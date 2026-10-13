@@ -99,6 +99,11 @@ createInterface({input:process.stdin}).on("line",line=>{
  else if(message.method==="account/login/cancel") send({id:message.id,result:{status:"canceled"}})
  else if(message.method==="model/list") send({id:message.id,result:{data:[{model:"test-model",displayName:"Fixture model",isDefault:true,defaultReasoningEffort:"medium",supportedReasoningEfforts:[{reasoningEffort:"medium"},{reasoningEffort:"high"}]},...(${JSON.stringify(mode)}.startsWith("title")?[{model:"gpt-6-luna",displayName:"GPT-6 Luna",supportedReasoningEfforts:[{reasoningEffort:"low"},{reasoningEffort:"none"}]}]:[])],nextCursor:null}})
  else if(message.method==="thread/start") send({id:message.id,result:{thread:{id:"thread"}}})
+ else if(message.method==="thread/resume") {
+  if(${JSON.stringify(mode)}==="resume-missing") send({id:message.id,error:{code:-32000,message:"Thread not found"}})
+  else if(${JSON.stringify(mode)}==="resume-network") send({id:message.id,error:{code:-32000,message:"Provider temporarily unavailable"}})
+  else send({id:message.id,result:{thread:{id:"thread"}}})
+ }
  else if(message.method==="turn/start") {
   turns++
   send({id:message.id,result:{turn:{id:"turn"}}})
@@ -170,7 +175,7 @@ test("bundled Codex initializes, reads an isolated account, and discovers models
       model: model.id,
       sandbox: "read-only",
       approvalPolicy: "never",
-      ephemeral: true,
+      ephemeral: false,
       baseInstructions: session.instructions,
       dynamicTools: session.tools.map((tool) => {
         if (tool.type !== "function")
@@ -186,6 +191,22 @@ test("bundled Codex initializes, reads an isolated account, and discovers models
     z.object({ thread: z.object({ id: z.string() }) }),
   )
   expect(thread.thread.id).not.toBe("")
+  await client.request("thread/inject_items", {
+    threadId: thread.thread.id,
+    items: [{ type: "message", role: "user", content: [{ type: "input_text", text: "A locally persisted conversation fixture." }] }],
+  }, z.object({}).passthrough())
+  client.close()
+  const resumedClient = new CodexAppServer({ home, executable: resolve("resources/codex/bin", process.platform === "win32" ? "codex.exe" : "codex") })
+  clients.push(resumedClient)
+  await resumedClient.initialize()
+  const resumed = await resumedClient.request("thread/resume", {
+    threadId: thread.thread.id,
+    baseInstructions: session.instructions,
+    approvalPolicy: "never",
+    sandbox: "read-only",
+    excludeTurns: true,
+  }, z.object({ thread: z.object({ id: z.string() }) }))
+  expect(resumed.thread.id).toBe(thread.thread.id)
 }, 45_000)
 
 test("Codex uses Tutor Me tool validation and returns a saved plan only after turn completion", async () => {
@@ -458,7 +479,7 @@ test("canceling while Codex creates a login prevents opening the browser", async
 test("topic titles use Luna with minimal reasoning independently of the tutor model", async () => {
   const { job, home } = await fixture("title")
   const processes: (number | null)[] = []
-  const title = await generateTopicTitle(job, undefined, (pid) => processes.push(pid), () => {})
+  const title = await generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, (pid) => processes.push(pid), () => {})
   expect(title).toBe("Introduction to Calculus")
   expect(job.runner.model).toBe("test-model")
   expect(job.runner.reasoningEffort).toBe("high")
@@ -476,12 +497,56 @@ test("topic titles use Luna with minimal reasoning independently of the tutor mo
 test.each(["title-failed", "title-empty"])("rejects invalid title results and closes the Codex process: %s", async (mode) => {
   const { job } = await fixture(mode)
   const processes: (number | null)[] = []
-  await expect(generateTopicTitle(job, undefined, (pid) => processes.push(pid), () => {})).rejects.toThrow()
+  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, (pid) => processes.push(pid), () => {})).rejects.toThrow()
   expect(processes.at(-1)).toBeNull()
 })
 
 test("does not use an expensive tutor model when no budget Codex model is available", async () => {
   const { job, home } = await fixture()
-  await expect(generateTopicTitle(job, undefined, () => {}, () => {})).rejects.toThrow("No budget title model")
+  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, () => {}, () => {})).rejects.toThrow("No budget title model")
+  expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
+})
+
+
+test("resumes the native Codex thread after restart and sends only the new request", async () => {
+  const { job, home } = await fixture()
+  const first = await runCodexTutorTurn(job, () => {}, () => {})
+  expect(first.providerSession.status).toBe("ready")
+  job.chat.providerSession = first.providerSession
+  job.chat.learning = first.learning
+  job.chat.messages.push(
+    { id: randomUUID(), role: "assistant", content: first.reply, createdAt: new Date().toISOString(), topicIds: [] },
+    { id: randomUUID(), role: "user", content: "Continue the same conversation", createdAt: new Date().toISOString(), topicIds: [] },
+  )
+  const second = await runCodexTutorTurn(job, () => {}, () => {})
+  expect(second.providerSession.threadId).toBe(first.providerSession.threadId)
+  const requests = (await readFile(join(home, "requests.jsonl"), "utf8")).trim().split("\n")
+    .map((line) => z.object({ method: z.string().optional(), params: z.json().optional() }).parse(JSON.parse(line)))
+  expect(requests.filter((request) => request.method === "thread/start")).toHaveLength(1)
+  expect(requests.find((request) => request.method === "thread/start")?.params).toMatchObject({ ephemeral: false })
+  expect(requests.find((request) => request.method === "thread/resume")?.params).toMatchObject({ threadId: first.providerSession.threadId, excludeTurns: true })
+  expect(requests.filter((request) => request.method === "turn/start").at(-1)?.params).toMatchObject({ input: [{ type: "text", text: "Continue the same conversation" }] })
+})
+
+test.each(["pending", "missing", "other-account"])("reconstructs committed history when the saved session is %s", async (reason) => {
+  const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
+  if (!job.codex) throw new Error("Missing connection")
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 1, status: "ready" }
+  if (reason === "pending") job.chat.providerSession.status = "pending"
+  if (reason === "other-account") job.chat.providerSession.home = "/different/account"
+  const first = { id: randomUUID(), role: "user" as const, content: "An early request that must survive", createdAt: new Date().toISOString(), topicIds: [] }
+  job.chat.messages.unshift(first, ...Array.from({ length: 35 }, (_, index) => ({ ...first, id: randomUUID(), content: `Earlier message ${index}` })))
+  await runCodexTutorTurn(job, () => {}, () => {})
+  const requests = await readFile(join(home, "requests.jsonl"), "utf8")
+  expect(requests).toContain('"method":"thread/start"')
+  expect(requests).toContain(first.content)
+  if (reason !== "missing") expect(requests).not.toContain('"method":"thread/resume"')
+})
+
+test("does not replace a resumable conversation on a transient provider failure", async () => {
+  const { job, home } = await fixture("resume-network")
+  if (!job.codex) throw new Error("Missing connection")
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 1, status: "ready" }
+  await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })

@@ -1,8 +1,9 @@
+import { WorkspaceRepository } from "../src/main/workspace"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { _electron, expect, test } from "@playwright/test"
 import { z } from "zod"
-import { WorkspaceSchema, TraceEventSchema } from "../src/shared/contracts"
+import { TraceEventSchema } from "../src/shared/contracts"
 
 const environment = z
   .object({
@@ -81,9 +82,8 @@ test("connected packaged Codex commits a real reply, notes, and diagnostics", as
     if (!environment.PRUNE_LIVE_DATA_DIR)
       throw new Error("Missing live data directory")
     const directory = join(environment.PRUNE_LIVE_DATA_DIR, "workspace")
-    const saved = WorkspaceSchema.parse(
-      JSON.parse(await readFile(join(directory, "workspace.json"), "utf8")),
-    )
+    const repository = new WorkspaceRepository(directory)
+    const saved = await repository.load()
     const savedChat = saved.chats.find((entry) => entry.id === chat.id)
     expect(savedChat?.messages.at(-1)?.role).toBe("assistant")
     expect(savedChat?.messages.length).toBe(chat.messages.length + 2)

@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto"
-import { copyFile, mkdir, readFile, stat } from "node:fs/promises"
+import { constants } from "node:fs"
+import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises"
 import { basename, extname, join } from "node:path"
 import { dialog } from "electron"
 import { extractText, getDocumentProxy } from "unpdf"
+import { OfficeGenerator, OfficeParser } from "officeparser"
 import { z } from "zod"
 import { MaterialOwnerSchema, MaterialSchema } from "../shared/contracts"
 import { WorkspaceRepository } from "./workspace"
 
-export async function importMaterials(
-  repository: WorkspaceRepository,
-  owner: z.infer<typeof MaterialOwnerSchema>,
-) {
-  const collection = owner.kind === "topic" ? "topics" : "chats"
-  const current = () =>
-    owner.kind === "topic" ? repository.topic(owner.id) : repository.chat(owner.id)
-  current()
+async function selectMaterialFiles() {
   const selection = await dialog.showOpenDialog({
     title: "Add learning materials",
     properties: ["openFile", "multiSelections"],
@@ -23,6 +18,7 @@ export async function importMaterials(
         name: "Learning materials",
         extensions: [
           "pdf",
+          "pptx",
           "png",
           "jpg",
           "jpeg",
@@ -39,76 +35,161 @@ export async function importMaterials(
       },
     ],
   })
-  if (selection.canceled) return
+  if (selection.canceled) return []
   if (selection.filePaths.length > 12)
     throw new Error("Add up to 12 materials at a time.")
+  return selection.filePaths
+}
+
+export class MaterialDrafts {
+  // Keep native paths in the main process; the renderer imports picker or dropped files by draft ID.
+  private sources = new Map<string, string>()
+
+  async select(draftIds: string[]) {
+    return this.add(draftIds, await selectMaterialFiles())
+  }
+
+  async add(draftIds: string[], sources: string[]) {
+    const drafts = draftIds.map((id) => {
+      const source = this.sources.get(id)
+      if (!source) throw new Error("Select the learning materials again.")
+      return { id, name: basename(source) }
+    })
+    if (drafts.length + sources.length > 12)
+      throw new Error("Add up to 12 materials at a time.")
+    const names = new Set(drafts.map((draft) => draft.name))
+    for (const source of sources) {
+      const name = basename(source)
+      if (names.has(name))
+        throw new Error(`${name} is already attached. Rename the new file to preserve both sources.`)
+      names.add(name)
+      const info = await stat(source)
+      if (!info.isFile())
+        throw new Error(`${name} is a folder. Attach individual files instead.`)
+      if (info.size > 20 * 1024 * 1024)
+        throw new Error(`${name} is larger than 20 MB. Add a smaller file.`)
+    }
+    for (const source of sources) {
+      const id = randomUUID()
+      this.sources.set(id, source)
+      drafts.push({ id, name: basename(source) })
+    }
+    return drafts
+  }
+
+  async import(repository: WorkspaceRepository, owner: z.infer<typeof MaterialOwnerSchema>, draftIds: string[]) {
+    const sources = draftIds.map((id) => {
+      const source = this.sources.get(id)
+      if (!source) throw new Error("Select the learning materials again.")
+      return source
+    })
+    await importMaterials(repository, owner, sources)
+    for (const id of draftIds) this.sources.delete(id)
+  }
+}
+
+export async function importMaterials(
+  repository: WorkspaceRepository,
+  owner: z.infer<typeof MaterialOwnerSchema>,
+  selectedSources?: string[],
+) {
+  const collection = owner.kind === "topic" ? "topics" : "chats"
+  const current = () =>
+    owner.kind === "topic" ? repository.topic(owner.id) : repository.chat(owner.id)
+  current()
+  const sources = selectedSources ?? await selectMaterialFiles()
+  if (sources.length === 0) return
   const materials: z.infer<typeof MaterialSchema>[] = []
   const assetDirectory = join(repository.directory, collection, owner.id, "assets")
   await mkdir(assetDirectory, { recursive: true })
-  for (const source of selection.filePaths) {
-    const info = await stat(source)
-    if (info.size > 20 * 1024 * 1024)
-      throw new Error(
-        `${basename(source)} is larger than 20 MB. Add a smaller file.`,
-      )
-    const buffer = await readFile(source)
-    let text = ""
-    let pages: string[] = []
-    let kind: z.infer<typeof MaterialSchema>["kind"] = "text"
-    if (extname(source).toLowerCase() === ".pdf") {
-      kind = "pdf"
-      const pdf = await getDocumentProxy(new Uint8Array(buffer))
-      try {
-        const extracted = await extractText(pdf, { mergePages: false })
-        pages = extracted.text
-        text = pages.join("\n\n")
-      } finally {
-        await pdf.loadingTask.destroy()
+  try {
+    for (const source of sources) {
+      const info = await stat(source)
+      if (info.size > 20 * 1024 * 1024)
+        throw new Error(
+          `${basename(source)} is larger than 20 MB. Add a smaller file.`,
+        )
+      const buffer = await readFile(source)
+      let text = ""
+      let pages: string[] = []
+      let kind: z.infer<typeof MaterialSchema>["kind"] = "text"
+      if (extname(source).toLowerCase() === ".pdf") {
+        kind = "pdf"
+        const pdf = await getDocumentProxy(new Uint8Array(buffer))
+        try {
+          const extracted = await extractText(pdf, { mergePages: false })
+          pages = extracted.text
+          text = pages.join("\n\n")
+        } finally {
+          await pdf.loadingTask.destroy()
+        }
+      } else if (extname(source).toLowerCase() === ".pptx") {
+        const presentation = await OfficeParser.parseOffice(buffer, {
+          fileType: "pptx",
+          ignoreSlideMasters: true,
+        })
+        for (const slide of presentation.content.filter((node) => node.type === "slide")) {
+          const extracted = await OfficeGenerator.generate(
+            { ...presentation, content: [slide] },
+            "text",
+          )
+          pages.push(extracted.value.trim())
+        }
+        if (pages.length === 0)
+          throw new Error(`${basename(source)} has no readable slides.`)
+        text = pages.map((page, index) => `Slide ${index + 1}\n${page}`).join("\n\n")
+      } else if (
+        [".png", ".jpg", ".jpeg", ".webp"].includes(extname(source).toLowerCase())
+      ) {
+        kind = "image"
+        if (info.size > 8 * 1024 * 1024)
+          throw new Error("Use images smaller than 8 MB.")
+        text = "Image source. Use read_material to inspect the image visually."
+      } else {
+        if (buffer.includes(0))
+          throw new Error(`${basename(source)} is not a readable text file.`)
+        text = buffer.toString("utf8")
       }
-    } else if (
-      [".png", ".jpg", ".jpeg", ".webp"].includes(extname(source).toLowerCase())
-    ) {
-      kind = "image"
-      if (info.size > 8 * 1024 * 1024)
-        throw new Error("Use images smaller than 8 MB.")
-      text = "Image source. Use read_material to inspect the image visually."
-    } else {
-      if (buffer.includes(0))
-        throw new Error(`${basename(source)} is not a readable text file.`)
-      text = buffer.toString("utf8")
+      const name = basename(source)
+      if (
+        current().materials.some((item) => item.name === name) ||
+        materials.some((item) => item.name === name)
+      )
+        throw new Error(
+          `${name} is already attached. Rename the new file to preserve both sources.`,
+        )
+      const material = MaterialSchema.parse({
+        id: randomUUID(),
+        name,
+        kind,
+        text,
+        pages,
+      })
+      await copyFile(source, join(assetDirectory, name), constants.COPYFILE_EXCL)
+      materials.push(material)
     }
-    const name = basename(source)
-    if (
-      current().materials.some((item) => item.name === name) ||
-      materials.some((item) => item.name === name)
-    )
-      throw new Error(
-        `${name} is already attached. Rename the new file to preserve both sources.`,
+    await repository.mutate((workspace) => {
+      const target = workspace[collection].find((item) => item.id === owner.id)
+      if (!target) throw new Error("This topic or chat no longer exists.")
+      if (
+        target.materials.reduce(
+          (size, material) => size + material.text.length,
+          0,
+        ) +
+          materials.reduce((size, material) => size + material.text.length, 0) >
+        1_000_000
       )
-    const material = MaterialSchema.parse({
-      id: randomUUID(),
-      name,
-      kind,
-      text,
-      pages,
+        throw new Error(
+          "This has too much source text. Split the materials into smaller topics.",
+        )
+      target.materials.push(...materials)
     })
-    materials.push(material)
-    await copyFile(source, join(assetDirectory, name))
+  } finally {
+    // A later validation or save failure must not leave copied files without a material record.
+    const committed = repository.stateSnapshot[collection].find((item) => item.id === owner.id)?.materials ?? []
+    for (const material of materials) {
+      if (!committed.some((item) => item.id === material.id))
+        await rm(join(assetDirectory, material.name), { force: true })
+    }
   }
-  await repository.mutate((workspace) => {
-    const target = workspace[collection].find((item) => item.id === owner.id)
-    if (!target) throw new Error("This topic or chat no longer exists.")
-    if (
-      target.materials.reduce(
-        (size, material) => size + material.text.length,
-        0,
-      ) +
-        materials.reduce((size, material) => size + material.text.length, 0) >
-      1_000_000
-    )
-      throw new Error(
-        "This has too much source text. Split the materials into smaller topics.",
-      )
-    target.materials.push(...materials)
-  })
 }

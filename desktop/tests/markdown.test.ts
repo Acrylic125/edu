@@ -3,6 +3,12 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import { StudyMarkdown } from "../src/renderer/markdown"
 
+const material = {
+  id: "12345678-1234-4234-8234-123456789abc",
+  name: "Lecture 6 - MIPS Part 1 (full set).pdf",
+  kind: "pdf" as const,
+}
+
 vi.mock("../src/renderer/mermaid-diagram", () => ({
   MermaidDiagram: ({ definition }: { definition: string }) =>
     createElement("div", { "data-diagram": definition }),
@@ -64,5 +70,73 @@ describe("study Markdown", () => {
     expect(html).toContain("<ul>")
     expect(html).toContain("<table>")
     expect(html).toContain('href="https://example.com"')
+  })
+
+  it.each([
+    "*Sourced from: Lecture 6.pdf, pg. 6-7.*",
+    "Sourced from: [Lecture 6.pdf, pg. 6-7.](<assets/Lecture 6.pdf#page=6>)",
+    "Sourced from: [Lecture 6.pdf, pg. 6-7.](<assets/Lecture 6 - MIPS Part 1 (full set).pdf#page=6>)",
+    `Sourced from: [Lecture 6.pdf, pg. 6-7.](edu-material://${material.id}/6)`,
+  ])("renders lecture citations as clickable source links: %s", (text) => {
+    const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+      text,
+      materials: [material],
+      onOpenMaterial: vi.fn(),
+    }))
+    expect(html).toContain(`<a href="edu-material://${material.id}/6"`)
+    expect(html).toContain("Lecture 6.pdf, pg. 6-7")
+  })
+
+  it("preserves source images returned by the tutor", () => {
+    const html = render(`![ISA diagram](prune-source://${material.id}/6)`)
+    expect(html).toContain(`src="prune-source://${material.id}/6"`)
+    expect(html).toContain('alt="ISA diagram"')
+  })
+
+  it("leaves citations inside code examples unchanged", () => {
+    for (const text of [
+      "`Sourced from: Lecture 6.pdf, pg. 6-7.`",
+      "```text\nSourced from: Lecture 6.pdf, pg. 6-7.\n```",
+      "~~~text\nSourced from: Lecture 6.pdf, pg. 6-7.\n~~~",
+      "```text\nSourced from: Lecture 6.pdf, pg. 6-7.",
+      "Sourced from: `Lecture 6.pdf, pg. 6-7.`",
+      "    Sourced from: Lecture 6.pdf, pg. 6-7.",
+    ]) {
+      const html = renderToStaticMarkup(createElement(StudyMarkdown, { text, materials: [material], onOpenMaterial: vi.fn() }))
+      expect(html).not.toContain("edu-material://")
+    }
+  })
+
+  it("does not invent source links for missing or ambiguous materials", () => {
+    for (const materials of [[], [material, { ...material, id: "22345678-1234-4234-8234-123456789abc", name: "Lecture 6 - Other.pdf" }]]) {
+      const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+        text: "Sourced from: Lecture 6.pdf, pg. 6-7.", materials, onOpenMaterial: vi.fn(),
+      }))
+      expect(html).not.toContain("<a ")
+    }
+  })
+
+  it("leaves existing HTTPS citations intact", () => {
+    const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+      text: "Sourced from: [Lecture 6.pdf, pg. 6-7.](https://example.com/lecture.pdf#page=6)",
+      materials: [material], onOpenMaterial: vi.fn(),
+    }))
+    expect(html).toContain('href="https://example.com/lecture.pdf#page=6"')
+    expect(html).not.toContain("edu-material://")
+  })
+
+  it("hides raw section anchors while keeping their headings visible", () => {
+    const html = render('<a id="foundations"></a>\n\n## 1. Foundations: alphabets, strings, and languages')
+    expect(html).toContain("<h2>1. Foundations: alphabets, strings, and languages</h2>")
+    expect(html).not.toContain("&lt;a")
+    expect(html).not.toContain("&lt;/a&gt;")
+  })
+
+  it("preserves anchor markup when it is an intentional code example", () => {
+    for (const text of ['`<a id="foundations"></a>`', '```html\n<a id="foundations"></a>\n```']) {
+      const html = render(text)
+      expect(html).toContain('&lt;a id=&quot;foundations&quot;&gt;&lt;/a&gt;')
+      expect(html).toContain("<code")
+    }
   })
 })

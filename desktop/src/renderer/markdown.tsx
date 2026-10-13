@@ -6,21 +6,29 @@ import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import { MermaidDiagram } from "./mermaid-diagram"
 import { normalizeMathDelimiters } from "./normalize-math"
+import { linkSourceCitations } from "./source-citations"
+import { resolveMaterialLink } from "../shared/material-links"
+import type { Snapshot } from "../shared/contracts"
 
 export function StudyMarkdown({
   text,
   topics = [],
   onOpenTopic,
+  materials = [],
+  onOpenMaterial,
 }: {
   text: string
   topics?: { id: string; title: string }[]
   onOpenTopic?: (id: string) => void
+  materials?: Snapshot["topics"][number]["materials"]
+  onOpenMaterial?: (id: string) => void
 }) {
   return (
     <div className="markdown">
       <Markdown
+        skipHtml
         urlTransform={(url) =>
-          /^(prune-source:\/\/[a-f0-9-]+\/\d+|edu-topic:\/\/[a-f0-9-]+)$/.test(url)
+          /^(prune-source:\/\/[a-f0-9-]+\/\d+|edu-material:\/\/[a-f0-9-]+\/\d+|edu-topic:\/\/[a-f0-9-]+)$/.test(url)
             ? url
             : defaultUrlTransform(url)
         }
@@ -43,6 +51,20 @@ export function StudyMarkdown({
             return <pre>{children}</pre>
           },
           a: ({ href, children }) => {
+            const source = resolveMaterialLink(href ?? "", materials)
+            if (source && onOpenMaterial) {
+              return (
+                <a
+                  href={`edu-material://${source.id}/${source.page}`}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    onOpenMaterial(source.id)
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
             if (href?.startsWith("edu-topic://")) {
               const id = href.slice("edu-topic://".length)
               const topic = topics.find((item) => item.id === id)
@@ -70,7 +92,7 @@ export function StudyMarkdown({
           },
         }}
       >
-        {normalizeMathDelimiters(text)}
+        {normalizeMathDelimiters(linkSourceCitations(text, materials))}
       </Markdown>
     </div>
   )

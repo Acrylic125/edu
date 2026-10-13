@@ -7,6 +7,7 @@ import { runCliTutorTurn } from "../src/runners/cli"
 import { newChat } from "../src/main/workspace"
 import { randomUUID } from "node:crypto"
 import { WorkerJobSchema } from "../src/shared/contracts"
+import { generateTopicTitle } from "../src/runners/title"
 
 const directories: string[] = []
 afterEach(async () => {
@@ -21,6 +22,15 @@ async function connection(provider: "claude" | "antigravity") {
   await chmod(executable, 0o755)
   return { provider, executable, directory }
 }
+
+test.each(["claude", "antigravity"] as const)("%s generates a validated title from a suggested topic", async (provider) => {
+  const cli = await connection(provider)
+  const runner = WorkerJobSchema.shape.runner.parse({ id: randomUUID(), name: "Tutor", provider, model: "default" })
+  const processChanged = vi.fn()
+  const title = await generateTopicTitle({ cli, runner }, "Teach me limits", undefined, processChanged, () => {})
+  expect(title).toBe("Introduction to Limits")
+  expect(processChanged).toHaveBeenLastCalledWith(null)
+})
 
 test.each(["claude", "antigravity"] as const)("%s completes tutoring with source tools and rejects an invalid save before committing", async (provider) => {
   const cli = await connection(provider)

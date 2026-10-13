@@ -17,14 +17,18 @@ export class ModelAccount {
       await this.key()
       this.connected = true
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        this.connected = false
         return
+      }
       if (
         error instanceof Error &&
         error.message ===
           "Connect your model account in Settings → Providers to start learning."
-      )
+      ) {
+        this.connected = false
         return
+      }
       throw error
     }
   }

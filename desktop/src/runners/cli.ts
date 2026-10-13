@@ -20,7 +20,7 @@ export async function runCliTutorTurn(job: WorkerJob, activity: (message: string
   try {
     await prepareCliWorkspace(connection)
     const session = await createTutorSession(job, activity)
-    const transcript: z.infer<ReturnType<typeof z.json>>[] = job.chat.messages.slice(-30).map(({ role, content }) => ({ role, content }))
+    const transcript: z.infer<ReturnType<typeof z.json>>[] = job.chat.messages.map(({ role, content }) => ({ role, content }))
     const instructions = `${session.instructions}
 Return JSON with reply and calls. Use calls to request EdU tools; each call has name and arguments (a JSON-encoded string). The harness executes calls and returns their results. Native CLI tools are disabled. Return an empty reply while requesting tools, then return a learner-facing reply with no calls after a successful save.
 Available EdU tools: ${JSON.stringify(session.tools)}`

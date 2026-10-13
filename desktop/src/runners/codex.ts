@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { z } from "zod"
-import { type WorkerJob, type Diagnostic } from "../shared/contracts"
+import { type WorkerJob, type Diagnostic, ProviderSessionSchema } from "../shared/contracts"
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { createTutorSession } from "./tutor"
@@ -65,29 +65,69 @@ export async function runCodexTutorTurn(
       throw new Error(
         "This model does not support the selected reasoning effort.",
       )
-    const thread = await client.request(
-      "thread/start",
-      {
-        model: model.id,
-        cwd,
-        approvalPolicy: "never",
-        sandbox: "read-only",
-        ephemeral: true,
-        baseInstructions: session.instructions,
-        dynamicTools: session.tools.map((tool) => {
-          if (tool.type !== "function")
-            throw new Error("Unsupported tutoring tool.")
-          return {
-            type: "function",
-            name: tool.function.name,
-            description: tool.function.description ?? "",
-            inputSchema: z.json().parse(tool.function.parameters),
-          }
-        }),
-      },
-      z.object({ thread: z.object({ id: z.string() }) }),
-    )
+    const parameters = {
+      model: model.id,
+      cwd,
+      approvalPolicy: "never",
+      sandbox: "read-only",
+      ephemeral: false,
+      baseInstructions: session.instructions,
+      dynamicTools: session.tools.map((tool) => {
+        if (tool.type !== "function")
+          throw new Error("Unsupported tutoring tool.")
+        return {
+          type: "function",
+          name: tool.function.name,
+          description: tool.function.description ?? "",
+          inputSchema: z.json().parse(tool.function.parameters),
+        }
+      }),
+    }
+    const previous = job.chat.providerSession
+    const canResume =
+      previous?.status === "ready" &&
+      previous.home === job.codex.home &&
+      previous.executable === job.codex.executable
+    const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
+    let thread
+    let resumed = false
+    if (canResume) {
+      try {
+        thread = await client.request(
+          "thread/resume",
+          {
+            threadId: previous.threadId,
+            model: model.id,
+            cwd,
+            approvalPolicy: "never",
+            sandbox: "read-only",
+            baseInstructions: session.instructions,
+            excludeTurns: true,
+          },
+          responseSchema,
+        )
+        resumed = true
+      } catch (error) {
+        // Only an explicitly missing native thread allows reconstruction; transient failures must not duplicate turns.
+        if (
+          !(error instanceof Error) ||
+          !/thread.*(?:not found|does not exist)|no rollout found|session.*not found/i.test(error.message)
+        ) throw error
+        diagnostic("codex.session_missing", { threadId: previous.threadId })
+      }
+    }
+    if (!thread)
+      thread = await client.request("thread/start", parameters, responseSchema)
     const threadId = thread.thread.id
+    const providerSession = ProviderSessionSchema.parse({
+      provider: "codex",
+      threadId,
+      home: job.codex.home,
+      executable: job.codex.executable,
+      toolVersion: 1,
+      status: "ready",
+    })
+    diagnostic("codex.session", { threadId, resumed })
     let toolCount = 0
     let sequence = Promise.resolve()
     client.onRequest = async (method, params) => {
@@ -139,7 +179,12 @@ export async function runCodexTutorTurn(
           reply = item.data.item.text ?? reply
       },
     )
-    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.chat.messages.slice(-30).map(({ role, content }) => ({ role, content })))}`
+    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.chat.messages.map(({ role, content }) => ({ role, content })))}`
+    if (resumed) {
+      const request = job.chat.messages.at(-1)
+      if (!request || request.role !== "user") throw new Error("The current learner request is missing.")
+      input = request.content
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       reply = ""
       const completion = client.waitFor(
@@ -180,7 +225,7 @@ export async function runCodexTutorTurn(
             event.turn.error?.message ??
               "Codex was interrupted. Retry from your saved notes.",
           )
-        if (session.saved && reply.trim()) return session.finish(reply)
+        if (session.saved && reply.trim()) return { ...session.finish(reply), providerSession }
         if (!session.saved) {
           input =
             "Complete the current learner request without advancing the lesson. Call save_learning_state with the complete notes, private handoff, and next action, then provide the learner-facing reply. The previous reply has not been shown or saved."
@@ -198,7 +243,7 @@ export async function runCodexTutorTurn(
       throw new Error(
         `Codex did not save a complete learning state after 3 attempts (${toolCount} tutoring tool calls). Open Diagnostics to inspect the turn trace.`,
       )
-    return session.finish(reply)
+    return { ...session.finish(reply), providerSession }
   } finally {
     client.close()
     processChanged(null)

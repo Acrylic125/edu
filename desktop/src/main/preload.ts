@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from "electron"
+import { contextBridge, ipcRenderer, webUtils } from "electron"
 import {
   Channel,
+  MaterialDraftSchema,
   SnapshotSchema,
   type DesktopBridge,
 } from "../shared/contracts"
@@ -20,7 +21,7 @@ const bridge: DesktopBridge = {
   disconnect: (provider) => ipcRenderer.invoke(Channel.disconnect, provider),
   cancelConnection: (provider) =>
     ipcRenderer.invoke(Channel.cancelConnection, provider),
-  refreshProviders: () => ipcRenderer.invoke(Channel.refreshProviders),
+  refreshProviders: (provider) => ipcRenderer.invoke(Channel.refreshProviders, provider),
   saveProvider: (input) => ipcRenderer.invoke(Channel.saveProvider, input),
   updateRunner: (id, input) =>
     ipcRenderer.invoke(Channel.updateRunner, id, input),
@@ -31,12 +32,24 @@ const bridge: DesktopBridge = {
   createTopic: (input) => ipcRenderer.invoke(Channel.createTopic, input),
   createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
-  importMaterials: (owner) =>
-    ipcRenderer.invoke(Channel.importMaterials, owner),
+  selectMaterials: async (draftIds) =>
+    MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.selectMaterials, draftIds)),
+  dropMaterials: async (files, draftIds = []) => {
+    const paths = files.map((file) => webUtils.getPathForFile(file))
+    if (paths.some((path) => !path))
+      throw new Error("Drop files from your computer to attach them.")
+    return MaterialDraftSchema.array().parse(
+      await ipcRenderer.invoke(Channel.dropMaterials, { paths, draftIds }),
+    )
+  },
+  importMaterials: (owner, draftIds = []) =>
+    ipcRenderer.invoke(Channel.importMaterials, { owner, draftIds }),
   exportNotes: (topicId) => ipcRenderer.invoke(Channel.exportNotes, topicId),
   openDiagnostics: (chatId) =>
     ipcRenderer.invoke(Channel.openDiagnostics, chatId),
   openWorkspace: (topicId) =>
     ipcRenderer.invoke(Channel.openWorkspace, topicId),
+  openMaterial: (materialId) =>
+    ipcRenderer.invoke(Channel.openMaterial, materialId),
 }
 contextBridge.exposeInMainWorld("prune", bridge)

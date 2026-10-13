@@ -1,5 +1,7 @@
 import { create } from "zustand"
 import type { Snapshot } from "../shared/contracts"
+import { useChatTabs } from "./chat-tabs"
+import { useTopicViews } from "./topic-views"
 
 export const useWorkspace = create<{
   snapshot: Snapshot
@@ -18,7 +20,11 @@ export const useWorkspace = create<{
   },
   loaded: false,
   error: null,
-  setSnapshot: (snapshot) => set({ snapshot, loaded: true }),
+  setSnapshot: (snapshot) => {
+    useChatTabs.getState().reconcile(snapshot.chats.map((chat) => chat.id))
+    useTopicViews.getState().reconcile(snapshot.topics.map((topic) => topic.id))
+    set({ snapshot, loaded: true })
+  },
   setError: (error) => set({ error }),
 }))
 
@@ -28,6 +34,10 @@ export function desktop() {
       "Open the EdU desktop app to connect accounts and run tutors.",
     )
   return window.prune
+}
+
+export function desktopErrorMessage(error: Error) {
+  return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "")
 }
 
 export async function initializeWorkspace() {

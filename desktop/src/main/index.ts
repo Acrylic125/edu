@@ -17,17 +17,20 @@ import {
   Channel,
   CreateChatSchema,
   CreateTopicSchema,
+  DroppedMaterialsSchema,
   IdSchema,
-  MaterialOwnerSchema,
+  ImportMaterialsSchema,
+  MaterialDraftIdsSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
   RunnerInputSchema,
   SendSchema,
   SnapshotSchema,
 } from "../shared/contracts"
+import { resolveCliExecutable } from "../providers/cli"
 import { ProviderRegistry } from "../providers/registry"
-import { importMaterials } from "./materials"
-import { newChat, newTopic, WorkspaceRepository } from "./workspace"
+import { importMaterials, MaterialDrafts } from "./materials"
+import { newChat, WorkspaceRepository } from "./workspace"
 import { RunnerManager } from "../runners/manager"
 
 const environment = z
@@ -36,6 +39,7 @@ const environment = z
     PRUNE_DATA_DIR: z.string().refine(isAbsolute).optional(),
   })
   .parse(process.env)
+app.setName("EdU")
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "prune-source",
@@ -64,6 +68,7 @@ else {
       const directory = join(app.getPath("userData"), "workspace")
       const repository = new WorkspaceRepository(directory)
       await repository.load()
+      const materialDrafts = new MaterialDrafts()
       protocol.handle("prune-source", (request) => {
         const url = new URL(request.url)
         const id = IdSchema.safeParse(url.hostname)
@@ -97,6 +102,7 @@ else {
       const resources = app.isPackaged
         ? join(process.resourcesPath, "resources")
         : join(app.getAppPath(), "resources")
+      app.dock?.setIcon(join(resources, "icon.png"))
       const registry = new ProviderRegistry(
         directory,
         join(
@@ -144,8 +150,9 @@ else {
         )
           throw new Error("Untrusted desktop request.")
       }
-      ipcMain.handle(Channel.snapshot, (event) => {
+      ipcMain.handle(Channel.snapshot, async (event) => {
         trusted(event)
+        await repository.refreshTopics()
         return snapshot()
       })
       async function saveCliConnection(id: z.infer<typeof ProviderIdSchema>, enabled: boolean) {
@@ -160,6 +167,24 @@ else {
       ipcMain.handle(Channel.connect, async (event, raw) => {
         trusted(event)
         const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        if (registry.statuses.some((item) => item.id === provider && item.connecting)) return
+        if (provider === "claude" || provider === "antigravity") {
+          const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === provider)
+          if (!previous?.binaryPath) {
+            const binaryPath = await resolveCliExecutable(provider)
+            const settings = ProviderSettingsSchema.parse({
+              ...previous,
+              id: provider,
+              displayName: previous?.displayName ?? registry.statuses.find((item) => item.id === provider)?.name ?? provider,
+              binaryPath,
+            })
+            await repository.mutate((workspace) => {
+              workspace.providerSettings = [...workspace.providerSettings.filter((item) => item.id !== provider), settings]
+            })
+            registry.configure(settings)
+            notify()
+          }
+        }
         await registry.connect(provider)
         await saveCliConnection(provider, true)
         notify()
@@ -178,9 +203,9 @@ else {
         trusted(event)
         await registry.cancel(ProviderIdSchema.parse(raw))
       })
-      ipcMain.handle(Channel.refreshProviders, async (event) => {
+      ipcMain.handle(Channel.refreshProviders, async (event, raw) => {
         trusted(event)
-        await registry.refresh()
+        await registry.refresh(ProviderIdSchema.optional().parse(raw))
       })
       ipcMain.handle(Channel.saveProvider, async (event, raw) => {
         trusted(event)
@@ -212,7 +237,7 @@ else {
         })
         registry.configure(settings)
         notify()
-        if (changesBinary && settings.id === "codex") await registry.codex.refresh()
+        if (changesBinary) await registry.refresh(settings.id)
       })
       ipcMain.handle(Channel.updateRunner, async (event, rawId, rawInput) => {
         trusted(event)
@@ -286,12 +311,7 @@ else {
       })
       ipcMain.handle(Channel.createTopic, async (event, raw) => {
         trusted(event)
-        const topic = newTopic(CreateTopicSchema.parse(raw).title)
-        await repository.mutate((workspace) => {
-          workspace.topics.unshift(topic)
-        })
-        notify()
-        return topic.id
+        return runnerManager.createTopic(CreateTopicSchema.parse(raw))
       })
       ipcMain.handle(Channel.createChat, async (event, raw) => {
         trusted(event)
@@ -308,9 +328,20 @@ else {
         trusted(event)
         await runnerManager.send(SendSchema.parse(raw))
       })
+      ipcMain.handle(Channel.selectMaterials, async (event, raw) => {
+        trusted(event)
+        return materialDrafts.select(MaterialDraftIdsSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.dropMaterials, async (event, raw) => {
+        trusted(event)
+        const { paths, draftIds } = DroppedMaterialsSchema.parse(raw)
+        if (paths.some((path) => !isAbsolute(path)))
+          throw new Error("Drop files from your computer to attach them.")
+        return materialDrafts.add(draftIds, paths)
+      })
       ipcMain.handle(Channel.importMaterials, async (event, raw) => {
         trusted(event)
-        const owner = MaterialOwnerSchema.parse(raw)
+        const { owner, draftIds } = ImportMaterialsSchema.parse(raw)
         const { chats } = repository.stateSnapshot
         const busy = runnerManager.statuses.some((runtime) => {
           if (runtime.status !== "running") return false
@@ -323,7 +354,8 @@ else {
         })
         if (busy)
           throw new Error("Wait for the current lesson before adding sources.")
-        await importMaterials(repository, owner)
+        if (draftIds.length > 0) await materialDrafts.import(repository, owner, draftIds)
+        else await importMaterials(repository, owner)
         notify()
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
@@ -352,6 +384,20 @@ else {
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
       })
+      ipcMain.handle(Channel.openMaterial, async (event, raw) => {
+        trusted(event)
+        const id = IdSchema.parse(raw)
+        const { topics, chats } = repository.stateSnapshot
+        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+          const owner = owners.find((item) => item.materials.some((material) => material.id === id))
+          const material = owner?.materials.find((item) => item.id === id)
+          if (!owner || !material) continue
+          const error = await shell.openPath(join(directory, collection, owner.id, "assets", material.name))
+          if (error) throw new Error(error)
+          return
+        }
+        throw new Error("Source not found. It may have been removed from this workspace.")
+      })
 
       function createWindow() {
         window = new BrowserWindow({
@@ -360,6 +406,7 @@ else {
           minWidth: 960,
           minHeight: 640,
           title: "EdU",
+          icon: join(resources, "icon.png"),
           titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
           trafficLightPosition: { x: 18, y: 20 },
           backgroundColor: "#fafafa",
@@ -404,7 +451,7 @@ else {
         ]),
       )
       createWindow()
-      void registry.refresh()
+      registry.startPolling()
       app.on("activate", () => {
         if (!window) createWindow()
       })

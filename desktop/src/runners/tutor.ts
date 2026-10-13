@@ -6,7 +6,7 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions"
-import { getDocumentProxy, renderPageAsImage } from "unpdf"
+import { createIsomorphicCanvasFactory, getDocumentProxy, renderPageAsImage } from "unpdf"
 import { createCanvas, loadImage } from "@napi-rs/canvas"
 import { z } from "zod"
 import {
@@ -100,13 +100,16 @@ export async function createTutorSession(
       name: material.name,
       kind: material.kind,
       pageCount: material.pages.length || 1,
+      sourceUrl: `edu-material://${material.id}/1`,
     }))
   const instructions = `${guide}\n\n${references.join("\n\n")}\n\nDesktop harness contract:
 Follow the bundled skill. Use read_skill for its additional references. This harness supplies source reads and verified persistence instead of Python scripts or shell commands. No external tools, search, or delegation are available; never pretend to use them. For Tests, inspect supplied assets first, then author and clearly label a question when no asset fits; online search is unavailable.
-This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); every topic tagged in this chat is listed below with its study notes and private handoff. Without a tagged topic, answer directly and suggest tagging a topic for structured study.
+This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); tagged topics and topics opened while sending are listed below with their study notes and private handoffs. Without a topic in context, answer directly and suggest tagging a topic for structured study.
+Currently open topic: ${job.openedTopicId ?? "none"}. Use this topic's saved progress, pending question, outline, and nextAction for requests such as "What is next?" or "Continue". Explicit topic mentions or instructions take precedence. Do not infer the currently open topic from older chat messages.
 A tagged topic with planConfirmed=false needs an approved plan before lessons: read its materials, propose or revise its outline with save_topic_state, keep it awaiting_plan_confirmation, and do not teach or question it. Only the Confirm plan action approves a plan; do not infer approval from a message. Plan approved on this turn: ${job.confirmTopicId ?? "none"}.
 Explain lecture material before checking it. Resume a topic's saved question and checked key before moving it forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
 Call save_topic_state for each tagged topic you planned, taught, or assessed. Full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned.
+In chat, use clickable Markdown citations: Sourced from: [Lecture 6.pdf, pg. 6-7.](edu-material://<material-id>/6). Use the actual material id, filename, and first cited page. The app opens the original attached source. For diagrams, call read_material with includeVisuals=true, then embed the returned image as ![Diagram description](prune-source://<material-id>/<page>). The chat supports these images; report an unavailable image only if the visual read fails.
 In topic notes, replace the template's "## Topic directory" heading and bullet list with exactly one <topic-directory /> element in the same position. heading is the section heading text. items is single-quoted JSON following the directory rules: title is the source section number and title; anchor is the in-document anchor id, set only when that part's notes exist; sources are its compact source links; children are its subparts in source order. Write any apostrophe inside items as \\u0027. Example:
 ${topicDirectoryFormat}
 Call save_learning_state with this chat's private handoff before the final reply, then deliver the explanation/question/choice in that reply. Saving alone is not a lesson. Workpads are private. The reply is learner-visible.
@@ -155,7 +158,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           const pages = material.pages.length ? material.pages : [material.text]
           if (firstPage > pages.length || lastPage > pages.length)
             throw new Error("Page is outside this source.")
-          result = pages
+          result = `Source: ${material.name}\nSource link: [${material.name}, pg. ${firstPage}${lastPage > firstPage ? `-${lastPage}` : ""}](edu-material://${id}/${firstPage})\n\n` + pages
             .slice(firstPage - 1, lastPage)
             .map((text, index) => `Page ${firstPage + index}\n${text}`)
             .join("\n\n")
@@ -170,7 +173,10 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
             const bytes = await readFile(join(directory, material.name))
             const pdf =
               material.kind === "pdf"
-                ? await getDocumentProxy(new Uint8Array(bytes))
+                ? await getDocumentProxy(new Uint8Array(bytes), {
+                    // PDF.js otherwise picks a DOM canvas in Electron utility processes.
+                    CanvasFactory: await createIsomorphicCanvasFactory(() => import("@napi-rs/canvas")),
+                  })
                 : undefined
             try {
               for (let page = firstPage; page <= lastPage; page++) {
@@ -316,9 +322,7 @@ export async function runTutorTurn(
   const session = await createTutorSession(job, activity)
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: session.instructions },
-    ...job.chat.messages
-      .slice(-30)
-      .map((message) => ({ role: message.role, content: message.content })),
+    ...job.chat.messages.map((message) => ({ role: message.role, content: message.content })),
   ]
   for (let iteration = 0; iteration < 16; iteration++) {
     activity("Preparing your lesson")

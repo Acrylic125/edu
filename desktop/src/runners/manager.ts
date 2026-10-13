@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { utilityProcess } from "electron"
+import OpenAI from "openai"
 import { z } from "zod"
 import {
   WorkerEventSchema,
@@ -8,9 +9,11 @@ import {
   type SendSchema,
   type RunnerSchema,
   type WorkerJob,
+  type CreateTopicSchema,
 } from "../shared/contracts"
 import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions"
-import { WorkspaceRepository } from "../main/workspace"
+import { newTopic, WorkspaceRepository } from "../main/workspace"
+import { generateTopicTitle } from "./title"
 import { TurnTrace } from "./trace"
 
 export class RunnerManager {
@@ -128,6 +131,30 @@ export class RunnerManager {
     this.notify()
   }
 
+  async createTopic(input: z.infer<typeof CreateTopicSchema>) {
+    const runners = this.repository.stateSnapshot.runners
+    let runner = runners.find((item) => item.id === input.runnerId)
+    if (!input.runnerId) runner = runners[0]
+    if (!runner) throw new Error("Runner not found.")
+    if (this.runtime.get(runner.id)?.status === "running" || this.locks.has(runner.id))
+      throw new Error("This runner is already working. Wait for it to finish.")
+    this.locks.add(runner.id)
+    try {
+      const connection = await this.getConnection(runner)
+      let client: OpenAI | undefined
+      if (runner.provider === "openrouter")
+        client = new OpenAI({ apiKey: connection.apiKey, baseURL: "https://openrouter.ai/api/v1" })
+      const title = await generateTopicTitle({ runner, ...connection }, input.title, client, () => {}, () => {})
+      const topic = newTopic(title)
+      topic.titleGenerated = true
+      await this.repository.mutate((workspace) => workspace.topics.unshift(topic))
+      this.notify()
+      return topic.id
+    } finally {
+      this.locks.delete(runner.id)
+    }
+  }
+
   async send(input: z.infer<typeof SendSchema>) {
     const chat = this.repository.chat(input.chatId)
     const id = chat.runnerId
@@ -145,6 +172,8 @@ export class RunnerManager {
       const topicIds = [
         ...new Set(parseTopicMentions(input.content).map((mention) => mention.id)),
       ]
+      if (input.openedTopicId && !topicIds.includes(input.openedTopicId))
+        topicIds.push(input.openedTopicId)
       for (const topicId of topicIds) this.repository.topic(topicId)
       if (input.confirmTopicId) {
         const topic = this.repository.topic(input.confirmTopicId)
@@ -178,6 +207,7 @@ export class RunnerManager {
           (item) => item.id === input.confirmTopicId,
         )
         if (confirmed) confirmed.planConfirmed = true
+        if (current.providerSession) current.providerSession.status = "pending"
         current.messages.push({
           id: randomUUID(),
           role: "user",
@@ -206,7 +236,7 @@ export class RunnerManager {
         }, 5 * 60_000),
       )
       child.postMessage({
-        chat: this.repository.chat(chat.id),
+        chat: { ...this.repository.chat(chat.id), providerSession: chat.providerSession },
         topics: this.contextTopics(chat.id).map((topic) => ({
           ...topic,
           assetDirectory: join(this.repository.directory, "topics", topic.id, "assets"),
@@ -216,6 +246,7 @@ export class RunnerManager {
         skillDirectory: this.skillDirectory,
         assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
         confirmTopicId: input.confirmTopicId,
+        openedTopicId: input.openedTopicId,
       })
       this.notify()
     } finally {
@@ -269,14 +300,6 @@ export class RunnerManager {
         if (!chat || chat.titleGenerated) return
         chat.title = event.title
         chat.titleGenerated = true
-        // A topic started from the new-topic composer is still named after the raw request.
-        const tagged = chat.messages[0]?.topicIds ?? []
-        for (const topic of workspace.topics) {
-          if (!tagged.includes(topic.id) || topic.titleGenerated) continue
-          topic.learning.notes = topic.learning.notes.replace(`# ${topic.title}\n`, `# ${event.title}\n`)
-          topic.title = event.title
-          topic.titleGenerated = true
-        }
       })
       this.notify()
       return
@@ -301,6 +324,7 @@ export class RunnerManager {
         const chat = workspace.chats.find((item) => item.id === chatId)
         if (!chat) throw new Error("Chat not found.")
         chat.learning = event.learning
+        chat.providerSession = event.providerSession
         chat.messages.push({
           id: randomUUID(),
           role: "assistant",
@@ -313,11 +337,6 @@ export class RunnerManager {
           if (topic) topic.learning = update.learning
         }
       })
-      // JSON is the authoritative transaction; markdown mirrors can be rebuilt without losing the lesson.
-      for (const update of updates)
-        await this.repository
-          .mirrorHandoff(this.repository.topic(update.topicId))
-          .catch(() => {})
       trace?.record("harness.committed", {
         chatId,
         topicsUpdated: updates.length,

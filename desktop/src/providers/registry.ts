@@ -3,13 +3,13 @@ import { z } from "zod"
 import { shell } from "electron"
 import { ModelAccount } from "../main/account"
 import { CodexProvider } from "./codex"
-import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "./cli"
+import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, resolveCliExecutable, runCliCommand } from "./cli"
 import {
   ProviderModelSchema,
   ProviderStatusSchema,
   ProviderSettingsSchema,
   type RunnerSchema,
-  type ProviderIdSchema,
+  ProviderIdSchema,
 } from "../shared/contracts"
 
 const OpenRouterModelsSchema = z.object({
@@ -33,6 +33,9 @@ const OpenRouterModelsSchema = z.object({
 })
 
 export class ProviderRegistry {
+  private pollingTimer?: ReturnType<typeof setInterval>
+  private refreshTasks = new Map<z.infer<typeof ProviderIdSchema>, Promise<void>>()
+  private closed = false
   private titleModel?: z.infer<typeof ProviderModelSchema>
   readonly openrouter
   codex
@@ -46,6 +49,7 @@ export class ProviderRegistry {
     id: "openrouter",
     name: "OpenRouter",
     connected: false,
+    installed: true,
     models: [{ id: "openrouter/auto", name: "Auto", isDefault: true }],
   })
 
@@ -94,8 +98,37 @@ export class ProviderRegistry {
     }
   }
 
-  async refresh() {
-    await Promise.all([this.codex.refresh(), this.refreshOpenRouter(), ...this.cliStates.map((provider) => this.refreshCli(provider))])
+  startPolling() {
+    if (this.closed || this.pollingTimer) return
+    const check = () => { void this.refresh().catch(() => {}) }
+    check()
+    this.pollingTimer = setInterval(check, 5 * 60_000)
+    this.pollingTimer.unref()
+  }
+
+  async refresh(id?: z.infer<typeof ProviderIdSchema>) {
+    if (this.closed) return
+    let ids = ProviderIdSchema.options
+    if (id) ids = [id]
+    await Promise.all(ids.map((id) => {
+      const pending = this.refreshTasks.get(id)
+      if (pending) return pending
+      if (this.statuses.some((provider) => provider.id === id && provider.connecting)) return
+      const task = (async () => {
+        try {
+          if (id === "codex") await this.codex.refresh()
+          else if (id === "openrouter") await this.refreshOpenRouter()
+          else {
+            const provider = this.cliStates.find((provider) => provider.id === id)
+            if (provider) await this.refreshCli(provider)
+          }
+        } finally {
+          this.refreshTasks.delete(id)
+        }
+      })()
+      this.refreshTasks.set(id, task)
+      return task
+    }))
   }
 
   private cliConnection(id: "claude" | "antigravity") {
@@ -107,13 +140,21 @@ export class ProviderRegistry {
 
   private async refreshCli(provider: z.infer<typeof ProviderStatusSchema>) {
     if (provider.id !== "claude" && provider.id !== "antigravity") return
-    if (!this.settings.some((item) => item.id === provider.id && item.binaryPath)) return
     provider.loading = true
     provider.error = undefined
     this.notify()
     try {
-      const connection = this.cliConnection(provider.id)
-      await prepareCliWorkspace(connection)
+      let executable: string
+      try {
+        executable = await resolveCliExecutable(provider.id, this.settings.find((item) => item.id === provider.id)?.binaryPath)
+      } catch {
+        provider.installed = false
+        provider.connected = false
+        provider.account = undefined
+        return
+      }
+      provider.installed = true
+      const connection = { provider: provider.id, executable, directory: join(this.directory, "providers", provider.id) }
       if (provider.id === "claude") {
         const status = z.object({ loggedIn: z.boolean(), authMethod: z.string().optional(), email: z.string().optional() }).parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
         provider.connected = status.loggedIn && status.authMethod === "claude.ai" && this.settings.some((item) => item.id === "claude" && item.enabled)
@@ -127,12 +168,21 @@ export class ProviderRegistry {
           return [ProviderModelSchema.parse({ id: match[1], name: match[2] })]
         })
         provider.models = [ProviderModelSchema.parse({ id: "default", name: "Default model", isDefault: true }), ...models]
+        if (this.settings.some((item) => item.id === "antigravity" && item.enabled)) {
+          // /usage refreshes account quotas without generating a model response or starting sign-in.
+          const usage = await runCliCommand(connection, ["--print", "/usage"], "", undefined, 15_000, this.cliAbort.signal)
+          if (!usage.trim()) throw new Error("Could not check Antigravity. Refresh to try again.")
+          provider.connected = this.settings.some((item) => item.id === "antigravity" && item.enabled)
+        } else {
+          provider.connected = false
+        }
       }
     } catch (error) {
       provider.connected = false
       provider.error = error instanceof Error ? error.message : "Could not refresh the CLI provider."
     } finally {
       provider.loading = false
+      provider.checkedAt = new Date().toISOString()
       this.notify()
     }
   }
@@ -142,8 +192,22 @@ export class ProviderRegistry {
     this.openrouterState.error = undefined
     this.notify()
     try {
+      await this.openrouter.load()
+      if (this.openrouter.connected) {
+        const key = await this.openrouter.key()
+        const account = await fetch("https://openrouter.ai/api/v1/key", {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: AbortSignal.any([this.cliAbort.signal, AbortSignal.timeout(15_000)]),
+        })
+        if (account.status === 401 || account.status === 403) {
+          this.openrouter.connected = false
+          throw new Error("OpenRouter sign-in has expired. Click Connect to sign in again.")
+        }
+        if (!account.ok) throw new Error("Could not check OpenRouter. Refresh to try again.")
+        z.object({ data: z.object({ is_free_tier: z.boolean() }) }).parse(await account.json())
+      }
       const response = await fetch("https://openrouter.ai/api/v1/models", {
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.any([this.cliAbort.signal, AbortSignal.timeout(20_000)]),
       })
       if (!response.ok)
         throw new Error(
@@ -199,11 +263,13 @@ export class ProviderRegistry {
           : "Could not load OpenRouter models."
     } finally {
       this.openrouterState.loading = false
+      this.openrouterState.checkedAt = new Date().toISOString()
       this.notify()
     }
   }
 
   async connect(id: z.infer<typeof ProviderIdSchema>) {
+    await this.refreshTasks.get(id)
     if (id === "claude" || id === "antigravity") {
       const provider = this.cliStates.find((item) => item.id === id)
       if (!provider) throw new Error("Provider not found.")
@@ -213,15 +279,27 @@ export class ProviderRegistry {
         const connection = this.cliConnection(id)
         await prepareCliWorkspace(connection)
         if (id === "claude") {
-          const status = z.object({ loggedIn: z.boolean(), authMethod: z.string().optional() }).parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
-          if (!status.loggedIn || status.authMethod !== "claude.ai")
-            throw new Error("Sign in to your Claude subscription with claude auth login, then check the connection again.")
+          const schema = z.object({ loggedIn: z.boolean(), authMethod: z.string().optional() })
+          let status = schema.parse({ loggedIn: false })
+          try {
+            status = schema.parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
+          } catch {
+            // Claude exits with status 1 when signed out; Connect starts its browser login.
+          }
+          if (!status.loggedIn || status.authMethod !== "claude.ai") {
+            await runCliCommand(connection, ["auth", "login"], "", undefined, 5 * 60_000, this.cliAbort.signal)
+            status = schema.parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
+            if (!status.loggedIn || status.authMethod !== "claude.ai")
+              throw new Error("Sign-in was not completed. Click Connect to try again.")
+          }
         } else {
           const schema = z.object({ ready: z.boolean() })
-          const result = await runCliCommand(connection, cliPromptArguments(connection, JSON.stringify(z.toJSONSchema(schema))), "Return ready=true.", undefined, 30_000, this.cliAbort.signal)
+          const result = await runCliCommand(connection, cliPromptArguments(connection, JSON.stringify(z.toJSONSchema(schema))), "Return ready=true.", undefined, 5 * 60_000, this.cliAbort.signal)
           if (!schema.parse(parseCliResponse(id, result)).ready) throw new Error("Antigravity is not ready. Sign in with agy and try again.")
         }
         provider.connected = true
+        provider.installed = true
+        provider.checkedAt = new Date().toISOString()
         provider.error = undefined
       } finally {
         provider.connecting = false
@@ -312,6 +390,9 @@ export class ProviderRegistry {
   }
 
   close() {
+    this.closed = true
+    clearInterval(this.pollingTimer)
+    this.pollingTimer = undefined
     this.cliAbort.abort()
     this.openrouter.cancel()
     this.codex.close()

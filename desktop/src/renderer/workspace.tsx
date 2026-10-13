@@ -19,6 +19,7 @@ import {
   ChatMessage,
   ChatPanel,
   ChatSessions,
+  restoreChatFocus,
 } from "@edu/ui/chat"
 import {
   LearningDocumentLayout,
@@ -36,21 +37,25 @@ import {
 import { DesktopSettings } from "./settings/settings"
 import appIcon from "./assets/app-icon.png"
 import { useWorkspace, desktop } from "./store"
+import { useChatTabs } from "./chat-tabs"
+import { useTopicViews } from "./topic-views"
 import { StudyMarkdown } from "./markdown"
 import { TopicDirectory } from "./topic-directory"
 import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
 import { z } from "zod"
-import { type RunnerSchema, type Snapshot } from "../shared/contracts"
-import { stripTopicMentions, topicMention } from "../shared/topic-mentions"
+import { type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
+import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
 
 export function App() {
   const { snapshot, loaded, error, setError } = useWorkspace()
+  const [setupProvider, setSetupProvider] = useState<Snapshot["providers"][number]["id"]>()
   const [view, setView] = useState<"learn" | "settings">("learn")
-  const [topicId, setTopicId] = useState<string>()
-  const [chatId, setChatId] = useState<string>()
+  const { activeId: topicId, select: selectTopic } = useTopicViews()
+  const { activeId: chatId, openIds, select: selectChat, close: closeChat } = useChatTabs()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [topicMaterials, setTopicMaterials] = useState<z.infer<typeof MaterialDraftSchema>[]>([])
   // Lexical owns the editor content, so replacing a draft from outside remounts its composer.
   const [resets, setResets] = useState<Record<string, number>>({})
   const [focused, setFocused] = useState<string>()
@@ -63,9 +68,16 @@ export function App() {
       >
     >()
   const [busy, setBusy] = useState(false)
+  const [draggingOver, setDraggingOver] = useState<string>()
   const thread = useRef<HTMLDivElement>(null)
   const topic = snapshot.topics.find((item) => item.id === topicId)
   const chat = snapshot.chats.find((item) => item.id === chatId)
+  const taggedTopicIds = new Set(chat?.messages.flatMap((message) => message.topicIds) ?? [])
+  const chatMaterials = [
+    ...(chat?.materials ?? []),
+    ...snapshot.topics.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
+  ]
+  const hasChat = topic !== undefined || snapshot.chats.length > 0 || openIds?.includes("new")
   const chatKey = chat?.id ?? "new-chat"
 
   let newRunner: string | undefined = runnerId || snapshot.runners[0]?.id
@@ -104,6 +116,54 @@ export function App() {
     })
   }, [chatId, chat?.messages.length])
 
+  useEffect(() => {
+    if (view !== "learn" || !loaded) return
+    let cycleContext: "chat" | "topic" | null = null
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Tab" || !event.ctrlKey || event.altKey || event.metaKey) return
+      const inChat = document.activeElement?.closest("[data-chat-context]")
+      if (document.querySelector('[role="dialog"]') && !inChat) return
+      event.preventDefault()
+      // A view change may unmount the focused editor; held Ctrl must keep its original context.
+      cycleContext ??= inChat ? "chat" : "topic"
+      if (cycleContext === "chat") {
+        useChatTabs.getState().cycle(event.shiftKey)
+        restoreChatFocus()
+      } else {
+        const topics = useWorkspace.getState().snapshot.topics
+        if (topics.length === 0) return
+        const reverse = event.shiftKey
+        const views = useTopicViews.getState()
+        const index = topics.findIndex((item) => item.id === views.activeId)
+        if (index < 0) {
+          let next = topics[0]
+          if (reverse) next = topics[topics.length - 1]
+          views.select(next.id)
+        } else {
+          const direction = reverse ? -1 : 1
+          views.select(topics[(index + direction + topics.length) % topics.length].id)
+        }
+      }
+      setError(null)
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.key === "Control") commit()
+    }
+    function commit() {
+      useChatTabs.getState().commitCycle()
+      cycleContext = null
+    }
+    window.addEventListener("keydown", onKeyDown)
+    window.addEventListener("keyup", onKeyUp)
+    window.addEventListener("blur", commit)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("keyup", onKeyUp)
+      window.removeEventListener("blur", commit)
+      commit()
+    }
+  }, [view, loaded, setError])
+
   async function perform(operation: () => Promise<void>) {
     setBusy(true)
     setError(null)
@@ -123,13 +183,13 @@ export function App() {
   }
 
   function openTopic(id?: string) {
-    setTopicId(id)
+    selectTopic(id)
     setView("learn")
     setError(null)
   }
 
   function openChat(id?: string) {
-    setChatId(id)
+    selectChat(id ?? "new")
     setError(null)
   }
 
@@ -160,7 +220,7 @@ export function App() {
   async function ensureChat() {
     if (chat) return chat.id
     const id = await desktop().createChat({ runnerId: await newRunnerId() })
-    setChatId(id)
+    openChat(id)
     setDrafts((current) => ({
       ...current,
       "new-chat": "",
@@ -170,50 +230,54 @@ export function App() {
   }
 
   async function sendChat() {
-    const content = (drafts[chatKey] ?? "").trim()
-    if (!content || chatRunnerBusy || busy) return
+    let content = (drafts[chatKey] ?? "").trim()
+    if (chatRunnerBusy || busy) return
+    if (!content) {
+      if (!chat?.materials.length) return
+      content = `Help me understand the attached materials: ${chat.materials.map((material) => material.name).join(", ")}.`
+    }
     let sentId = chatKey
     const success = await perform(async () => {
       sentId = await ensureChat()
-      await desktop().send({ chatId: sentId, content })
+      await desktop().send({ chatId: sentId, content, openedTopicId: topic?.id })
     })
     if (success) replaceDraft(sentId, "")
   }
 
   async function startTopic() {
-    const content = (drafts["new-topic"] ?? "").trim()
-    if (!content || newRunnerBusy || busy) return
+    let content = (drafts["new-topic"] ?? "").trim()
+    if (newRunnerBusy || busy) return
+    if (!content) {
+      if (topicMaterials.length === 0) return
+      content = `Help me learn the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
+    }
+    openTopic()
     let createdChat: string | undefined
     const success = await perform(async () => {
       const runner = await newRunnerId()
-      const title = stripTopicMentions(content).slice(0, 100)
-      const createdTopic = await desktop().createTopic({ title })
+      const createdTopic = await desktop().createTopic({ title: content, runnerId: runner })
+      const title = (await desktop().snapshot()).topics.find((item) => item.id === createdTopic)?.title ?? "New topic"
+      if (topicMaterials.length > 0) {
+        await desktop().importMaterials({ kind: "topic", id: createdTopic }, topicMaterials.map((material) => material.id))
+        setTopicMaterials([])
+      }
       const chatId = await desktop().createChat({ runnerId: runner })
       createdChat = chatId
       const message = `${topicMention(createdTopic, title)} ${content}`
-      setTopicId(createdTopic)
-      setChatId(chatId)
+      selectTopic(createdTopic)
+      selectChat(chatId)
       // The new-topic composer is replaced by the topic, so a failed send keeps the request in its chat.
       replaceDraft("new-topic", "")
       replaceDraft(chatId, message)
-      await desktop().send({ chatId, content: message })
+      await desktop().send({ chatId, content: message, openedTopicId: createdTopic })
     })
     if (success && createdChat) replaceDraft(createdChat, "")
   }
 
   async function attachNewTopic() {
     await perform(async () => {
-      const content = (drafts["new-topic"] ?? "").trim()
-      const title = stripTopicMentions(content).slice(0, 100) || "New topic"
-      const createdTopic = await desktop().createTopic({ title })
-      const createdChat = await desktop().createChat({
-        runnerId: await newRunnerId(),
-      })
-      setTopicId(createdTopic)
-      setChatId(createdChat)
-      replaceDraft("new-topic", "")
-      replaceDraft(createdChat, `${topicMention(createdTopic, title)} ${content}`)
-      await desktop().importMaterials({ kind: "topic", id: createdTopic })
+      const materials = await desktop().selectMaterials(topicMaterials.map((material) => material.id))
+      setTopicMaterials(materials)
     })
   }
 
@@ -221,6 +285,7 @@ export function App() {
     const key = mode === "topic" ? "new-topic" : chatKey
     const existing = mode === "chat" ? chat : undefined
     const draft = drafts[key] ?? ""
+    const materials = mode === "topic" ? topicMaterials : existing?.materials ?? []
     let runnerBusy = chatRunnerBusy
     let model = chatModel
     let placeholder = "Ask anything, or type @ to tag a topic…"
@@ -238,24 +303,79 @@ export function App() {
       submit = startTopic
       attach = attachNewTopic
     }
+    async function dropFiles(files: File[]) {
+      await perform(async () => {
+        if (mode === "topic") {
+          const materials = await desktop().dropMaterials(files, topicMaterials.map((material) => material.id))
+          setTopicMaterials(materials)
+          return
+        }
+        const materials = await desktop().dropMaterials(files)
+        const id = await ensureChat()
+        await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
+      })
+    }
     return (
       <ChatComposerLayout
+        aria-label={mode === "topic" ? "New topic composer" : "Chat composer"}
         newTopicMode={mode === "topic"}
+        onDragEnterCapture={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return
+          event.preventDefault()
+          event.stopPropagation()
+          if (!busy && !runnerBusy) setDraggingOver(key)
+        }}
+        onDragOverCapture={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return
+          event.preventDefault()
+          event.stopPropagation()
+          event.dataTransfer.dropEffect = busy || runnerBusy ? "none" : "copy"
+          if (!busy && !runnerBusy) setDraggingOver(key)
+        }}
+        onDragLeaveCapture={(event) => {
+          if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+          setDraggingOver(undefined)
+        }}
+        onDragEndCapture={() => setDraggingOver(undefined)}
+        onDropCapture={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return
+          event.preventDefault()
+          event.stopPropagation()
+          setDraggingOver(undefined)
+          const files = Array.from(event.dataTransfer.files)
+          if (busy || runnerBusy || files.length === 0) return
+          void dropFiles(files)
+        }}
+        overlay={draggingOver === key && !busy && !runnerBusy && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-[inherit] border-2 border-dashed border-primary bg-card/95 text-sm font-medium text-primary" role="status">
+            <Paperclip className="size-4" />
+            Drop files to attach
+          </div>
+        )}
         onSubmit={(event) => {
           event.preventDefault()
           void submit()
         }}
         attachments={
-          existing &&
-          existing.materials.length > 0 && (
+          materials.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-              {existing.materials.map((material) => (
+              {materials.map((material) => (
                 <span
                   key={material.id}
                   className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
                 >
                   <FileText className="size-3.5 shrink-0" />
                   <span className="truncate">{material.name}</span>
+                  {mode === "topic" && (
+                    <button
+                      type="button"
+                      aria-label={`Remove ${material.name}`}
+                      disabled={busy}
+                      onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -293,27 +413,15 @@ export function App() {
               >
                 <Paperclip className="size-4" />
               </button>
-              {!existing && snapshot.runners.length > 1 && (
-                <select
-                  className="max-w-48 rounded-md bg-transparent px-2 py-1 text-xs text-muted-foreground"
-                  aria-label="Runner"
-                  value={newRunner ?? ""}
-                  onChange={(event) => {
-                    setRunnerId(event.target.value)
-                    setRunnerChoice(undefined)
-                  }}
-                >
-                  {snapshot.runners.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              )}
               <ProviderModelPicker
                 value={model}
                 disabled={busy || runnerBusy}
                 lockProvider={!!existing}
+                onSetup={(provider) => {
+                  setSetupProvider(provider)
+                  setView("settings")
+                  setError(null)
+                }}
                 onChange={(choice) => {
                   if (existing && chatRunnerConfig)
                     void perform(() =>
@@ -342,7 +450,7 @@ export function App() {
                 className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
                 type="submit"
                 aria-label="Send message"
-                disabled={!draft.trim() || busy || runnerBusy}
+                disabled={(!draft.trim() && materials.length === 0) || busy || runnerBusy}
               >
                 <ArrowUp className="size-4" />
               </button>
@@ -353,18 +461,35 @@ export function App() {
     )
   }
 
+  const sessionProps = {
+    sessions: snapshot.chats,
+    openIds: openIds ?? [],
+    activeId: chatId,
+    onSelect: openChat,
+    onNew: () => openChat(),
+    onClose: closeChat,
+  }
+  const newTopicContent = (
+    <NewTopicView>
+      <LearningSuggestions
+        disabled={busy || newRunnerBusy}
+        onSelect={(prompt) => {
+          openTopic()
+          replaceDraft("new-topic", prompt)
+        }}
+      />
+      {composer("topic")}
+    </NewTopicView>
+  )
   const chatPane = (
-    <ChatSessions
-      sessions={snapshot.chats}
-      activeId={chat?.id}
-      onSelect={openChat}
-      onNew={() => openChat()}
-    >
+    <ChatSessions {...sessionProps}>
       <ChatPanel composer={composer("chat")}>
         {!chat || (chat.messages.length === 0 && !chatRunning && !chatError) ? (
           <ChatEmptyState
             title="Start a chat"
-            description="Ask anything. Type @ to bring a topic's notes and sources into this chat."
+            description={topic
+              ? "The open topic's notes and sources are included. Type @ to bring another topic into this chat."
+              : "Ask anything. Type @ to bring a topic's notes and sources into this chat."}
             onPrompt={(prompt) => replaceDraft(chatKey, prompt)}
           />
         ) : (
@@ -375,6 +500,8 @@ export function App() {
                   text={message.content}
                   topics={snapshot.topics}
                   onOpenTopic={openTopic}
+                  materials={chatMaterials}
+                  onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
               </ChatMessage>
             ))}
@@ -402,6 +529,7 @@ export function App() {
                         chatId: chat.id,
                         content:
                           "Retry my last request using the saved handoff. Do not skip a pending question.",
+                        openedTopicId: topic?.id,
                       }),
                     )
                   }}
@@ -465,15 +593,8 @@ export function App() {
       <WorkspacePanes
         chatLabel="Tutor chat"
         status={chatRunning ? "Working" : "Ready to learn"}
-        body={
-          <NewTopicView>
-            <LearningSuggestions
-              disabled={busy || newRunnerBusy}
-              onSelect={(prompt) => replaceDraft("new-topic", prompt)}
-            />
-            {composer("topic")}
-          </NewTopicView>
-        }
+        body={newTopicContent}
+        chat={hasChat ? chatPane : undefined}
       />
     )
   } else {
@@ -544,6 +665,7 @@ export function App() {
                           chatId: id,
                           content: `${topicMention(topic.id, topic.title)} I confirm this learning plan. Begin at the suggested starting point.`,
                           confirmTopicId: topic.id,
+                          openedTopicId: topic.id,
                         })
                       })
                     }}
@@ -555,7 +677,7 @@ export function App() {
               )
             }
           >
-            <StudyMarkdown text={notes.before} />
+            <StudyMarkdown text={notes.before} materials={topic.materials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             {notes.directory && (
               <TopicDirectory
                 heading={notes.directory.heading}
@@ -563,7 +685,7 @@ export function App() {
                 currentSection={topic.learning.currentSection}
               />
             )}
-            {notes.after.trim() && <StudyMarkdown text={notes.after} />}
+            {notes.after.trim() && <StudyMarkdown text={notes.after} materials={topic.materials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
           </LearningDocumentLayout>
         }
         chat={chatPane}
@@ -572,7 +694,16 @@ export function App() {
   }
 
   if (loaded && view === "settings") {
-    return <DesktopSettings snapshot={snapshot} busy={busy} perform={perform} onBack={() => setView("learn")} error={error} onDismissError={() => setError(null)} />
+    return (
+      <DesktopSettings
+        initialProvider={setupProvider}
+        snapshot={snapshot}
+        onBack={() => {
+          setView("learn")
+          setSetupProvider(undefined)
+        }}
+      />
+    )
   }
 
   return (
@@ -582,7 +713,7 @@ export function App() {
         workspaceId={topic?.id ?? "new"}
         appName="EdU"
         nativeTitlebar={navigator.userAgent.includes("Macintosh")}
-        hasChat={view === "learn" && !!topic}
+        hasChat={view === "learn" && hasChat}
         sidebar={
           <DesktopSidebar
             snapshot={snapshot}
@@ -590,6 +721,7 @@ export function App() {
             view={view}
             onOpenTopic={openTopic}
             onOpenSettings={() => {
+              setSetupProvider(undefined)
               setView("settings")
               setError(null)
             }}
@@ -638,6 +770,14 @@ function DesktopSidebar({
       (state) => state.chatId === chat.id && state.status === "running",
     ),
   )
+  const runningTopicIds = new Set(
+    runningChats.flatMap((chat) => {
+      const latestTaggedRequest = chat.messages.findLast(
+        (message) => message.role === "user" && message.topicIds.length > 0,
+      )
+      return latestTaggedRequest?.topicIds ?? []
+    }),
+  )
 
   function openTopic(id?: string) {
     closeNavigation()
@@ -685,9 +825,7 @@ function DesktopSidebar({
             key={item.id}
             title={item.title}
             selected={view === "learn" && item.id === topicId}
-            busy={runningChats.some((chat) =>
-              chat.messages.some((message) => message.topicIds.includes(item.id)),
-            )}
+            busy={runningTopicIds.has(item.id)}
             onClick={() => openTopic(item.id)}
           />
         ))}

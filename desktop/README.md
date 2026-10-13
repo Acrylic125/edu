@@ -1,7 +1,6 @@
 # EdU desktop
 
-The shipping EdU app is a standalone Electron tutoring harness. Web delivery is
-paused. It keeps EdU’s
+The shipping EdU app is a standalone Electron tutoring harness. It keeps EdU’s
 stylesheet and theme provider directly, with the same system typography, topic
 sidebar, learning suggestions, composer, study document, and tutor chat. Light,
 dark, and system appearance are included.
@@ -10,16 +9,20 @@ dark, and system appearance are included.
 
 Open **Settings → Providers → Add provider** and choose an account:
 
-- **Codex:** click **Sign in with ChatGPT** and finish sign-in in your browser.
+- **Codex:** click **Connect** and finish sign-in in your browser.
   Your account needs Codex access. The app bundles the Codex app-server runtime.
-- **OpenRouter:** click **Connect account** and sign in in your browser.
+- **OpenRouter:** click **Connect** and sign in in your browser.
   Your account needs model credits.
 
-- **Claude:** install Claude Code, sign in once with `claude auth login`, and save
-  the absolute path to `claude` in **Binary path**. Click **Check connection**.
-- **Antigravity:** install Antigravity CLI, sign in once with `agy`, and save the
-  absolute path to `agy` in **Binary path**. Click **Check connection**; this
-  sends a small model request using your account.
+- **Claude:** click the gray Claude icon in the model picker, install Claude Code
+  if needed, then click **Connect**. EdU finds the CLI and starts sign-in if needed.
+- **Antigravity:** click the gray Antigravity icon, install its CLI if needed, then
+  click **Connect**. The connection check sends a small model request.
+
+Provider setup is available from existing chats too. Connecting another provider
+keeps the current chat's provider; start a new chat to use the new account.
+EdU detects CLIs on PATH and in standard installation folders. Custom installations
+can still be configured through **Settings → Providers → Binary path**.
 
 Claude and Antigravity use their CLI's existing credential store. Disconnect
 only disables their use in EdU; it does not log the shared CLI out. These adapters
@@ -27,7 +30,10 @@ support text and extracted PDF text; use ChatGPT or OpenRouter for visual source
 CLI models use their configured default; Claude also exposes Sonnet, Opus, and
 Haiku aliases, and Antigravity loads its catalog from `agy models`.
 
-Change the display name or binary path and click **Save changes**. ChatGPT uses
+Provider settings show the same install-and-connect steps as the model picker.
+Connection and save errors appear beside their controls without moving the page.
+Open **Advanced settings** to change the display name or binary path, then click
+**Save changes**. ChatGPT uses
 its bundled runtime when its binary path is empty. Binary changes stop idle
 runners and require reconnecting a CLI provider. Settings persist across restarts.
 Use **Settings → Appearance** to select System, Light, or Dark.
@@ -38,8 +44,12 @@ readers, PDF renderer, and persistence. Users do not install Node, Python, or
 a skill. ChatGPT and OpenRouter include their runtime; Claude and Antigravity
 require the provider CLI described above.
 
-Create a topic by describing your goal or attaching PDF, image, text, or code
+Create a topic by describing your goal or attaching PDF, PowerPoint (`.pptx`), image, text, or code
 materials. The tutor proposes a plan; **Confirm plan & begin** authorizes teaching.
+Attachments count as content, so Send works without typed text. Chat requests
+include the currently open topic's notes and saved progress; explicit topic tags
+can direct a request to another topic. Reopening EdU restores the most recently
+viewed topic from its view history, independently of the selected chat.
 It explains the material, asks Checks and Tests, and maintains revision notes.
 Use the provider/model picker beside the paperclip to choose your provider and model.
 Codex models and reasoning options come from the bundled runtime’s model catalog;
@@ -53,11 +63,15 @@ saved runners retain their provider. Up to eight tutors can work independently.
 Restarting a process preserves notes and pending questions; send a message to
 resume from the saved handoff.
 
-Use the paperclip to add sources and the download button to export study notes,
-the conversation, and source assets. PDF and image pages are rendered on demand
+Use the paperclip or drop files onto the composer to add sources. Use the download
+button to export study notes, the conversation, and source assets. PDF and image pages are rendered on demand
 using the bundled canvas runtime and displayed inline when the tutor refers to
 them. Uploaded materials and relevant conversation/state are sent to the model
-provider when tutoring. The app does not synchronize with the web account yet.
+provider when tutoring. Conversations and study files are stored locally; there
+is no account synchronization.
+
+PowerPoint imports extract text and speaker notes in slide order and preserve the
+original deck. Attach a PDF export when the tutor needs to inspect slide visuals.
 
 ## Development
 
@@ -70,7 +84,7 @@ pnpm dev
 ```
 
 From the repository root, `pnpm desktop:dev` also starts the app after installing
-the desktop dependencies. Development requires Node 22.12+ and pnpm 10.26.0.
+the desktop dependencies. Development requires Node 22.13+ and pnpm 10.26.0.
 The install script downloads Electron and the pinned Codex native package for the
 developer. Builds copy the host’s Codex binaries into `resources/codex/`, outside
 ASAR in the packaged app. Packaged users only open the app.
@@ -116,19 +130,44 @@ runner operations require Electron.
 - Each runner is an Electron utility process using Electron’s bundled Node
   runtime. Codex runners own a native app-server child, which is terminated on
   stop, timeout, crash, or quit. Turns have a five-minute deadline and validated
-  tools. Codex runs ephemeral, read-only threads with shell, browser, plugins,
+  tools. Codex runs persistent, read-only threads with shell, browser, plugins,
   hooks, and multi-agent features disabled. The shared study tools read bundled
   skill references and imported topic assets and validate saved learning state.
-  Each turn reconstructs context from the saved handoff and recent conversation.
+  Each Codex chat retains its native thread ID and resumes that thread across
+  turns and process restarts, refreshing instructions from the current learning
+  state. A pending binding marks an interrupted or uncommitted turn; the next
+  request creates a new thread from the saved transcript instead of trusting
+  unseen native output. An explicitly missing native thread is reconstructed;
+  transient provider errors are reported without silently replacing the thread.
+  Providers without native session support receive the full saved transcript.
   Its bundled code-mode host stays enabled because some models require it to
   call those study tools; disabling it silently hides the tools from those models.
-- Codex tutoring turns run from `workspace/topics/<topic-id>/`. Notes, private handoffs,
-  and source assets belong to that topic, independently of its runner. Codex's
+- Codex tutoring turns run from `workspace/chats/<chat-id>/`. Topic notes, private
+  handoffs, and source assets belong to their topic, independently of the chat
+  or runner. Codex's
   private account home remains in `workspace/providers/codex/`.
-- `workspace/workspace.json` under Electron’s `userData` is the authoritative
-  transaction. Writes are serialized, validated, read back, and atomically renamed.
-  A corrupt workspace is reported rather than overwritten. Topics also have
-  `topic.md` and private `agent.workpad.md` mirrors, plus an assets directory.
+- Topic creation generates a title from the suggested subject before saving it,
+  using the selected provider. Chat titles do not rename tagged topics.
+- Storage lives under Electron’s `userData` in `workspace/`. Local SQLite
+  `state.sqlite` stores chats, ordered messages, private chat handoffs, provider
+  session bindings, runner configuration, and provider settings. A sequenced
+  event log records changes in the same transaction as the current state.
+  WAL mode, full synchronous commits, and serialized writes protect committed
+  conversations. Replies become visible after the transaction commits.
+- Topics remain separate and editable: `topics/<topic-id>/topic.md` holds the
+  title in its first Markdown header and the notes, `agent.workpad.md` holds the
+  private handoff, and `topic.json` holds structured state. Topics are discovered
+  from this folder and refreshed before snapshots and saves. Topic updates also
+  enter the SQLite transaction; a pending-files marker lets startup recover their
+  Markdown/JSON files after an interrupted write. Files are written through
+  verified temporary files and atomic rename. Native session bindings and private keys are omitted from public chats.
+- Existing `workspace.json` and per-chat `chat.json` data migrate to SQLite on
+  load. After a successful commit and database read-back verification, migration
+  sources (`workspace.json`, `workspace.legacy.json`, `chat.json`) and the obsolete
+  `settings.json` mirror are removed. Startup also removes orphaned chat folders
+  and temporary files created by the atomic writer. Active assets, topic documents,
+  diagnostics, and provider credentials remain available. Corrupt or uncommitted
+  migration data is reported and retained.
 - Every successful turn requires a complete saved learning state. Draft plans
   cannot advance without explicit learner confirmation. If Codex completes without
   a valid save or visible reply, the harness continues the same thread with up to
@@ -136,7 +175,7 @@ runner operations require Electron.
   keys are checked against outgoing notes/replies. Semantic adherence still
   depends on the selected model; the full skill and private handoff are supplied
   each turn. Public snapshots and learner exports omit the private handoff/key.
-- Per-turn JSONL diagnostics are saved in `workspace/topics/<topic-id>/diagnostics/`.
+- Per-turn JSONL diagnostics are saved in `workspace/chats/<chat-id>/diagnostics/`.
   Failed turns show a Diagnostics disclosure with recent tool calls, validation failures,
   recovery attempts, and commit status with a trace ID. Successful turns keep diagnostics
   hidden. The document's folder button opens the topic workspace in Finder. Logs omit prompts, tool arguments,
@@ -152,7 +191,7 @@ plan confirmation, private assessment state, and PKCE callbacks. Native smoke
 tests launch the actual sandboxed Electron app, create runners/topics, and restart
 it using a disposable data directory. Model tests use local OpenAI-compatible HTTP and Codex JSON-RPC fixtures, plus the
 real bundled Codex runtime for initialization, model discovery, and tool
-registration. Opt-in live tests use an already connected account:
+registration and native thread resumption. Opt-in live tests use an already connected account:
 
 ```bash
 PRUNE_LIVE_DATA_DIR='/absolute/path/to/prune-desktop' pnpm exec vitest run tests/codex.live.test.ts
@@ -172,7 +211,7 @@ Implementation references: [Electron utility processes](https://www.electronjs.o
 [T3 Code’s Codex provider](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/CodexProvider.ts)
 and [provider/model picker](https://github.com/pingdotgg/t3code/blob/main/apps/web/src/components/chat/ProviderModelPicker.tsx).
 T3 Code informed provider/account separation and runtime model discovery;
-EdU keeps its own web styling and Tutor Me harness.
+EdU keeps its own styling and Tutor Me harness.
 
 CLI adapter references: [Claude Code CLI](https://code.claude.com/docs/en/cli-reference),
 [Antigravity headless mode](https://antigravity.google/docs/cli/headless/),

@@ -3,6 +3,7 @@ import OpenAI from "openai"
 import { z } from "zod"
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
+import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "../providers/cli"
 import type { WorkerJob, Diagnostic } from "../shared/contracts"
 import { stripTopicMentions } from "../shared/topic-mentions"
 
@@ -13,16 +14,28 @@ const instructions =
   "Generate a concise title of 3–8 words from the learner's request. Use the learner's language. Do not include markdown or explanation."
 
 export async function generateTopicTitle(
-  job: WorkerJob,
+  job: Pick<WorkerJob, "runner" | "codex" | "cli" | "titleModel">,
+  request: string,
   client: OpenAI | undefined,
   processChanged: (pid: number | null) => void,
   diagnostic: Diagnostic,
 ) {
-  const request = job.chat.messages.find(
-    (message) => message.role === "user",
-  )?.content
-  if (!request) throw new Error("A learner request is needed to name the chat.")
   const input = stripTopicMentions(request).slice(0, 1800)
+  if (!input.trim()) throw new Error("A suggested topic is needed to generate a title.")
+  if (job.cli) {
+    await prepareCliWorkspace(job.cli)
+    let model = "default"
+    if (job.cli.provider === "claude") model = "haiku"
+    diagnostic("title.model", { provider: job.cli.provider, model })
+    const output = await runCliCommand(
+      job.cli,
+      cliPromptArguments(job.cli, JSON.stringify(z.toJSONSchema(TitleSchema)), model),
+      `${instructions}\n\nSuggested topic:\n${input}`,
+      processChanged,
+      30_000,
+    )
+    return TitleSchema.parse(parseCliResponse(job.cli.provider, output)).title
+  }
   if (job.runner.provider === "openrouter") {
     if (!client || !job.titleModel)
       throw new Error("No priced title model is available from OpenRouter.")

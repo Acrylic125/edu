@@ -1,14 +1,14 @@
 "use client"
 
 import type { ComponentProps, ReactNode } from "react"
-import { BookOpenIcon, MessageCircleIcon, PencilLineIcon } from "lucide-react"
+import { BookOpenIcon, PencilLineIcon } from "lucide-react"
 
 import { Button } from "../primitives/button"
 import { ScrollArea } from "../primitives/scroll-area"
 
 import { cn } from "../utils"
 
-export { ChatSessions } from "./chat-sessions"
+export { ChatSessions, restoreChatFocus } from "./chat-sessions"
 
 export function ChatPanel({
   children,
@@ -20,10 +20,10 @@ export function ChatPanel({
   alerts?: ReactNode
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-      <div className="flex shrink-0 flex-col items-center px-4 pb-4 pt-3">
-        <div className="w-full max-w-3xl">
+    <div className="relative h-full min-h-0 overflow-hidden">
+      <div className="absolute inset-0 min-h-0 overflow-hidden">{children}</div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex flex-col items-center px-4">
+        <div className="pointer-events-auto w-full max-w-3xl">
           {alerts}
           {composer}
         </div>
@@ -54,6 +54,7 @@ export function ChatComposerLayout({
       {...props}
       className={cn(
         "relative flex min-h-28 w-full flex-col rounded-[1.5rem] border border-border/70 bg-card shadow-sm",
+        !newTopicMode && "bg-input/25 shadow-lg backdrop-blur-xl",
         newTopicMode &&
           "min-h-44 rounded-[1.75rem] border-input bg-muted p-2 shadow-sm focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/20",
         className,
@@ -137,9 +138,6 @@ export function ChatEmptyState({
   return (
     <ScrollArea className="h-full min-h-0">
       <div className="flex min-h-full flex-1 flex-col items-center justify-center px-6 py-10 text-center">
-        <span className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-learning-sage text-learning-ink">
-          <MessageCircleIcon className="size-6" aria-hidden="true" />
-        </span>
         <h2 className="max-w-64 text-2xl font-semibold leading-tight tracking-tight">
           {title ?? (newTopic ? "What would you like to learn?" : "Ask about this lesson")}
         </h2>
@@ -179,7 +177,7 @@ export function ChatConversation({
         role: "log",
         "aria-label": "Conversation",
         ...props,
-        className: cn("px-5 pt-4 pb-6", className),
+        className: cn("px-5 pt-4 pb-60", className),
       }}
     >
       {children}

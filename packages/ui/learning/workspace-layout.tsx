@@ -54,7 +54,7 @@ export function WorkspaceFrame({
   banner,
   children,
   navigationName = "topics",
-  appName = "Prune",
+  appName = "EdU",
   nativeTitlebar = false,
   workspaceId = title,
 }: {

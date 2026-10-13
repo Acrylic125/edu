@@ -1,9 +1,12 @@
+import { DatabaseSync } from "node:sqlite"
+import { z } from "zod"
+import { ChatDatabase } from "../src/main/chat-database"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, test } from "vitest"
-import { newTopic, WorkspaceRepository } from "../src/main/workspace"
+import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
 
 const directories: string[] = []
 afterEach(async () => {
@@ -52,21 +55,16 @@ test("persists concurrent changes without losing topics and restores private pen
 
 test("rejects invalid mutations and keeps the last valid disk snapshot", async () => {
   const store = await repository()
-  const original = await readFile(
-    join(store.directory, "workspace.json"),
-    "utf8",
-  )
+  const original = new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state
   await expect(
     store.mutate((state) => (state.runners[0].name = "")),
   ).rejects.toThrow()
-  expect(await readFile(join(store.directory, "workspace.json"), "utf8")).toBe(
-    original,
-  )
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state).toEqual(original)
   await store.mutate((state) => (state.runners[0].name = "Recovered"))
   expect(store.stateSnapshot.runners[0].name).toBe("Recovered")
 })
 
-test("migrates per-topic conversations into independent chats and keeps the original file", async () => {
+test("migrates per-topic conversations into independent chats and removes the workspace file", async () => {
   const directory = await mkdtemp(join(tmpdir(), "prune-store-"))
   directories.push(directory)
   const runnerId = randomUUID()
@@ -94,18 +92,97 @@ test("migrates per-topic conversations into independent chats and keeps the orig
   expect(chats).toHaveLength(1)
   expect(chats[0]).toMatchObject({ title: "Calculus", runnerId })
   expect(chats[0].messages[0]).toMatchObject({ content: "Teach me", topicIds: [topic.id] })
-  expect(await readFile(join(directory, "workspace.v1.json"), "utf8")).toBe(legacy)
+  expect(await readdir(directory)).not.toContain("workspace.json")
+  const restored = await new WorkspaceRepository(directory).load()
+  expect(restored.topics).toEqual(topics)
+  expect(restored.chats).toEqual(chats)
 })
 
-test("does not replace a corrupt workspace with an empty one", async () => {
-  const store = await repository()
-  await writeFile(join(store.directory, "workspace.json"), "invalid json")
+test("does not replace a corrupt legacy workspace with an empty one", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prune-store-"))
+  directories.push(directory)
+  await writeFile(join(directory, "workspace.json"), "invalid json")
   await expect(
-    new WorkspaceRepository(store.directory).load(),
+    new WorkspaceRepository(directory).load(),
   ).rejects.toThrow()
-  expect(await readFile(join(store.directory, "workspace.json"), "utf8")).toBe(
+  expect(await readFile(join(directory, "workspace.json"), "utf8")).toBe(
     "invalid json",
   )
+})
+
+test("migrates v2 chats and settings into SQLite while retaining editable topic files", async () => {
+  const store = await repository()
+  const topic = newTopic("Calculus")
+  const chat = newChat(store.stateSnapshot.runners[0].id)
+  const settings = { id: "claude", displayName: "My Claude", binaryPath: "/usr/bin/claude", enabled: true }
+  const legacy = { ...store.stateSnapshot, topics: [topic], chats: [chat], providerSettings: [settings] }
+  await rm(join(store.directory, "state.sqlite"))
+  await rm(join(store.directory, "settings.json"), { force: true })
+  await writeFile(join(store.directory, "workspace.json"), JSON.stringify(legacy))
+  const migrated = await new WorkspaceRepository(store.directory).load()
+  expect(migrated).toEqual(legacy)
+  expect(await readdir(store.directory)).not.toContain("workspace.json")
+  await expect(readFile(join(store.directory, "settings.json"))).rejects.toThrow()
+  const metadata = JSON.parse(await readFile(join(store.directory, "topics", topic.id, "topic.json"), "utf8"))
+  expect(metadata).not.toHaveProperty("title")
+  expect(metadata.learning).not.toHaveProperty("notes")
+  expect(metadata.learning).not.toHaveProperty("workpad")
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state.chats).toEqual([chat])
+  await expect(readFile(join(store.directory, "workspace.legacy.json"))).rejects.toThrow()
+})
+
+test("reads renamed and edited Markdown without overwriting it when a chat changes", async () => {
+  const store = await repository()
+  const topic = newTopic("Calculus")
+  await store.mutate((state) => state.topics.push(topic))
+  const path = join(store.directory, "topics", topic.id, "topic.md")
+  const notes = "# Calculus and Limits\n\nManually edited study notes.\n"
+  await writeFile(path, notes)
+  await store.refreshTopics()
+  expect(store.topic(topic.id)).toMatchObject({ title: "Calculus and Limits", learning: { notes } })
+  await store.mutate((state) => state.chats.push(newChat(state.runners[0].id)))
+  expect(await readFile(path, "utf8")).toBe(notes)
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.topics[0]).toMatchObject({ title: "Calculus and Limits", learning: { notes } })
+})
+
+test("discovers documents added to the topics folder and removes deleted topics", async () => {
+  const store = await repository()
+  const topic = newTopic("Calculus")
+  await store.mutate((state) => state.topics.push(topic))
+  await rm(join(store.directory, "topics", topic.id), { recursive: true })
+  const addedId = randomUUID()
+  const directory = join(store.directory, "topics", addedId)
+  await mkdir(directory)
+  await writeFile(join(directory, "topic.md"), "# Geometry\n\nTriangles.")
+  await store.refreshTopics()
+  expect(store.stateSnapshot.topics).toHaveLength(1)
+  expect(store.topic(addedId).title).toBe("Geometry")
+  await expect(Promise.resolve().then(() => store.topic(topic.id))).rejects.toThrow("no longer exists")
+})
+
+test("keeps the topic title header when a tutor saves notes with another heading", async () => {
+  const store = await repository()
+  const topic = newTopic("Calculus")
+  await store.mutate((state) => state.topics.push(topic))
+  await store.mutate((state) => { state.topics[0].learning.notes = "# Limits\n\nAn explanation." })
+  const notes = await readFile(join(store.directory, "topics", topic.id, "topic.md"), "utf8")
+  expect(notes).toBe("# Calculus\n\nAn explanation.")
+  expect((await new WorkspaceRepository(store.directory).load()).topics[0].title).toBe("Calculus")
+})
+
+test("rejects corrupt database and topic state without replacing their files", async () => {
+  const store = await repository()
+  await writeFile(join(store.directory, "state.sqlite"), "invalid database")
+  await expect(new WorkspaceRepository(store.directory).load()).rejects.toThrow()
+  expect(await readFile(join(store.directory, "state.sqlite"), "utf8")).toBe("invalid database")
+  const other = await repository()
+  const topic = newTopic("Calculus")
+  await other.mutate((state) => state.topics.push(topic))
+  const path = join(other.directory, "topics", topic.id, "topic.json")
+  await writeFile(path, "invalid json")
+  await expect(new WorkspaceRepository(other.directory).load()).rejects.toThrow()
+  expect(await readFile(path, "utf8")).toBe("invalid json")
 })
 
 test("learner exports omit the private handoff and assessment keys", async () => {
@@ -122,4 +199,129 @@ test("learner exports omit the private handoff and assessment keys", async () =>
   await expect(
     readFile(join(output, "agent.workpad.md"), "utf8"),
   ).rejects.toThrow()
+})
+
+
+test("imports JSON chats once and uses SQLite after restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prune-json-migration-"))
+  directories.push(directory)
+  const runnerId = randomUUID()
+  const chat = newChat(runnerId, "Imported")
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Keep this conversation", createdAt: new Date().toISOString(), topicIds: [] })
+  await mkdir(join(directory, "chats", chat.id), { recursive: true })
+  const path = join(directory, "chats", chat.id, "chat.json")
+  const original = JSON.stringify(chat)
+  await writeFile(path, original)
+  await writeFile(join(directory, "settings.json"), JSON.stringify({ version: 3, runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "default" }], providerSettings: [] }))
+  const store = new WorkspaceRepository(directory)
+  await store.load()
+  expect(store.chat(chat.id)).toEqual(chat)
+  await store.mutate((state) => { state.chats[0].title = "Updated" })
+  await expect(readFile(path, "utf8")).rejects.toThrow()
+  expect((await new WorkspaceRepository(directory).load()).chats[0].title).toBe("Updated")
+  const database = new DatabaseSync(join(directory, "state.sqlite"))
+  try {
+    expect(database.prepare("SELECT sequence FROM events WHERE entity_id = ? ORDER BY sequence").all(chat.id).length).toBeGreaterThan(1)
+    expect(z.object({ count: z.number() }).parse(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).count).toBe(1)
+  } finally { database.close() }
+})
+
+test("rolls back chats, messages, and topic changes together on a database failure", async () => {
+  const store = await repository()
+  const topic = newTopic("Before")
+  const chat = newChat(store.stateSnapshot.runners[0].id)
+  const message = { id: randomUUID(), role: "user" as const, content: "Original", createdAt: new Date().toISOString(), topicIds: [] }
+  chat.messages.push(message)
+  await store.mutate((state) => { state.topics.push(topic); state.chats.push(chat) })
+  await expect(store.mutate((state) => {
+    state.topics[0].learning.notes = "# Before\n\nShould not be written."
+    const other = newChat(state.runners[0].id)
+    other.messages.push(message)
+    state.chats.push(other)
+  })).rejects.toThrow()
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.chats).toEqual([chat])
+  expect(restored.topics[0].learning.notes).toBe(topic.learning.notes)
+  await store.mutate((state) => { state.chats[0].title = "Still usable" })
+  expect(store.chat(chat.id).title).toBe("Still usable")
+})
+
+test("recovers topic mirrors after a committed transaction is interrupted", async () => {
+  const store = await repository()
+  const topic = newTopic("Recovery")
+  await store.mutate((state) => state.topics.push(topic))
+  const state = store.stateSnapshot
+  const chat = newChat(state.runners[0].id)
+  chat.learning.workpad = "Committed handoff"
+  state.chats.push(chat)
+  state.topics[0].learning.notes = "# Recovery\n\nCommitted notes."
+  new ChatDatabase(join(store.directory, "state.sqlite")).save(state)
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.chats[0].learning.workpad).toBe("Committed handoff")
+  expect(restored.topics[0].learning.notes).toBe(state.topics[0].learning.notes)
+  expect(await readFile(join(store.directory, "topics", topic.id, "topic.md"), "utf8")).toBe(state.topics[0].learning.notes)
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.filesPending).toBe(false)
+})
+
+test("does not resurrect deleted topics after an interrupted mirror cleanup", async () => {
+  const store = await repository()
+  const topic = newTopic("Deleted")
+  await store.mutate((state) => state.topics.push(topic))
+  const state = store.stateSnapshot
+  state.topics = []
+  new ChatDatabase(join(store.directory, "state.sqlite")).save(state)
+  expect((await new WorkspaceRepository(store.directory).load()).topics).toEqual([])
+  await expect(readFile(join(store.directory, "topics", topic.id, "topic.md"))).rejects.toThrow()
+})
+
+
+test("does not import stale JSON over a damaged initialized database", async () => {
+  const store = await repository()
+  const database = new DatabaseSync(join(store.directory, "state.sqlite"))
+  database.prepare("DELETE FROM metadata WHERE key = 'settings'").run()
+  database.close()
+  await expect(new WorkspaceRepository(store.directory).load()).rejects.toThrow("incomplete")
+})
+
+
+test("prunes obsolete files and orphan chats while preserving live assets and learner documents", async () => {
+  const store = await repository()
+  const chat = newChat(store.stateSnapshot.runners[0].id)
+  const topic = newTopic("Keep")
+  await store.mutate((state) => { state.chats.push(chat); state.topics.push(topic) })
+  const chatDirectory = join(store.directory, "chats", chat.id)
+  await mkdir(join(chatDirectory, "assets"), { recursive: true })
+  await writeFile(join(chatDirectory, "assets", "keep.txt"), "Attached source")
+  const stale = join(chatDirectory, `chat.json.${randomUUID()}.tmp`)
+  await writeFile(stale, "Interrupted write")
+  await writeFile(join(chatDirectory, "chat.json"), "Obsolete backup")
+  await writeFile(join(store.directory, "workspace.legacy.json"), "Obsolete backup")
+  await writeFile(join(store.directory, "settings.json"), "Obsolete mirror")
+  const orphan = join(store.directory, "chats", randomUUID())
+  await mkdir(orphan)
+  await writeFile(join(orphan, "unused.txt"), "Orphan")
+  const learnerFile = join(store.directory, "topics", topic.id, "solution.tmp")
+  await writeFile(learnerFile, "Keep learner work")
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.chats).toEqual([chat])
+  expect(await readFile(join(chatDirectory, "assets", "keep.txt"), "utf8")).toBe("Attached source")
+  expect(await readFile(learnerFile, "utf8")).toBe("Keep learner work")
+  for (const path of [stale, orphan, join(chatDirectory, "chat.json"), join(store.directory, "workspace.legacy.json"), join(store.directory, "settings.json")])
+    await expect(readFile(path)).rejects.toThrow()
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.removedFiles).toEqual({ topics: [], chats: [] })
+})
+
+test("preserves migration sources when database verification fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "prune-invalid-migration-"))
+  directories.push(directory)
+  const runnerId = randomUUID()
+  const first = newChat(runnerId)
+  const second = newChat(runnerId)
+  const message = { id: randomUUID(), role: "user" as const, content: "Preserve", createdAt: new Date().toISOString(), topicIds: [] }
+  first.messages.push(message)
+  second.messages.push(message)
+  const raw = JSON.stringify({ version: 2, runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "default" }], topics: [], chats: [first, second] })
+  await writeFile(join(directory, "workspace.json"), raw)
+  await expect(new WorkspaceRepository(directory).load()).rejects.toThrow()
+  expect(await readFile(join(directory, "workspace.json"), "utf8")).toBe(raw)
 })

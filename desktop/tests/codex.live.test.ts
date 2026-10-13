@@ -1,10 +1,10 @@
+import { WorkspaceRepository } from "../src/main/workspace"
 import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { expect, test } from "vitest"
 import { z } from "zod"
 import {
-  WorkspaceSchema,
   WorkerJobSchema,
   TraceEventSchema,
 } from "../src/shared/contracts"
@@ -23,11 +23,8 @@ test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
       environment.PRUNE_LIVE_DATA_DIR,
       "workspace",
     )
-    const workspace = WorkspaceSchema.parse(
-      JSON.parse(
-        await readFile(join(workspaceDirectory, "workspace.json"), "utf8"),
-      ),
-    )
+    const repository = new WorkspaceRepository(workspaceDirectory)
+    const workspace = await repository.load()
     const chat = workspace.chats.find((chat) =>
       workspace.runners.some(
         (runner) => runner.id === chat.runnerId && runner.provider === "codex",
