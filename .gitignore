@@ -1,11 +1,6 @@
 .pnpm-store
 temp
-.e2e/
-web/test-results/
 .DS_Store
 .tmp
 node_modules/
-.next/
-.open-next/
-.wrangler/
 *.tsbuildinfo
