@@ -5,6 +5,7 @@ import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import "katex/dist/katex.min.css"
 import { MermaidDiagram } from "./mermaid-diagram"
+import { MediaPreview } from "./media-preview"
 import { normalizeMathDelimiters } from "./normalize-math"
 import { linkSourceCitations } from "./source-citations"
 import { resolveMaterialLink } from "../shared/material-links"
@@ -35,6 +36,32 @@ export function StudyMarkdown({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
+          img: ({ src, alt, title }) => (
+            <MediaPreview
+              label={alt || "Image preview"}
+              preview={<img src={src} alt={alt ?? ""} />}
+            >
+              {(open) => (
+                <img
+                  src={src}
+                  alt={alt ?? ""}
+                  title={title || "Click to magnify"}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Magnify ${alt || "image"}`}
+                  aria-haspopup="dialog"
+                  className="cursor-zoom-in rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  onClick={open}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault()
+                      event.currentTarget.click()
+                    }
+                  }}
+                />
+              )}
+            </MediaPreview>
+          ),
           code: ({ className, children }) => {
             if (className?.split(" ").includes("language-mermaid")) {
               return <MermaidDiagram definition={String(children).trimEnd()} />

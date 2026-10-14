@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
+import { MediaPreview } from "./media-preview"
 
 function subscribeTheme(listener: () => void) {
   const observer = new MutationObserver(listener)
@@ -11,7 +12,7 @@ function subscribeTheme(listener: () => void) {
 
 let renderQueue = Promise.resolve()
 
-export function MermaidDiagram({ definition }: { definition: string }) {
+export function MermaidDiagram({ definition, magnifiable = true }: { definition: string; magnifiable?: boolean }) {
   const dark = useSyncExternalStore(
     subscribeTheme,
     () => document.documentElement.classList.contains("dark"),
@@ -22,6 +23,7 @@ export function MermaidDiagram({ definition }: { definition: string }) {
   const renderKey = `${dark}:${definition}`
   const [result, setResult] = useState({ key: "", failed: false })
   const failed = result.key === renderKey && result.failed
+  const ready = result.key === renderKey && !failed
 
   useEffect(() => {
     const target = container.current
@@ -64,7 +66,7 @@ export function MermaidDiagram({ definition }: { definition: string }) {
     }
   }, [dark, definition, reactId, renderKey])
 
-  return (
+  const diagram = (
     <div className="min-w-0 rounded-lg border border-border bg-card p-3">
       <div
         ref={container}
@@ -83,5 +85,36 @@ export function MermaidDiagram({ definition }: { definition: string }) {
         </div>
       )}
     </div>
+  )
+
+  if (!magnifiable) return diagram
+
+  return (
+    <MediaPreview
+      label="Mermaid diagram"
+      preview={<MermaidDiagram definition={definition} magnifiable={false} />}
+    >
+      {(open) => (
+        <div
+          role="button"
+          tabIndex={ready ? 0 : -1}
+          aria-label="Magnify Mermaid diagram"
+          aria-haspopup="dialog"
+          aria-disabled={!ready}
+          className={`rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${ready ? "cursor-zoom-in" : ""}`}
+          onClick={(event) => {
+            if (ready) open(event)
+          }}
+          onKeyDown={(event) => {
+            if (ready && (event.key === "Enter" || event.key === " ")) {
+              event.preventDefault()
+              event.currentTarget.click()
+            }
+          }}
+        >
+          {diagram}
+        </div>
+      )}
+    </MediaPreview>
   )
 }
