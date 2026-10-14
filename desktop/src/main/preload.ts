@@ -7,6 +7,7 @@ import {
 } from "../shared/contracts"
 
 const bridge: DesktopBridge = {
+  copyText: (text) => ipcRenderer.invoke(Channel.copyText, text),
   snapshot: async () =>
     SnapshotSchema.parse(await ipcRenderer.invoke(Channel.snapshot)),
   subscribe: (listener) => {
@@ -31,6 +32,7 @@ const bridge: DesktopBridge = {
   stopRunner: (id) => ipcRenderer.invoke(Channel.stopRunner, id),
   createTopic: (input) => ipcRenderer.invoke(Channel.createTopic, input),
   createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
+  archiveTopic: (input) => ipcRenderer.invoke(Channel.archiveTopic, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
   selectMaterials: async (draftIds) =>
     MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.selectMaterials, draftIds)),

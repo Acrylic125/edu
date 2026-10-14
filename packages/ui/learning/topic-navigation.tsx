@@ -9,14 +9,16 @@ import { cn } from "../utils"
 export function TopicNavigation({
   children,
   empty,
+  label = "Your topics",
 }: {
   children: ReactNode
   empty: boolean
+  label?: string
 }) {
   return (
     <>
       <p className="px-3 pb-2 text-xs font-medium text-muted-foreground">
-        Your topics
+        {label}
       </p>
       {empty ? (
         <p className="px-3 pt-2 text-xs leading-5 text-muted-foreground">
@@ -24,7 +26,7 @@ export function TopicNavigation({
           curious about.
         </p>
       ) : null}
-      <nav className="space-y-1.5" aria-label="Your topics">
+      <nav className="space-y-1.5" aria-label={label}>
         {children}
       </nav>
     </>

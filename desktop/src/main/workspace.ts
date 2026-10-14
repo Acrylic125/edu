@@ -216,6 +216,8 @@ export class WorkspaceRepository {
     const root = join(this.directory, "topics")
     await mkdir(root, { recursive: true })
     const topics: Topic[] = []
+    // Archive state belongs to the app, while topic documents remain editable by tutors.
+    const archivedIds = new Set(this.database.load()?.state.topics.filter((topic) => topic.archived).map((topic) => topic.id))
     for (const entry of await readdir(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
       const directory = join(root, entry.name)
@@ -243,6 +245,7 @@ export class WorkspaceRepository {
         }
       }
       topic.learning.outline = topicOutline(notes)
+      topic.archived = archivedIds.has(topic.id) || topic.archived
       const parsed = TopicSchema.parse(topic)
       if (legacy !== undefined) {
         // Migrate once into the Tutor Me layout, removing topic.json only after its replacements are written.

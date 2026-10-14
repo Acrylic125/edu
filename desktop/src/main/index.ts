@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url"
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -15,12 +16,14 @@ import {
 import { z } from "zod"
 import {
   Channel,
+  ArchiveTopicSchema,
   CreateChatSchema,
   CreateTopicSchema,
   DroppedMaterialsSchema,
   IdSchema,
   ImportMaterialsSchema,
   MaterialDraftIdsSchema,
+  MessageSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
   RunnerInputSchema,
@@ -150,6 +153,10 @@ else {
         )
           throw new Error("Untrusted desktop request.")
       }
+      ipcMain.handle(Channel.copyText, async (event, raw) => {
+        trusted(event)
+        await clipboard.writeText(MessageSchema.shape.content.parse(raw))
+      })
       ipcMain.handle(Channel.snapshot, async (event) => {
         trusted(event)
         await repository.refreshTopics()
@@ -323,6 +330,16 @@ else {
         })
         notify()
         return chat.id
+      })
+      ipcMain.handle(Channel.archiveTopic, async (event, raw) => {
+        trusted(event)
+        const { topicId, archived } = ArchiveTopicSchema.parse(raw)
+        await repository.mutate((workspace) => {
+          const topic = workspace.topics.find((item) => item.id === topicId)
+          if (!topic) throw new Error("This topic no longer exists.")
+          topic.archived = archived
+        })
+        notify()
       })
       ipcMain.handle(Channel.send, async (event, raw) => {
         trusted(event)

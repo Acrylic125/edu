@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import {
   ArrowUp,
+  Archive,
+  ArchiveRestore,
+  AtSign,
   Check,
   FolderOpen,
   FileText,
@@ -19,6 +22,7 @@ import {
   ChatMessage,
   ChatPanel,
   ChatSessions,
+  ChatThinking,
   restoreChatFocus,
 } from "@edu/ui/chat"
 import {
@@ -36,13 +40,14 @@ import {
 } from "@edu/ui/workspace"
 import { DesktopSettings } from "./settings/settings"
 import appIcon from "./assets/app-icon.png"
-import { useWorkspace, desktop } from "./store"
+import { useWorkspace, desktop, desktopErrorMessage } from "./store"
 import { useChatTabs } from "./chat-tabs"
 import { useTopicViews } from "./topic-views"
 import { StudyMarkdown } from "./markdown"
 import { TopicDirectory } from "./topic-directory"
 import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@edu/ui/context-menu"
 import { z } from "zod"
 import { type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { topicMention } from "../shared/topic-mentions"
@@ -68,6 +73,9 @@ export function App() {
       >
     >()
   const [busy, setBusy] = useState(false)
+  const [submitting, setSubmitting] = useState<string>()
+  const draftValues = useRef(drafts)
+  draftValues.current = drafts
   const [draggingOver, setDraggingOver] = useState<string>()
   const thread = useRef<HTMLDivElement>(null)
   const topic = snapshot.topics.find((item) => item.id === topicId)
@@ -130,7 +138,7 @@ export function App() {
         useChatTabs.getState().cycle(event.shiftKey)
         restoreChatFocus()
       } else {
-        const topics = useWorkspace.getState().snapshot.topics
+        const topics = useWorkspace.getState().snapshot.topics.filter((item) => !item.archived)
         if (topics.length === 0) return
         const reverse = event.shiftKey
         const views = useTopicViews.getState()
@@ -173,7 +181,7 @@ export function App() {
     } catch (failure) {
       setError(
         failure instanceof Error
-          ? failure.message
+          ? desktopErrorMessage(failure)
           : "This action failed. Try again.",
       )
       return false
@@ -194,6 +202,7 @@ export function App() {
   }
 
   function replaceDraft(key: string, value: string) {
+    draftValues.current = { ...draftValues.current, [key]: value }
     setDrafts((current) => ({ ...current, [key]: value }))
     setResets((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }))
     setFocused(key)
@@ -237,11 +246,18 @@ export function App() {
       content = `Help me understand the attached materials: ${chat.materials.map((material) => material.name).join(", ")}.`
     }
     let sentId = chatKey
-    const success = await perform(async () => {
-      sentId = await ensureChat()
-      await desktop().send({ chatId: sentId, content, openedTopicId: topic?.id })
-    })
-    if (success) replaceDraft(sentId, "")
+    const submittedDraft = drafts[chatKey] ?? ""
+    setSubmitting(chatKey)
+    try {
+      const success = await perform(async () => {
+        sentId = await ensureChat()
+        await desktop().send({ chatId: sentId, content, openedTopicId: topic?.id })
+      })
+      // Typing stays available during submission; never erase edits made while IPC is pending.
+      if (success && draftValues.current[sentId] === submittedDraft) replaceDraft(sentId, "")
+    } finally {
+      setSubmitting(undefined)
+    }
   }
 
   async function startTopic() {
@@ -253,6 +269,8 @@ export function App() {
     }
     openTopic()
     let createdChat: string | undefined
+    let submittedMessage = ""
+    setSubmitting("new-topic")
     const success = await perform(async () => {
       const runner = await newRunnerId()
       const createdTopic = await desktop().createTopic({ title: content, runnerId: runner })
@@ -264,6 +282,7 @@ export function App() {
       const chatId = await desktop().createChat({ runnerId: runner })
       createdChat = chatId
       const message = `${topicMention(createdTopic, title)} ${content}`
+      submittedMessage = message
       selectTopic(createdTopic)
       selectChat(chatId)
       // The new-topic composer is replaced by the topic, so a failed send keeps the request in its chat.
@@ -271,7 +290,8 @@ export function App() {
       replaceDraft(chatId, message)
       await desktop().send({ chatId, content: message, openedTopicId: createdTopic })
     })
-    if (success && createdChat) replaceDraft(createdChat, "")
+    setSubmitting(undefined)
+    if (success && createdChat && draftValues.current[createdChat] === submittedMessage) replaceDraft(createdChat, "")
   }
 
   async function attachNewTopic() {
@@ -315,6 +335,13 @@ export function App() {
         await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
       })
     }
+    const submittingComposer = submitting === key
+    let submitLabel = "Send message"
+    if (submittingComposer) {
+      submitLabel = "Sending message"
+      if (mode === "topic") submitLabel = "Creating topic"
+    }
+    const attachmentBusy = busy || (mode === "topic" && runnerBusy)
     return (
       <ChatComposerLayout
         aria-label={mode === "topic" ? "New topic composer" : "Chat composer"}
@@ -323,14 +350,14 @@ export function App() {
           if (!event.dataTransfer.types.includes("Files")) return
           event.preventDefault()
           event.stopPropagation()
-          if (!busy && !runnerBusy) setDraggingOver(key)
+          if (!attachmentBusy) setDraggingOver(key)
         }}
         onDragOverCapture={(event) => {
           if (!event.dataTransfer.types.includes("Files")) return
           event.preventDefault()
           event.stopPropagation()
-          event.dataTransfer.dropEffect = busy || runnerBusy ? "none" : "copy"
-          if (!busy && !runnerBusy) setDraggingOver(key)
+          event.dataTransfer.dropEffect = attachmentBusy ? "none" : "copy"
+          if (!attachmentBusy) setDraggingOver(key)
         }}
         onDragLeaveCapture={(event) => {
           if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
@@ -343,10 +370,10 @@ export function App() {
           event.stopPropagation()
           setDraggingOver(undefined)
           const files = Array.from(event.dataTransfer.files)
-          if (busy || runnerBusy || files.length === 0) return
+          if (attachmentBusy || files.length === 0) return
           void dropFiles(files)
         }}
-        overlay={draggingOver === key && !busy && !runnerBusy && (
+        overlay={draggingOver === key && !attachmentBusy && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-[inherit] border-2 border-dashed border-primary bg-card/95 text-sm font-medium text-primary" role="status">
             <Paperclip className="size-4" />
             Drop files to attach
@@ -390,9 +417,10 @@ export function App() {
             placeholder={placeholder}
             autoFocus={focused === key}
             className={mode === "topic" ? "min-h-28 max-h-40" : "min-h-16 max-h-40"}
-            onChange={(value) =>
+            onChange={(value) => {
+              draftValues.current = { ...draftValues.current, [key]: value }
               setDrafts((current) => ({ ...current, [key]: value }))
-            }
+            }}
             onSubmit={() => {
               void submit()
             }}
@@ -406,7 +434,7 @@ export function App() {
                 type="button"
                 aria-label={mode === "topic" ? "Add learning materials" : "Attach files to this chat"}
                 title="Attach files"
-                disabled={busy || runnerBusy}
+                disabled={attachmentBusy}
                 onClick={() => {
                   void attach()
                 }}
@@ -449,10 +477,11 @@ export function App() {
               <button
                 className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
                 type="submit"
-                aria-label="Send message"
+                aria-label={submitLabel}
+                aria-busy={submittingComposer}
                 disabled={(!draft.trim() && materials.length === 0) || busy || runnerBusy}
               >
-                <ArrowUp className="size-4" />
+                {submittingComposer ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
               </button>
             )}
           </>
@@ -479,6 +508,7 @@ export function App() {
         }}
       />
       {composer("topic")}
+      {submitting === "new-topic" && <ChatThinking className="mt-3 text-center">Creating your topic…</ChatThinking>}
     </NewTopicView>
   )
   const chatPane = (
@@ -495,7 +525,7 @@ export function App() {
         ) : (
           <ChatConversation ref={thread} className="px-4">
             {chat.messages.map((message) => (
-              <ChatMessage key={message.id} role={message.role}>
+              <ChatMessage key={message.id} role={message.role} copyText={message.content} onCopy={window.prune?.copyText}>
                 <StudyMarkdown
                   text={message.content}
                   topics={snapshot.topics}
@@ -506,13 +536,9 @@ export function App() {
               </ChatMessage>
             ))}
             {chatRunning && (
-              <div
-                className="flex items-center gap-2 py-4 text-xs text-muted-foreground"
-                role="status"
-              >
-                <LoaderCircle className="size-3.5 animate-spin" />
+              <ChatThinking>
                 {runtime.activity}
-              </div>
+              </ChatThinking>
             )}
             {chatError && (
               <div
@@ -607,19 +633,6 @@ export function App() {
         status={chatRunning ? "Working" : "Ready to learn"}
         documentActions={
           <div className="absolute right-4 top-4 z-10 flex gap-1">
-            <button
-              className="rounded-full p-2 text-muted-foreground hover:bg-accent disabled:opacity-50"
-              aria-label="Add sources to this topic"
-              title="Add sources to this topic"
-              disabled={busy}
-              onClick={() =>
-                void perform(() =>
-                  desktop().importMaterials({ kind: "topic", id: topic.id }),
-                )
-              }
-            >
-              <Paperclip className="size-4" />
-            </button>
             <button
               className="rounded-full p-2 text-muted-foreground hover:bg-accent"
               aria-label="Open workspace in Finder"
@@ -720,6 +733,16 @@ export function App() {
             topicId={topicId}
             view={view}
             onOpenTopic={openTopic}
+            onTagTopic={(item) => {
+              const draft = draftValues.current[chatKey] ?? ""
+              const separator = draft && !/\s$/.test(draft) ? " " : ""
+              replaceDraft(chatKey, `${draft}${separator}${topicMention(item.id, item.title)} `)
+              if (!chat) openChat()
+            }}
+            onArchiveTopic={(item) => {
+              void perform(() => desktop().archiveTopic({ topicId: item.id, archived: !item.archived }))
+            }}
+            busy={busy}
             onOpenSettings={() => {
               setSetupProvider(undefined)
               setView("settings")
@@ -757,14 +780,23 @@ function DesktopSidebar({
   view,
   onOpenTopic,
   onOpenSettings,
+  onTagTopic,
+  onArchiveTopic,
+  busy,
 }: {
   snapshot: Snapshot
   topicId?: string
   view: "learn" | "settings"
   onOpenTopic: (id?: string) => void
   onOpenSettings: () => void
+  onTagTopic: (topic: Snapshot["topics"][number]) => void
+  onArchiveTopic: (topic: Snapshot["topics"][number]) => void
+  busy: boolean
 }) {
-  const { closeNavigation } = useWorkspaceLayout()
+  const { closeNavigation, revealChat } = useWorkspaceLayout()
+  const tagging = useRef(false)
+  const activeTopics = snapshot.topics.filter((item) => !item.archived)
+  const archivedTopics = snapshot.topics.filter((item) => item.archived)
   const runningChats = snapshot.chats.filter((chat) =>
     snapshot.runtime.some(
       (state) => state.chatId === chat.id && state.status === "running",
@@ -787,6 +819,43 @@ function DesktopSidebar({
   function openSettings() {
     closeNavigation()
     onOpenSettings()
+  }
+
+  function topicItem(item: Snapshot["topics"][number]) {
+    return (
+      <ContextMenu key={item.id}>
+        <ContextMenuTrigger
+          render={
+            <TopicNavigationItem
+              title={item.title}
+              selected={view === "learn" && item.id === topicId}
+              busy={runningTopicIds.has(item.id)}
+              onClick={() => openTopic(item.id)}
+            />
+          }
+        />
+        <ContextMenuContent finalFocus={() => {
+          // The remounted composer takes focus when tagging; other actions return to the topic.
+          const restoreTopicFocus = !tagging.current
+          tagging.current = false
+          return restoreTopicFocus
+        }}>
+          <ContextMenuItem onClick={() => {
+            tagging.current = true
+            closeNavigation()
+            revealChat()
+            onTagTopic(item)
+          }}>
+            <AtSign aria-hidden="true" />
+            @Tag in chat
+          </ContextMenuItem>
+          <ContextMenuItem disabled={busy} onClick={() => onArchiveTopic(item)}>
+            {item.archived ? <ArchiveRestore aria-hidden="true" /> : <Archive aria-hidden="true" />}
+            {item.archived ? "Unarchive Chat" : "Archive Chat"}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+    )
   }
 
   return (
@@ -819,17 +888,16 @@ function DesktopSidebar({
         <Plus className="size-4" aria-hidden="true" />
         New topic
       </button>
-      <TopicNavigation empty={snapshot.topics.length === 0}>
-        {snapshot.topics.map((item) => (
-          <TopicNavigationItem
-            key={item.id}
-            title={item.title}
-            selected={view === "learn" && item.id === topicId}
-            busy={runningTopicIds.has(item.id)}
-            onClick={() => openTopic(item.id)}
-          />
-        ))}
+      <TopicNavigation empty={activeTopics.length === 0}>
+        {activeTopics.map(topicItem)}
       </TopicNavigation>
+      {archivedTopics.length > 0 && (
+        <div className="mt-6 border-t border-sidebar-border pt-5">
+          <TopicNavigation label="Archived chats" empty={false}>
+            {archivedTopics.map(topicItem)}
+          </TopicNavigation>
+        </div>
+      )}
     </WorkspaceSidebar>
   )
 }

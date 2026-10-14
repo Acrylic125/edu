@@ -106,6 +106,7 @@ export const LearningStateSchema = z
   })
 export const TopicSchema = z.object({
   id: IdSchema,
+  archived: z.boolean().default(false),
   title: z.string().max(150),
   titleGenerated: z.boolean().default(false),
   createdAt: z.string().datetime(),
@@ -121,7 +122,7 @@ export const ProviderSessionSchema = z.object({
   toolVersion: z.union([z.literal(1), z.literal(2)]),
   status: z.enum(["ready", "pending"]),
 })
-export const ChatSchema = TopicSchema.omit({ planConfirmed: true }).extend({
+export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true }).extend({
   runnerId: IdSchema,
   messages: z.array(MessageSchema),
   providerSession: ProviderSessionSchema.optional(),
@@ -203,6 +204,7 @@ export const CreateTopicSchema = z.object({
   runnerId: IdSchema.optional(),
 })
 export const CreateChatSchema = z.object({ runnerId: IdSchema })
+export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
   content: z.string().trim().min(1).max(30_000),
@@ -265,6 +267,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
 export const Channel = {
+  copyText: "prune:copy-text",
   snapshot: "prune:snapshot",
   update: "prune:update",
   connect: "prune:connect",
@@ -279,6 +282,7 @@ export const Channel = {
   stopRunner: "prune:stop-runner",
   createTopic: "prune:create-topic",
   createChat: "prune:create-chat",
+  archiveTopic: "prune:archive-topic",
   send: "prune:send",
   importMaterials: "prune:import-materials",
   selectMaterials: "prune:select-materials",
@@ -296,6 +300,7 @@ export type Chat = z.infer<typeof ChatSchema>
 export type LearningState = z.infer<typeof LearningStateSchema>
 export type WorkerJob = z.infer<typeof WorkerJobSchema>
 export type DesktopBridge = {
+  copyText: (text: string) => Promise<void>
   snapshot: () => Promise<Snapshot>
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void
   connect: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
@@ -315,6 +320,7 @@ export type DesktopBridge = {
   stopRunner: (id: string) => Promise<void>
   createTopic: (input: z.infer<typeof CreateTopicSchema>) => Promise<string>
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
+  archiveTopic: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
   selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>

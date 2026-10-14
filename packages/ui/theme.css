@@ -275,6 +275,41 @@
   color: var(--primary-foreground);
 }
 
+.chat-thinking-scan {
+  color: var(--muted-foreground);
+  background-image: linear-gradient(
+    110deg,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: chat-thinking-scan 2.2s linear infinite;
+}
+
+@keyframes chat-thinking-scan {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking-scan {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
+@media (forced-colors: active) {
+  .chat-thinking-scan {
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

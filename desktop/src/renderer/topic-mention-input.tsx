@@ -35,8 +35,9 @@ import {
   type Spread,
 } from "lexical"
 import { parseTopicMentions, topicMention } from "../shared/topic-mentions"
+import type { Snapshot } from "../shared/contracts"
 
-type Topic = { id: string; title: string }
+type Topic = Pick<Snapshot["topics"][number], "id" | "title" | "archived">
 
 class TopicMentionNode extends TextNode {
   __topicId: string
@@ -136,6 +137,11 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
   const search = query?.toLowerCase() ?? ""
   const options = topics
     .filter((topic) => topic.title.toLowerCase().includes(search))
+    .sort((left, right) => {
+      if (left.archived === right.archived) return 0
+      if (left.archived) return 1
+      return -1
+    })
     .slice(0, 8)
     .map((topic) => new TopicOption(topic))
 

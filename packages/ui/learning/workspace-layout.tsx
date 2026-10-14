@@ -34,6 +34,7 @@ const WorkspaceLayoutContext = createContext<{
   documentCollapsed: boolean
   chatCollapsed: boolean
   closeNavigation: () => void
+  revealChat: () => void
   setSidebarOpen: (open: boolean) => void
   setChatOpen: (open: boolean) => void
   sidebarId: string
@@ -111,6 +112,10 @@ export function WorkspaceFrame({
         documentCollapsed,
         chatCollapsed,
         closeNavigation,
+        revealChat: () => {
+          setCollapsedChatId(null)
+          setChatOpen(true)
+        },
         setSidebarOpen,
         setChatOpen,
         sidebarId,

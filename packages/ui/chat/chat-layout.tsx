@@ -1,7 +1,7 @@
 "use client"
 
-import type { ComponentProps, ReactNode } from "react"
-import { BookOpenIcon, PencilLineIcon } from "lucide-react"
+import { useState, type ComponentProps, type ReactNode } from "react"
+import { BookOpenIcon, CheckIcon, CopyIcon, PencilLineIcon } from "lucide-react"
 
 import { Button } from "../primitives/button"
 import { ScrollArea } from "../primitives/scroll-area"
@@ -75,24 +75,67 @@ export function ChatMessage({
   role,
   children,
   actions,
+  copyText,
+  onCopy,
 }: {
   role: "user" | "assistant"
   children: ReactNode
   actions?: ReactNode
+  copyText?: string
+  onCopy?: (text: string) => Promise<void>
 }) {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle")
+  let copyLabel = "Copy message"
+  if (copyStatus === "copied") {
+    copyLabel = "Copied"
+  } else if (copyStatus === "error") {
+    copyLabel = "Couldn't copy. Try again"
+  }
+
+  const messageActions = (copyText || actions) && (
+    <div className="mt-1 flex h-7 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+      {copyText && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={copyLabel}
+          title={copyLabel}
+          className="text-muted-foreground"
+          onClick={async () => {
+            try {
+              if (onCopy) {
+                await onCopy(copyText)
+              } else {
+                await navigator.clipboard.writeText(copyText)
+              }
+              setCopyStatus("copied")
+            } catch {
+              setCopyStatus("error")
+            }
+          }}
+        >
+          {copyStatus === "copied" ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
+        </Button>
+      )}
+      <span role="status" className="text-xs text-muted-foreground">
+        {copyStatus !== "idle" && copyLabel}
+      </span>
+      {actions}
+    </div>
+  )
+
   if (role === "user") {
     return (
       <div
         data-message-role="user"
         aria-label="Your message"
         className="group flex flex-col items-end py-3"
+        onMouseLeave={() => setCopyStatus("idle")}
       >
         <div className="max-w-[90%] min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm leading-relaxed text-secondary-foreground [overflow-wrap:anywhere]">
           {children}
         </div>
-        {actions ? (
-          <div className="mt-1 flex justify-end">{actions}</div>
-        ) : null}
+        {messageActions}
       </div>
     )
   }
@@ -101,8 +144,21 @@ export function ChatMessage({
       data-message-role="assistant"
       aria-label="EdU's message"
       className="group py-4"
+      onMouseLeave={() => setCopyStatus("idle")}
     >
       {children}
+      {messageActions}
+    </div>
+  )
+}
+
+export function ChatThinking({ children, className }: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div role="status" className={cn("py-4 text-sm", className)}>
+      <span className="chat-thinking-scan">{children || "Thinking…"}</span>
     </div>
   )
 }
