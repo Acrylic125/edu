@@ -26,13 +26,16 @@ export async function generateTopicTitle(
     await prepareCliWorkspace(job.cli)
     let model = "default"
     if (job.cli.provider === "claude") model = "haiku"
+    let timeout = 30_000
+    // Antigravity can spend the short title deadline initializing its session.
+    if (job.cli.provider === "antigravity") timeout = 120_000
     diagnostic("title.model", { provider: job.cli.provider, model })
     const output = await runCliCommand(
       job.cli,
       cliPromptArguments(job.cli, JSON.stringify(z.toJSONSchema(TitleSchema)), model),
       `${instructions}\n\nSuggested topic:\n${input}`,
       processChanged,
-      30_000,
+      timeout,
     )
     return TitleSchema.parse(parseCliResponse(job.cli.provider, output)).title
   }

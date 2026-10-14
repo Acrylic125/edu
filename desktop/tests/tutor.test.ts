@@ -213,6 +213,20 @@ test("topic notes must render their directory as a topic-directory element", asy
   expect(requests[1]).toContain("one <topic-directory /> element")
 })
 
+test("recovery identifies the rejected topic save instead of only requesting a chat handoff", async () => {
+  const input = job()
+  const topic = input.topics[0]
+  const session = await createTutorSession(input, () => {})
+  await session.execute("save_topic_state", {
+    topicId: topic.id,
+    learning: { ...topic.learning, notes: "# Limits", outline: ["Limits"] },
+  })
+  await session.execute("save_learning_state", input.chat.learning)
+  expect(session.saved).toBe(false)
+  expect(session.saveError).toContain(`save_topic_state for topic ${topic.id}`)
+  expect(session.saveError).toContain("save_learning_state cannot repair")
+})
+
 test("only tagged topics can be updated", async () => {
   const input = job()
   const untagged = newTopic("Integrals")

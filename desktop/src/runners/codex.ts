@@ -229,7 +229,7 @@ export async function runCodexTutorTurn(
         if (session.saved && reply.trim()) return { ...session.finish(reply), providerSession }
         if (!session.saved) {
           input =
-            "Complete the current learner request without advancing the lesson. Call save_learning_state with the complete notes, private handoff, and next action, then provide the learner-facing reply. The previous reply has not been shown or saved."
+            "Complete the current learner request without advancing the lesson. Repair each rejected save using its original tool and target first. Topic notes belong in save_topic_state or revise_topic_state; save_learning_state only saves this chat's private handoff and next action. Then save the chat handoff and provide the learner-facing reply. The previous reply has not been shown or saved."
           if (session.saveError)
             input += `\nCorrect this rejected save: ${session.saveError}`
         } else {

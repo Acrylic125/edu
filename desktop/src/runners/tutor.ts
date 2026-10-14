@@ -119,7 +119,12 @@ export async function createTutorSession(
 ) {
   const guide = await readFile(join(job.skillDirectory, "SKILL.md"), "utf8")
   const references = await Promise.all(
-    ["references/FILE_STRUCTURE.md", "assets/GUIDE_DOCUMENT_TEMPLATE.md"].map(
+    [
+      "TECHNICAL_WRITING.md",
+      "UNSLOP.md",
+      "references/FILE_STRUCTURE.md",
+      "assets/GUIDE_DOCUMENT_TEMPLATE.md",
+    ].map(
       async (file) =>
         `${file}\n${await readFile(join(job.skillDirectory, file), "utf8")}`,
     ),
@@ -137,6 +142,7 @@ Follow the bundled skill. Use read_skill for its additional references. This har
 This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); tagged topics and topics opened while sending are listed below with their study notes and private handoffs. Without a topic in context, answer directly and suggest tagging a topic for structured study.
 Currently open topic: ${job.openedTopicId ?? "none"}. Use this topic's saved progress, pending question, outline, and nextAction for requests such as "What is next?" or "Continue". Explicit topic mentions or instructions take precedence. Do not infer the currently open topic from older chat messages.
 A tagged topic with planConfirmed=false needs an approved plan before lessons: read its materials, propose or revise its outline with save_topic_state, keep it awaiting_plan_confirmation, and do not teach or question it. Only the Confirm plan action approves a plan; do not infer approval from a message. Plan approved on this turn: ${job.confirmTopicId ?? "none"}.
+planConfirmed=true records approval from an earlier Confirm plan action. Continue teaching that approved topic even when this turn has no confirmTopicId; reconcile a stale awaiting_plan_confirmation handoff with that persisted approval instead of asking for confirmation again.
 Explain lecture material before checking it. Resume a topic's saved question and checked key before moving it forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
 The harness writes each topic's agent.workpad.md Handoff from phase, currentSection, pendingQuestion (Active check), and nextAction (Resume action), and its Active check key section from privateAnswerKey. Put only the remaining working state in workpad. The topic title is the first # header of the notes, and outline is read from the topic directory.
 Call save_topic_state or revise_topic_state for each tagged topic you planned, taught, or assessed. Prefer bounded revisions for an existing topic; full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned.
@@ -368,7 +374,14 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       return saved !== undefined && saveErrors.size === 0
     },
     get saveError() {
-      if (saveErrors.size) return [...saveErrors.values()].join("\n")
+      if (saveErrors.size) {
+        return [...saveErrors.entries()].map(([key, error]) => {
+          if (key.startsWith("topic:")) {
+            return `Correct save_topic_state for topic ${key.slice(6)} (or revise_topic_state for that topic). save_learning_state cannot repair rejected topic notes. ${error}`
+          }
+          return `Correct ${key}: ${error}`
+        }).join("\n")
+      }
     },
     finish(reply: string) {
       if (!saved || saveErrors.size)
@@ -467,17 +480,8 @@ export async function runTutorTurn(
       try {
         input = JSON.parse(call.function.arguments)
       } catch {
-        diagnostic("tool.result", {
-          tool: call.function.name,
-          success: false,
-          error: "Invalid JSON arguments",
-        })
-        messages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: "Tool error: Invalid JSON arguments.",
-        })
-        continue
+        // Failed saves must invalidate publication even if an earlier handoff was valid.
+        input = null
       }
       const result = await session.execute(call.function.name, input)
       diagnostic("tool.result", {

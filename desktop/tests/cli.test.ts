@@ -103,12 +103,11 @@ test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferen
     skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
   })
   const actions = [
-    { reply: "", calls: [
+    { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [
       { name: "save_behaviour_memory", arguments: JSON.stringify({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." }) },
       { name: "revise_topic_state", arguments: JSON.stringify({ topicId: topic.id, notes: { append: "D1: needs_explanation — Needs the approach/reach distinction explained." } }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
-    { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [] },
   ]
   const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
     const action = actions.shift()
@@ -120,5 +119,85 @@ test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferen
   expect(result.behaviourUpdate).toEqual({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." })
   expect(result.topicUpdates[0].learning.notes).toContain("Original learner answer.")
   expect(result.topicUpdates[0].learning.notes).toContain("D1: needs_explanation")
+  expect(command).toHaveBeenCalledTimes(1)
+})
+
+
+test("Antigravity title generation allows the full CLI startup deadline", async () => {
+  const cli = await connection("antigravity")
+  const runner = WorkerJobSchema.shape.runner.parse({ id: randomUUID(), name: "Tutor", provider: "antigravity", model: "default" })
+  const command = vi.spyOn(cliTools, "runCliCommand").mockResolvedValue(JSON.stringify({ status: "SUCCESS", structured_output: { title: "Introduction to Limits" } }))
+  await expect(generateTopicTitle({ cli, runner }, "Teach me limits", undefined, () => {}, () => {})).resolves.toBe("Introduction to Limits")
+  expect(command.mock.calls[0][4]).toBe(120_000)
+})
+
+
+test.each(["claude", "antigravity"] as const)("%s returns a reply and validated handoff in one provider call", async (provider) => {
+  const cli = await connection(provider)
+  const chat = newChat(randomUUID())
+  const topic = newTopic("Lecture 6 — MIPS Part 1")
+  const job = WorkerJobSchema.parse({
+    chat, topics: [{ ...topic, assetDirectory: cli.directory }], openedTopicId: topic.id,
+    runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
+  })
+  const reply = "This topic is Lecture 6 — MIPS Part 1."
+  const action = { reply, calls: [{ name: "save_learning_state", arguments: JSON.stringify(chat.learning) }] }
+  const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
+    if (command.mock.calls.length > 1) throw new Error("Unnecessary second provider call")
+    if (provider === "antigravity") return JSON.stringify({ status: "SUCCESS", structured_output: action })
+    return JSON.stringify({ is_error: false, structured_output: action })
+  })
+  const result = await runCliTutorTurn(job, () => {}, () => {})
+  expect(result.reply).toBe(reply)
+  expect(result.learning).toEqual(chat.learning)
+  expect(command).toHaveBeenCalledTimes(1)
+})
+
+test.each(["claude", "antigravity"] as const)("%s withholds a combined reply until rejected saves are corrected", async (provider) => {
+  const cli = await connection(provider)
+  const chat = newChat(randomUUID())
+  const job = WorkerJobSchema.parse({
+    chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
+  })
+  const actions = [
+    { reply: "Do not publish this rejected reply", calls: [{ name: "save_learning_state", arguments: JSON.stringify({ ...chat.learning, workpad: "" }) }] },
+    { reply: "Corrected reply", calls: [{ name: "save_learning_state", arguments: JSON.stringify(chat.learning) }] },
+  ]
+  const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
+    const action = actions.shift()
+    if (!action) throw new Error("Unexpected provider request")
+    if (provider === "antigravity") return JSON.stringify({ status: "SUCCESS", structured_output: action })
+    return JSON.stringify({ is_error: false, structured_output: action })
+  })
+  const result = await runCliTutorTurn(job, () => {}, () => {})
+  expect(result.reply).toBe("Corrected reply")
   expect(command).toHaveBeenCalledTimes(2)
+  expect(command.mock.calls[1][2]).toContain("Tool error:")
+})
+
+test("a reply accompanying source reads waits for the tool results", async () => {
+  const cli = await connection("antigravity")
+  const chat = newChat(randomUUID())
+  const job = WorkerJobSchema.parse({
+    chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider: "antigravity", model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
+  })
+  const actions = [
+    { reply: "Premature reply", calls: [
+      { name: "read_skill", arguments: JSON.stringify({ path: "references/FILE_STRUCTURE.md" }) },
+      { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
+    ] },
+    { reply: "Reply using the tool results", calls: [] },
+  ]
+  const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
+    const action = actions.shift()
+    if (!action) throw new Error("Unexpected provider request")
+    return JSON.stringify({ status: "SUCCESS", structured_output: action })
+  })
+  const result = await runCliTutorTurn(job, () => {}, () => {})
+  expect(result.reply).toBe("Reply using the tool results")
+  expect(command).toHaveBeenCalledTimes(2)
+  expect(command.mock.calls[1][2]).toContain('"tool":"read_skill"')
 })
