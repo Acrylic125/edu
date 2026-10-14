@@ -243,7 +243,9 @@ test("native sandboxed app manages runners and restores topics across restarts",
         filePaths: [source],
       })
     }, resolve("tests/fixtures/limits.pdf"))
-    await page.getByRole("button", { name: "Add sources to this topic" }).click()
+    await page.evaluate(async (id) => {
+      await window.prune?.importMaterials({ kind: "topic", id })
+    }, seeded.id)
     await expect(page.getByText("limits.pdf", { exact: true })).toBeVisible()
     await app.close()
     app = await launch()
