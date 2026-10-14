@@ -13,8 +13,10 @@ import {
 import { join } from "node:path"
 import {
   LearningStateSchema,
+  BehaviourMemorySchema,
   ChatSchema,
   LegacyWorkspaceSchema,
+  MaterialSchema,
   PublicChatSchema,
   PublicTopicSchema,
   TopicSchema,
@@ -23,14 +25,15 @@ import {
   type Topic,
   type Workspace,
 } from "../shared/contracts"
-import { topicDirectoryMarkdown } from "../shared/topic-directory"
+import { topicDirectoryMarkdown, topicOutline } from "../shared/topic-directory"
 import { z } from "zod"
 import { ChatDatabase } from "./chat-database"
+import { parseTopicWorkpad, topicWorkpad } from "./topic-workpad"
 
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true }).extend({
   version: z.literal(3),
 })
-const TopicStateSchema = TopicSchema.omit({ id: true, title: true, learning: true }).extend({
+const LegacyTopicStateSchema = TopicSchema.omit({ id: true, title: true, learning: true }).extend({
   learning: z.object(LearningStateSchema.shape).omit({ notes: true, workpad: true }),
 })
 const TopicHeaderSchema = TopicSchema.shape.title.trim().min(1).regex(/^[^\r\n]+$/)
@@ -56,6 +59,32 @@ async function writeAtomic(path: string, content: string) {
   }
 }
 
+async function writeMaterialManifest(topicDirectory: string, material: z.infer<typeof MaterialSchema>) {
+  const directory = join(topicDirectory, "assets", "cache", "prepared", material.id)
+  await mkdir(directory, { recursive: true })
+  await writeAtomic(join(directory, "manifest.json"), JSON.stringify(material))
+}
+
+async function readMaterialManifests(topicDirectory: string) {
+  const prepared = join(topicDirectory, "assets", "cache", "prepared")
+  let entries: string[] = []
+  try {
+    entries = await readdir(prepared)
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+  }
+  const materials: z.infer<typeof MaterialSchema>[] = []
+  for (const id of entries) {
+    if (!IdSchema.safeParse(id).success) continue
+    const raw = await readOptionalFile(join(prepared, id, "manifest.json"))
+    if (raw === undefined) continue
+    const material = MaterialSchema.parse(JSON.parse(raw))
+    if (material.id !== id) throw new Error(`Material ID does not match its cache folder: ${id}`)
+    materials.push(material)
+  }
+  return materials.sort((left, right) => left.name.localeCompare(right.name))
+}
+
 function topicNotes(title: string, notes: string) {
   const body = notes.replace(/^\s*# [^\r\n]*(?:\r?\n|$)/, "").trimStart()
   return `# ${TopicHeaderSchema.parse(title.replace(/\s+/g, " "))}\n\n${body}`
@@ -79,11 +108,11 @@ export class WorkspaceRepository {
     if (saved) {
       this.state = saved.state
       if (saved.filesPending) {
-        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
+        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }), true)
         await this.removeRecoveredFiles(saved.removedFiles)
         this.database.filesSynced()
       }
-      this.state = { ...this.state, topics: await this.readTopics() }
+      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
       await this.pruneObsoleteFiles()
       return this.state
     }
@@ -96,6 +125,7 @@ export class WorkspaceRepository {
         topics: await this.readTopics(),
         chats: await this.readChats(),
       })
+      this.state.behaviourMemory = await this.readBehaviourMemory()
       await this.commit(this.state)
     } else {
       const raw = await readOptionalFile(legacyPath)
@@ -130,6 +160,7 @@ export class WorkspaceRepository {
           model: "default",
         })
       }
+      state.behaviourMemory = BehaviourMemorySchema.parse(await readOptionalFile(join(this.directory, "tutor-memory", "behaviour.md")) ?? state.behaviourMemory)
       await this.commit(state)
       // Keep the legacy transaction until every migrated topic and chat can be read back.
       this.state = WorkspaceSchema.parse({ ...this.state, topics: await this.readTopics(), chats: this.database.load()?.state.chats ?? [] })
@@ -151,6 +182,9 @@ export class WorkspaceRepository {
     for (const name of ["workspace.json", "workspace.legacy.json", "settings.json"])
       await rm(join(this.directory, name), { force: true })
     const directories = [this.directory]
+    const memoryDirectory = join(this.directory, "tutor-memory")
+    if (await readOptionalFile(join(memoryDirectory, "behaviour.md")) !== undefined)
+      directories.push(memoryDirectory)
     for (const collection of ["topics", "chats"] as const) {
       const root = join(this.directory, collection)
       await mkdir(root, { recursive: true })
@@ -171,7 +205,7 @@ export class WorkspaceRepository {
     for (const directory of directories) {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         if (!entry.isFile()) continue
-        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.md|agent\.workpad\.md)\.(.+)\.tmp$/.exec(entry.name)
+        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.md|agent\.workpad\.md|behaviour\.md)\.(.+)\.tmp$/.exec(entry.name)
         if (match && IdSchema.safeParse(match[1]).success)
           await rm(join(directory, entry.name), { force: true })
       }
@@ -190,26 +224,39 @@ export class WorkspaceRepository {
       const title = /^\s*# ([^\r\n]+)/.exec(notes)?.[1]?.trim()
       if (!title) throw new Error(`Topic document needs a title header: ${directory}`)
       TopicHeaderSchema.parse(title)
-      const raw = await readOptionalFile(join(directory, "topic.json"))
-      if (raw === undefined) {
-        const topic = newTopic(title)
-        topic.id = entry.name
-        topic.createdAt = (await stat(join(directory, "topic.md"))).birthtime.toISOString()
-        topic.learning.notes = notes
-        topic.learning.workpad = await readOptionalFile(join(directory, "agent.workpad.md")) ?? topic.learning.workpad
-        topics.push(TopicSchema.parse(topic))
-        continue
+      const topic = newTopic(title)
+      topic.id = entry.name
+      topic.createdAt = (await stat(join(directory, "topic.md"))).birthtime.toISOString()
+      topic.learning.notes = notes
+      const workpad = await readOptionalFile(join(directory, "agent.workpad.md"))
+      if (workpad !== undefined) topic.learning.workpad = workpad
+      const legacy = await readOptionalFile(join(directory, "topic.json"))
+      if (legacy !== undefined) {
+        const stored = LegacyTopicStateSchema.parse(JSON.parse(legacy))
+        Object.assign(topic, stored, { learning: { ...topic.learning, ...stored.learning } })
+      } else {
+        topic.materials = await readMaterialManifests(directory)
+        const handoff = workpad === undefined ? undefined : parseTopicWorkpad(workpad)
+        if (handoff) {
+          const { createdAt, planConfirmed, ...learning } = handoff
+          Object.assign(topic, { createdAt, planConfirmed, learning: { ...topic.learning, ...learning } })
+        }
       }
-      const stored = TopicStateSchema.parse(JSON.parse(raw))
-      const workpad = await readFile(join(directory, "agent.workpad.md"), "utf8")
-      topics.push(TopicSchema.parse({
-        ...stored,
-        id: entry.name,
-        title,
-        learning: { ...stored.learning, notes, workpad },
-      }))
+      topic.learning.outline = topicOutline(notes)
+      const parsed = TopicSchema.parse(topic)
+      if (legacy !== undefined) {
+        // Migrate once into the Tutor Me layout, removing topic.json only after its replacements are written.
+        for (const material of parsed.materials) await writeMaterialManifest(directory, material)
+        await writeAtomic(join(directory, "agent.workpad.md"), topicWorkpad(parsed))
+        await rm(join(directory, "topic.json"))
+      }
+      topics.push(parsed)
     }
     return topics.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  private async readBehaviourMemory() {
+    return BehaviourMemorySchema.parse(await readOptionalFile(join(this.directory, "tutor-memory", "behaviour.md")) ?? "")
   }
 
   private async readChats() {
@@ -230,7 +277,7 @@ export class WorkspaceRepository {
   async refreshTopics() {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics() }
+      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
     })
     this.writes = operation.catch(() => {})
     return operation
@@ -283,7 +330,7 @@ export class WorkspaceRepository {
   async mutate(update: (state: Workspace) => void) {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics() }
+      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
       const next = structuredClone(this.state)
       update(next)
       await this.commit(next)
@@ -297,8 +344,12 @@ export class WorkspaceRepository {
     for (const topic of validated.topics) {
       const previous = this.state.topics.find((item) => item.id === topic.id)
       if (JSON.stringify(topic) === JSON.stringify(previous)) continue
+      const header = TopicHeaderSchema.safeParse(/^\s*# ([^\r\n]+)/.exec(topic.learning.notes)?.[1])
+      if (header.success) topic.title = header.data
       topic.title = topic.title.replace(/\s+/g, " ").trim()
       topic.learning.notes = topicNotes(topic.title, topic.learning.notes)
+      topic.learning.outline = topicOutline(topic.learning.notes)
+      topic.materials.sort((left, right) => left.name.localeCompare(right.name))
     }
     WorkspaceSchema.parse(validated)
     const previous = this.state
@@ -311,7 +362,7 @@ export class WorkspaceRepository {
   private async recoverFiles() {
     const saved = this.database.load()
     if (!saved?.filesPending) return
-    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
+    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }), true)
     await this.removeRecoveredFiles(saved.removedFiles)
     this.database.filesSynced()
     this.state = saved.state
@@ -324,7 +375,17 @@ export class WorkspaceRepository {
     }
   }
 
-  private async syncFiles(validated: Workspace, previousState: Workspace) {
+  private async syncFiles(validated: Workspace, previousState: Workspace, recover = false) {
+    if (recover || validated.behaviourMemory !== previousState.behaviourMemory) {
+      const directory = join(this.directory, "tutor-memory")
+      const path = join(directory, "behaviour.md")
+      if (validated.behaviourMemory) {
+        await mkdir(directory, { recursive: true, mode: 0o700 })
+        await writeAtomic(path, validated.behaviourMemory)
+      } else {
+        await rm(path, { force: true })
+      }
+    }
     for (const topic of validated.topics) {
       const previous = previousState.topics.find((item) => item.id === topic.id)
       const directory = join(this.directory, "topics", topic.id)
@@ -332,11 +393,13 @@ export class WorkspaceRepository {
       const notes = topic.learning.notes
       if (notes !== previous?.learning.notes)
         await writeAtomic(join(directory, "topic.md"), notes)
-      if (topic.learning.workpad !== previous?.learning.workpad)
-        await writeAtomic(join(directory, "agent.workpad.md"), topic.learning.workpad)
-      const stored = TopicStateSchema.parse({ ...topic, learning: topic.learning })
-      if (!previous || JSON.stringify(stored) !== JSON.stringify(TopicStateSchema.parse({ ...previous, learning: previous.learning })))
-        await writeAtomic(join(directory, "topic.json"), JSON.stringify(stored, null, 2))
+      for (const material of topic.materials) {
+        if (!previous?.materials.some((item) => item.id === material.id))
+          await writeMaterialManifest(directory, material)
+      }
+      const workpad = topicWorkpad(topic)
+      if (!previous || workpad !== topicWorkpad(previous))
+        await writeAtomic(join(directory, "agent.workpad.md"), workpad)
     }
     for (const topic of previousState.topics) {
       if (!validated.topics.some((item) => item.id === topic.id))
@@ -353,8 +416,9 @@ export class WorkspaceRepository {
     const assets = join(this.directory, "topics", topic.id, "assets")
     if (topic.materials.length) {
       await mkdir(join(directory, "assets"), { recursive: true })
-      for (const file of await readdir(assets))
-        await copyFile(join(assets, file), join(directory, "assets", file))
+      for (const file of await readdir(assets, { withFileTypes: true })) {
+        if (file.isFile()) await copyFile(join(assets, file.name), join(directory, "assets", file.name))
+      }
     }
     const portable = (text: string) =>
       text.replace(

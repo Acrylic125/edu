@@ -30,7 +30,11 @@ support text and extracted PDF text; use ChatGPT or OpenRouter for visual source
 CLI models use their configured default; Claude also exposes Sonnet, Opus, and
 Haiku aliases, and Antigravity loads its catalog from `agy models`.
 
-Provider settings show the same install-and-connect steps as the model picker.
+Provider settings and the model picker check CLI installation and account connection
+separately, with checkmarks beside completed steps. Use the refresh button beside
+installation to recheck that provider. All providers are checked at startup and every
+five minutes while EdU is running. Checks never start sign-in or re-enable disconnected
+providers; Antigravity uses its CLI's quota report rather than generating a model response.
 Connection and save errors appear beside their controls without moving the page.
 Open **Advanced settings** to change the display name or binary path, then click
 **Save changes**. ChatGPT uses
@@ -72,6 +76,29 @@ is no account synchronization.
 
 PowerPoint imports extract text and speaker notes in slide order and preserve the
 original deck. Attach a PDF export when the tutor needs to inspect slide visuals.
+
+## Tutor memory
+
+EdU uses the bundled Tutor Me skill for learning records and tutoring preferences.
+Current difficulties live beside their concept in `topics/<topic-id>/topic.md`,
+with stable IDs, current status, concise assessments, and links to the original
+attempts. Repeated evidence revises the same difficulty while preserving the
+question and actual learner answers. Assisted performance is distinguished from
+independent success; later evidence can resolve or reopen a difficulty. Tutor
+errors and contested answers belong in correction/deliberation records.
+
+Explicit reusable preferences, such as explanation pacing or source usage, live
+in `workspace/tutor-memory/behaviour.md`. They are loaded into every tutoring
+turn across chats, topics, and providers. Topic-specific learning needs remain
+in topic notes, and temporary remediation and pending questions stay in the
+private handoff. These files can be edited locally; the next turn refreshes them.
+
+Existing-topic updates use bounded note revisions and changed handoff fields.
+Preferences, topic updates, the chat handoff, and the reply commit together before
+the reply appears. Concurrent changes to preferences or topic evidence reject a
+stale turn with a retry message. SQLite recovery restores committed files after
+an interrupted write. The skill's memory records remain prose; their meaning
+and evidence-based updates are assessed by the selected tutor model.
 
 ## Development
 
@@ -139,6 +166,8 @@ runner operations require Electron.
   request creates a new thread from the saved transcript instead of trusting
   unseen native output. An explicitly missing native thread is reconstructed;
   transient provider errors are reported without silently replacing the thread.
+  Threads created with older study tools are reconstructed from committed history
+  once so the new memory and revision tools are registered.
   Providers without native session support receive the full saved transcript.
   Its bundled code-mode host stays enabled because some models require it to
   call those study tools; disabling it silently hides the tools from those models.
@@ -154,13 +183,19 @@ runner operations require Electron.
   event log records changes in the same transaction as the current state.
   WAL mode, full synchronous commits, and serialized writes protect committed
   conversations. Replies become visible after the transaction commits.
-- Topics remain separate and editable: `topics/<topic-id>/topic.md` holds the
-  title in its first Markdown header and the notes, `agent.workpad.md` holds the
-  private handoff, and `topic.json` holds structured state. Topics are discovered
-  from this folder and refreshed before snapshots and saves. Topic updates also
-  enter the SQLite transaction; a pending-files marker lets startup recover their
-  Markdown/JSON files after an interrupted write. Files are written through
-  verified temporary files and atomic rename. Native session bindings and private keys are omitted from public chats.
+- Topics follow the Tutor Me layout and remain editable:
+  `topics/<topic-id>/topic.md` holds the title in its first Markdown header, the
+  topic directory (outline), and the notes; `agent.workpad.md` holds the private
+  `## Handoff` (plan, phase, current section, active check, resume action), the
+  `## Active check key`, and working notes; `assets/` holds the original
+  materials with extracted text in `assets/cache/prepared/<material-id>/manifest.json`.
+  Older `topic.json` files are migrated into this layout on load. Topics are
+  discovered from this folder and refreshed before snapshots and saves. Topic
+  updates also enter the SQLite transaction; a pending-files marker lets startup
+  recover their files after an interrupted write. Files are written through
+  verified temporary files and atomic rename. Behaviour memory uses the same
+  transaction and recovery mechanism, with `tutor-memory/behaviour.md` as its
+  editable mirror. Native session bindings and private keys are omitted from public chats.
 - Existing `workspace.json` and per-chat `chat.json` data migrate to SQLite on
   load. After a successful commit and database read-back verification, migration
   sources (`workspace.json`, `workspace.legacy.json`, `chat.json`) and the obsolete
@@ -182,7 +217,11 @@ runner operations require Electron.
   replies, private learning state, and account credentials; token-like error text
   is redacted.
 - Tutor Me is vendored in `resources/tutor-me/`. Its shell/Python bookkeeping
-  instructions map to the harness’s source tools and verified save transaction.
+  instructions map to `read_material`, `revise_topic_state`, `save_topic_state`,
+  `save_behaviour_memory`, and the verified save transaction. Source text is
+  extracted during import; unchanged page images are reused across turns, while
+  missing, corrupt, or older images are rendered again. Pending clarification and
+  contested assessments retain their question and checked key like active Checks.
   Web search and subagents are not exposed; when no supplied Test fits, the tutor
   labels an authored exercise. These capabilities can be added as runner tools.
 

@@ -146,7 +146,6 @@ export class RunnerManager {
         client = new OpenAI({ apiKey: connection.apiKey, baseURL: "https://openrouter.ai/api/v1" })
       const title = await generateTopicTitle({ runner, ...connection }, input.title, client, () => {}, () => {})
       const topic = newTopic(title)
-      topic.titleGenerated = true
       await this.repository.mutate((workspace) => workspace.topics.unshift(topic))
       this.notify()
       return topic.id
@@ -247,6 +246,7 @@ export class RunnerManager {
         assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
         confirmTopicId: input.confirmTopicId,
         openedTopicId: input.openedTopicId,
+        behaviourMemory: this.repository.stateSnapshot.behaviourMemory,
       })
       this.notify()
     } finally {
@@ -321,6 +321,16 @@ export class RunnerManager {
         context.includes(update.topicId),
       )
       await this.repository.mutate((workspace) => {
+        if (event.behaviourUpdate) {
+          if (workspace.behaviourMemory !== event.behaviourUpdate.expected)
+            throw new Error("Tutor preferences changed during this turn. Retry to use the latest preferences.")
+          workspace.behaviourMemory = event.behaviourUpdate.content
+        }
+        for (const update of updates) {
+          const topic = workspace.topics.find((item) => item.id === update.topicId)
+          if (topic && update.expected && JSON.stringify(topic.learning) !== JSON.stringify(update.expected))
+            throw new Error("Topic notes changed during this turn. Retry to preserve the latest learner evidence.")
+        }
         const chat = workspace.chats.find((item) => item.id === chatId)
         if (!chat) throw new Error("Chat not found.")
         chat.learning = event.learning

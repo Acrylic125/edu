@@ -64,6 +64,23 @@ test("rejects invalid mutations and keeps the last valid disk snapshot", async (
   expect(store.stateSnapshot.runners[0].name).toBe("Recovered")
 })
 
+test.each([1, 2] as const)("starts a saved workspace with Codex tool version %s", async (toolVersion) => {
+  const store = await repository()
+  const chat = newChat(store.stateSnapshot.runners[0].id)
+  chat.providerSession = {
+    provider: "codex",
+    threadId: "native-thread",
+    home: "/private/codex",
+    executable: "/bundled/codex",
+    toolVersion,
+    status: "ready",
+  }
+  await store.mutate((state) => state.chats.push(chat))
+
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.chats.find((item) => item.id === chat.id)).toEqual(chat)
+})
+
 test("migrates per-topic conversations into independent chats and removes the workspace file", async () => {
   const directory = await mkdtemp(join(tmpdir(), "prune-store-"))
   directories.push(directory)
@@ -123,10 +140,8 @@ test("migrates v2 chats and settings into SQLite while retaining editable topic 
   expect(migrated).toEqual(legacy)
   expect(await readdir(store.directory)).not.toContain("workspace.json")
   await expect(readFile(join(store.directory, "settings.json"))).rejects.toThrow()
-  const metadata = JSON.parse(await readFile(join(store.directory, "topics", topic.id, "topic.json"), "utf8"))
-  expect(metadata).not.toHaveProperty("title")
-  expect(metadata.learning).not.toHaveProperty("notes")
-  expect(metadata.learning).not.toHaveProperty("workpad")
+  expect(await readdir(join(store.directory, "topics", topic.id))).not.toContain("topic.json")
+  expect(await readFile(join(store.directory, "topics", topic.id, "agent.workpad.md"), "utf8")).toMatch(/^## Handoff\n/)
   expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state.chats).toEqual([chat])
   await expect(readFile(join(store.directory, "workspace.legacy.json"))).rejects.toThrow()
 })
@@ -161,14 +176,24 @@ test("discovers documents added to the topics folder and removes deleted topics"
   await expect(Promise.resolve().then(() => store.topic(topic.id))).rejects.toThrow("no longer exists")
 })
 
-test("keeps the topic title header when a tutor saves notes with another heading", async () => {
+test("renames the topic from the first header when a tutor saves notes with another heading", async () => {
+  const store = await repository()
+  const topic = newTopic("Create a Topic")
+  await store.mutate((state) => state.topics.push(topic))
+  await store.mutate((state) => { state.topics[0].learning.notes = "# MIPS Part 1\n\nAn explanation." })
+  const notes = await readFile(join(store.directory, "topics", topic.id, "topic.md"), "utf8")
+  expect(notes).toBe("# MIPS Part 1\n\nAn explanation.")
+  expect(store.topic(topic.id).title).toBe("MIPS Part 1")
+  expect((await new WorkspaceRepository(store.directory).load()).topics[0].title).toBe("MIPS Part 1")
+})
+
+test("keeps the topic title header when a tutor saves notes without one", async () => {
   const store = await repository()
   const topic = newTopic("Calculus")
   await store.mutate((state) => state.topics.push(topic))
-  await store.mutate((state) => { state.topics[0].learning.notes = "# Limits\n\nAn explanation." })
+  await store.mutate((state) => { state.topics[0].learning.notes = "An explanation." })
   const notes = await readFile(join(store.directory, "topics", topic.id, "topic.md"), "utf8")
   expect(notes).toBe("# Calculus\n\nAn explanation.")
-  expect((await new WorkspaceRepository(store.directory).load()).topics[0].title).toBe("Calculus")
 })
 
 test("rejects corrupt database and topic state without replacing their files", async () => {
@@ -179,10 +204,53 @@ test("rejects corrupt database and topic state without replacing their files", a
   const other = await repository()
   const topic = newTopic("Calculus")
   await other.mutate((state) => state.topics.push(topic))
-  const path = join(other.directory, "topics", topic.id, "topic.json")
-  await writeFile(path, "invalid json")
+  const path = join(other.directory, "topics", topic.id, "agent.workpad.md")
+  const corrupt = (await readFile(path, "utf8")).replace(/^Phase: .*$/m, "Phase: unknown")
+  await writeFile(path, corrupt)
   await expect(new WorkspaceRepository(other.directory).load()).rejects.toThrow()
-  expect(await readFile(path, "utf8")).toBe("invalid json")
+  expect(await readFile(path, "utf8")).toBe(corrupt)
+})
+
+test("stores topic state in the Tutor Me layout and derives it back from the files", async () => {
+  const store = await repository()
+  const topic = newTopic("Limits")
+  topic.planConfirmed = true
+  topic.materials.push({ id: randomUUID(), name: "Lecture 1.pdf", kind: "pdf", text: "Page one", pages: ["Page one"] })
+  topic.learning = {
+    ...topic.learning,
+    phase: "awaiting_answer",
+    currentSection: "1. Limits",
+    pendingQuestion: "C1-01 — [question](topic.md#check-c1-01)\n\nExplain a limit.",
+    privateAnswerKey: "The value a function approaches.\n\n## Not a section",
+    nextAction: "Evaluate C1-01.",
+    notes: `# Limits\n\n<topic-directory heading="Topic directory" items='[{"title":"1. Limits","children":[{"title":"1.1 One-sided limits"}]}]' />`,
+    workpad: "Source map: Lecture 1.pdf pages 1-4.",
+  }
+  await store.mutate((state) => state.topics.push(topic))
+  const directory = join(store.directory, "topics", topic.id)
+  expect(await readdir(directory)).not.toContain("topic.json")
+  expect(await readFile(join(directory, "agent.workpad.md"), "utf8")).toBe(
+    `## Handoff\nCreated: ${topic.createdAt}\nPlan: confirmed\nPhase: awaiting_answer\nCurrent section: 1. Limits\nActive check: C1-01 — [question](topic.md#check-c1-01)\n  \n  Explain a limit.\nResume action: Evaluate C1-01.\n\n## Active check key\nThe value a function approaches.\n\n## Not a section\n\n## Working notes\nSource map: Lecture 1.pdf pages 1-4.`,
+  )
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.topics[0]).toEqual({ ...topic, learning: { ...topic.learning, outline: ["1. Limits", "1.1 One-sided limits"] } })
+})
+
+test("migrates topic.json into the workpad handoff and material caches", async () => {
+  const store = await repository()
+  const topic = newTopic("Limits")
+  await store.mutate((state) => state.topics.push(topic))
+  const directory = join(store.directory, "topics", topic.id)
+  const material = { id: randomUUID(), name: "Lecture 1.pdf", kind: "pdf", text: "Page one", pages: ["Page one"] }
+  const { id: _id, title: _title, learning, ...metadata } = topic
+  const { notes: _notes, workpad: _workpad, ...handoff } = learning
+  await writeFile(join(directory, "topic.json"), JSON.stringify({ ...metadata, planConfirmed: true, materials: [material], learning: { ...handoff, phase: "ready_to_continue" } }))
+  await writeFile(join(directory, "agent.workpad.md"), "Legacy handoff.")
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.topics[0]).toMatchObject({ planConfirmed: true, materials: [material], learning: { phase: "ready_to_continue", workpad: "Legacy handoff." } })
+  expect(await readdir(directory)).not.toContain("topic.json")
+  expect(JSON.parse(await readFile(join(directory, "assets", "cache", "prepared", material.id, "manifest.json"), "utf8"))).toEqual(material)
+  expect((await new WorkspaceRepository(store.directory).load()).topics).toEqual(restored.topics)
 })
 
 test("learner exports omit the private handoff and assessment keys", async () => {
@@ -324,4 +392,50 @@ test("preserves migration sources when database verification fails", async () =>
   await writeFile(join(directory, "workspace.json"), raw)
   await expect(new WorkspaceRepository(directory).load()).rejects.toThrow()
   expect(await readFile(join(directory, "workspace.json"), "utf8")).toBe(raw)
+})
+
+test("persists reusable tutor preferences and honours manual edits and deletion", async () => {
+  const store = await repository()
+  const path = join(store.directory, "tutor-memory", "behaviour.md")
+  await expect(readFile(path)).rejects.toThrow()
+  const preferences = "# Tutor preferences\n\n## Explanation and pacing\n\nExplain using the source example first."
+  await store.mutate((state) => { state.behaviourMemory = preferences })
+  expect(await readFile(path, "utf8")).toBe(preferences)
+  const restarted = new WorkspaceRepository(store.directory)
+  await restarted.load()
+  expect(restarted.stateSnapshot.behaviourMemory).toBe(preferences)
+  const edited = preferences + "\nGive one question at a time."
+  await writeFile(path, edited)
+  await restarted.mutate((state) => { state.runners[0].name = "Renamed tutor" })
+  expect(restarted.stateSnapshot.behaviourMemory).toBe(edited)
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state.behaviourMemory).toBe(edited)
+  await rm(path)
+  await restarted.refreshTopics()
+  expect(restarted.stateSnapshot.behaviourMemory).toBe("")
+})
+
+test.each(["# Tutor preferences\n\nUse small steps.", ""])("recovers committed behaviour memory after an interrupted mirror write: %j", async (content) => {
+  const store = await repository()
+  await store.mutate((state) => { state.behaviourMemory = "Old preferences" })
+  const state = store.stateSnapshot
+  state.behaviourMemory = content
+  new ChatDatabase(join(store.directory, "state.sqlite")).save(state)
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.behaviourMemory).toBe(content)
+  const path = join(store.directory, "tutor-memory", "behaviour.md")
+  if (content) expect(await readFile(path, "utf8")).toBe(content)
+  else await expect(readFile(path)).rejects.toThrow()
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.filesPending).toBe(false)
+})
+
+test("loads existing SQLite workspaces without behaviour memory and imports an existing preference file", async () => {
+  const store = await repository()
+  const database = new DatabaseSync(join(store.directory, "state.sqlite"))
+  database.prepare("UPDATE metadata SET payload = ? WHERE key = 'settings'").run(JSON.stringify({ runners: store.stateSnapshot.runners, providerSettings: [] }))
+  database.close()
+  expect((await new WorkspaceRepository(store.directory).load()).behaviourMemory).toBe("")
+  await mkdir(join(store.directory, "tutor-memory"))
+  await writeFile(join(store.directory, "tutor-memory", "behaviour.md"), "Existing reusable preferences")
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.behaviourMemory).toBe("Existing reusable preferences")
 })

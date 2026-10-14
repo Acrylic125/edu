@@ -86,6 +86,7 @@ export async function runCodexTutorTurn(
     const previous = job.chat.providerSession
     const canResume =
       previous?.status === "ready" &&
+      previous.toolVersion === 2 &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -124,7 +125,7 @@ export async function runCodexTutorTurn(
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 1,
+      toolVersion: 2,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })

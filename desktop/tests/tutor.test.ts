@@ -1,6 +1,6 @@
 import { createServer } from "node:http"
 import { randomUUID } from "node:crypto"
-import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises"
+import { copyFile, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { extractText, getDocumentProxy } from "unpdf"
@@ -11,7 +11,7 @@ import { newChat, newTopic } from "../src/main/workspace"
 import { topicMention } from "../src/shared/topic-mentions"
 import { createTutorSession, runTutorTurn } from "../src/runners/tutor"
 import { generateTopicTitle } from "../src/runners/title"
-import { ProviderModelSchema } from "../src/shared/contracts"
+import { LearningStateSchema, ProviderModelSchema } from "../src/shared/contracts"
 import type { LearningState, WorkerJob } from "../src/shared/contracts"
 
 const servers: ReturnType<typeof createServer>[] = []
@@ -185,7 +185,7 @@ test("prevents a tagged topic's unconfirmed plan from advancing to teaching", as
   ])
   const result = await runTutorTurn(input, client, () => {})
   expect(result.topicUpdates).toEqual([
-    { topicId: topic.id, learning: corrected },
+    { topicId: topic.id, learning: corrected, expected: topic.learning },
   ])
   expect(requests[1]).toContain("Wait for the learner to confirm")
 })
@@ -207,7 +207,7 @@ test("topic notes must render their directory as a topic-directory element", asy
   ])
   const result = await runTutorTurn(input, client, () => {})
   expect(result.topicUpdates).toEqual([
-    { topicId: topic.id, learning: { ...markdown, notes: topic.learning.notes } },
+    { topicId: topic.id, learning: { ...markdown, notes: topic.learning.notes }, expected: topic.learning },
   ])
   expect(requests[0]).toContain("<topic-directory heading=")
   expect(requests[1]).toContain("one <topic-directory /> element")
@@ -373,4 +373,131 @@ test("OpenRouter title requests use the inexpensive model and bound the request"
   expect(input.runner.model).toBe("test")
   await expect(generateTopicTitle(original, original.chat.messages.find((message) => message.role === "user")?.content ?? "", mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")
   expect(mock.requests).toHaveLength(1)
+})
+
+test("loads workspace behaviour memory and stages explicit feedback with the original revision", async () => {
+  const input = { ...job(), behaviourMemory: "# Tutor preferences\n\nUse the lecture's own examples." }
+  const revised = input.behaviourMemory + "\nExplain in smaller steps."
+  const final = revised + "\nAsk one question at a time."
+  const { client, requests } = await provider([
+    call("save_behaviour_memory", { expected: input.behaviourMemory, content: revised }),
+    call("save_behaviour_memory", { expected: revised, content: final }),
+    save(input.chat.learning),
+    reply("I’ll explain in smaller steps and ask one question at a time."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  const session = await createTutorSession(input, () => {})
+  expect(session.instructions).toContain(JSON.stringify(input.behaviourMemory))
+  expect(requests).toHaveLength(4)
+  expect(result.behaviourUpdate).toEqual({ expected: input.behaviourMemory, content: final })
+  expect(input.behaviourMemory).not.toContain("smaller steps")
+})
+
+test("rejected preference saves must be corrected before publishing a reply", async () => {
+  const input = { ...job(), behaviourMemory: "Existing preferences" }
+  const { client, requests } = await provider([
+    call("save_behaviour_memory", { expected: "stale preferences", content: "Overwritten" }),
+    save(input.chat.learning),
+    reply("I saved your preferences."),
+    call("save_behaviour_memory", { expected: input.behaviourMemory, content: "Existing preferences\nUse smaller steps." }),
+    reply("I’ll use smaller steps."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  expect(requests[3]).toContain("Correct rejected saves first")
+  expect(result.reply).toBe("I’ll use smaller steps.")
+  expect(result.behaviourUpdate?.content).toBe("Existing preferences\nUse smaller steps.")
+})
+
+test("bounded difficulty revisions preserve original attempts and merge repeated evidence", async () => {
+  const input = job()
+  const topic = input.topics[0]
+  topic.planConfirmed = true
+  const attempt = "### Check C1\nQuestion: Explain limits.\nLearner answer: The function must reach the limit."
+  const difficulty = "### Current difficulties\nD1: unresolved — Confuses approaching with reaching. Evidence: C1."
+  topic.learning.notes += `\n\n## Limits\n\n${attempt}\n\n${difficulty}\n\n## Materials\n\nOriginal lecture assets.`
+  const updated = "### Current difficulties\nD1: improving — Independently distinguishes approaching from reaching in C2; broader understanding unassessed. Evidence: C1, C2."
+  const fresh = "### Check C2\nQuestion: Can a limit exist without reaching the value?\nLearner answer: Yes; approaching is enough."
+  const { client } = await provider([
+    call("revise_topic_state", {
+      topicId: topic.id,
+      notes: { replacements: [{ old: difficulty, new: updated }], append: fresh },
+      handoff: { phase: "ready_to_continue", nextAction: "Explain one-sided limits.", workpad: "C2 independently answered; explain one-sided limits next." },
+    }),
+    save(input.chat.learning),
+    reply("You distinguished approaching from reaching. A one-sided limit considers just one direction."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  const state = result.topicUpdates[0].learning
+  expect(state.notes).toContain(attempt)
+  expect(state.notes).toContain(updated)
+  expect(state.notes).toContain(fresh)
+  expect(state.notes.indexOf(fresh)).toBeLessThan(state.notes.indexOf("## Materials"))
+  expect(state.notes).toContain("## Materials\n\nOriginal lecture assets.")
+  expect(state.notes).not.toContain(difficulty)
+  expect(state.outline).toEqual(topic.learning.outline)
+  expect(result.topicUpdates[0].expected).toEqual(topic.learning)
+})
+
+test("ambiguous note edits cannot silently publish the previous staged state", async () => {
+  const input = job()
+  const topic = input.topics[0]
+  const { client, requests } = await provider([
+    saveTopic(topic.id, topic.learning),
+    call("revise_topic_state", { topicId: topic.id, notes: { replacements: [{ old: "missing difficulty", new: "updated" }] } }),
+    save(input.chat.learning),
+    reply("Changes saved."),
+    call("revise_topic_state", { topicId: topic.id, notes: { append: "An explicit learning need." } }),
+    reply("The learning need is recorded."),
+  ])
+  const result = await runTutorTurn(input, client, () => {})
+  expect(requests[4]).toContain("must match exactly once")
+  expect(result.topicUpdates[0].learning.notes).toContain("An explicit learning need.")
+})
+
+test("compact revisions retain the new-topic plan confirmation boundary", async () => {
+  const input = job()
+  const session = await createTutorSession(input, () => {})
+  const result = await session.execute("revise_topic_state", { topicId: input.topics[0].id, handoff: { phase: "ready_to_continue" } })
+  expect(result.success).toBe(false)
+  expect(result.text).toContain("Wait for the learner to confirm")
+})
+
+test.each(["awaiting_clarification", "contested"] as const)("preserves pending assessment boundaries in phase %s", async (phase) => {
+  const input = job()
+  const topic = input.topics[0]
+  topic.planConfirmed = true
+  const key = "A limit describes the approached value as the input approaches a point."
+  topic.learning = LearningStateSchema.parse({ ...topic.learning, phase, pendingQuestion: "Explain limits.", privateAnswerKey: key })
+  const session = await createTutorSession(input, () => {})
+  await session.execute("save_learning_state", input.chat.learning)
+  expect(() => session.finish(key)).toThrow("private assessment key")
+  await session.execute("save_behaviour_memory", { expected: "", content: key })
+  expect(() => session.finish("Preferences saved.")).toThrow("private assessment key")
+  expect(() => LearningStateSchema.parse({ ...topic.learning, pendingQuestion: "" })).toThrow("active question")
+})
+
+test("source images reuse unchanged renders and rebuild corrupt or outdated caches", async () => {
+  const input = job()
+  const directory = await mkdtemp(join(tmpdir(), "edu-source-cache-"))
+  directories.push(directory)
+  const source = join(directory, "limits.pdf")
+  await copyFile(resolve("tests/fixtures/diagram.pdf"), source)
+  const topic = input.topics[0]
+  topic.assetDirectory = directory
+  const id = randomUUID()
+  topic.materials.push({ id, name: "limits.pdf", kind: "pdf", text: "Limits diagram", pages: ["Limits diagram"] })
+  const session = await createTutorSession(input, () => {})
+  const request = { id, firstPage: 1, lastPage: 1, includeVisuals: true }
+  expect((await session.execute("read_material", request)).success).toBe(true)
+  const cache = join(directory, `source-${id}-1.png`)
+  const timestamp = (await stat(cache)).mtimeMs
+  expect((await session.execute("read_material", request)).images).toHaveLength(2)
+  expect((await stat(cache)).mtimeMs).toBe(timestamp)
+  await writeFile(cache, "interrupted PNG")
+  expect((await session.execute("read_material", request)).success).toBe(true)
+  expect((await readFile(cache)).subarray(1, 4).toString()).toBe("PNG")
+  const originalTime = (await stat(source)).mtime
+  await utimes(cache, new Date(0), new Date(0))
+  expect((await session.execute("read_material", request)).success).toBe(true)
+  expect((await stat(cache)).mtimeMs).toBeGreaterThanOrEqual(originalTime.getTime())
 })

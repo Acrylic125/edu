@@ -8,7 +8,7 @@ import { createTutorSession } from "./tutor"
 const ActionSchema = z.object({
   reply: z.string().max(200_000),
   calls: z.array(z.object({
-    name: z.enum(["read_skill", "read_material", "save_topic_state", "save_learning_state"]),
+    name: z.enum(["read_skill", "read_material", "save_topic_state", "revise_topic_state", "save_learning_state", "save_behaviour_memory"]),
     arguments: z.string().max(350_000),
   })).max(8),
 })
@@ -32,7 +32,7 @@ Available EdU tools: ${JSON.stringify(session.tools)}`
       transcript.push(action)
       if (!action.calls.length) {
         if (session.saved) return session.finish(action.reply)
-        transcript.push({ role: "user", content: "Save the complete learning state before returning the final reply." })
+        transcript.push({ role: "user", content: `Save the complete learning state before returning the final reply. Correct rejected saves first: ${session.saveError ?? "no complete handoff saved"}` })
         continue
       }
       for (const call of action.calls) {

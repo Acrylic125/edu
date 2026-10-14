@@ -79,6 +79,12 @@ export function topicDirectoryMarkdown(notes: string) {
   return `${parsed.before}## ${parsed.directory.heading}\n\n${lines(parsed.directory.items, 0).join("\n")}${parsed.after}`
 }
 
+export function topicOutline(notes: string) {
+  const titles = (entries: z.infer<typeof TopicDirectoryEntrySchema>[]): string[] =>
+    entries.flatMap((entry) => [entry.title, ...titles(entry.children)])
+  return titles(parseTopicDirectory(notes).directory?.items ?? []).slice(0, 100)
+}
+
 export function validateTopicDirectory(notes: string) {
   if (/^#{1,6}\s+Topic directory\b/im.test(notes))
     throw new Error(

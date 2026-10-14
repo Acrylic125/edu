@@ -4,14 +4,16 @@ import { tmpdir } from "node:os"
 import { afterEach, expect, test, vi } from "vitest"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "../src/providers/cli"
 import { runCliTutorTurn } from "../src/runners/cli"
-import { newChat } from "../src/main/workspace"
+import { newChat, newTopic } from "../src/main/workspace"
 import { randomUUID } from "node:crypto"
 import { WorkerJobSchema } from "../src/shared/contracts"
 import { generateTopicTitle } from "../src/runners/title"
+import * as cliTools from "../src/providers/cli"
 
 const directories: string[] = []
 afterEach(async () => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -65,7 +67,7 @@ test("CLI launch disables native tools and does not bypass permissions", async (
   expect(args).toContain("--safe-mode")
   const antigravity = await connection("antigravity")
   await prepareCliWorkspace(antigravity)
-  expect(await readFile(join(antigravity.directory, ".agents/agents/edu-tutor.md"), "utf8")).toContain("tools: []")
+  expect(await readFile(join(antigravity.directory, ".agents/agents/edu-tutor.md"), "utf8")).toContain("tools: [finish]")
   expect(cliPromptArguments(antigravity, "{}")).toContain("--sandbox")
   expect(cliPromptArguments(antigravity, "{}")).not.toContain("--dangerously-skip-permissions")
 })
@@ -86,4 +88,37 @@ test("canceling a provider request terminates its native subprocess", async () =
   await expect(result).rejects.toThrow("canceled")
   expect(processChanged).toHaveBeenLastCalledWith(null)
   expect(() => process.kill(pid, 0)).toThrow()
+})
+
+test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferences and bounded difficulty updates", async (provider) => {
+  const cli = await connection(provider)
+  const chat = newChat(randomUUID())
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Explain slowly and record my limit difficulty.", createdAt: new Date().toISOString(), topicIds: [] })
+  const topic = newTopic("Limits")
+  topic.planConfirmed = true
+  topic.learning.notes = "# Limits\n\n<topic-directory heading=\"Topic directory\" items='[{\"title\":\"1. Limits\"}]' />\n\n## Limits\n\nOriginal learner answer."
+  const job = WorkerJobSchema.parse({
+    chat, topics: [{ ...topic, assetDirectory: cli.directory }], behaviourMemory: "Use source examples.",
+    runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
+  })
+  const actions = [
+    { reply: "", calls: [
+      { name: "save_behaviour_memory", arguments: JSON.stringify({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." }) },
+      { name: "revise_topic_state", arguments: JSON.stringify({ topicId: topic.id, notes: { append: "D1: needs_explanation — Needs the approach/reach distinction explained." } }) },
+      { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
+    ] },
+    { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [] },
+  ]
+  const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
+    const action = actions.shift()
+    if (!action) throw new Error("Unexpected CLI request")
+    if (provider === "antigravity") return JSON.stringify({ status: "SUCCESS", structured_output: action })
+    return JSON.stringify({ type: "result", is_error: false, structured_output: action })
+  })
+  const result = await runCliTutorTurn(job, () => {}, () => {})
+  expect(result.behaviourUpdate).toEqual({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." })
+  expect(result.topicUpdates[0].learning.notes).toContain("Original learner answer.")
+  expect(result.topicUpdates[0].learning.notes).toContain("D1: needs_explanation")
+  expect(command).toHaveBeenCalledTimes(2)
 })

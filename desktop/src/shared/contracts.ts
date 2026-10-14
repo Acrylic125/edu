@@ -79,6 +79,8 @@ export const LearningStateSchema = z
       "awaiting_plan_confirmation",
       "ready_to_continue",
       "awaiting_answer",
+      "awaiting_clarification",
+      "contested",
       "awaiting_choice",
       "paused",
     ]),
@@ -92,7 +94,7 @@ export const LearningStateSchema = z
   })
   .superRefine((state, ctx) => {
     if (
-      state.phase === "awaiting_answer" &&
+      ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
       (!state.pendingQuestion || !state.privateAnswerKey)
     ) {
       ctx.addIssue({
@@ -116,7 +118,7 @@ export const ProviderSessionSchema = z.object({
   threadId: z.string().min(1),
   home: z.string().min(1),
   executable: z.string().min(1),
-  toolVersion: z.literal(1),
+  toolVersion: z.union([z.literal(1), z.literal(2)]),
   status: z.enum(["ready", "pending"]),
 })
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true }).extend({
@@ -124,12 +126,18 @@ export const ChatSchema = TopicSchema.omit({ planConfirmed: true }).extend({
   messages: z.array(MessageSchema),
   providerSession: ProviderSessionSchema.optional(),
 })
+export const BehaviourMemorySchema = z.string().max(100_000)
+export const BehaviourUpdateSchema = z.object({
+  expected: BehaviourMemorySchema,
+  content: BehaviourMemorySchema,
+})
 export const WorkspaceSchema = z.object({
   version: z.literal(2),
   runners: z.array(RunnerSchema),
   topics: z.array(TopicSchema),
   chats: z.array(ChatSchema),
   providerSettings: z.array(ProviderSettingsSchema).default([]),
+  behaviourMemory: BehaviourMemorySchema.default(""),
 })
 // Version 1 stored one conversation per topic; it is migrated into independent chats on load.
 export const LegacyWorkspaceSchema = WorkspaceSchema.omit({ chats: true }).extend({
@@ -218,6 +226,7 @@ export const ImportMaterialsSchema = z.object({
 export const TopicUpdateSchema = z.object({
   topicId: IdSchema,
   learning: LearningStateSchema,
+  expected: LearningStateSchema.optional(),
 })
 export const WorkerJobSchema = z.object({
   chat: ChatSchema,
@@ -231,6 +240,7 @@ export const WorkerJobSchema = z.object({
   assetDirectory: z.string(),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
+  behaviourMemory: BehaviourMemorySchema.optional(),
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
@@ -249,6 +259,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
     topicUpdates: z.array(TopicUpdateSchema).default([]),
+    behaviourUpdate: BehaviourUpdateSchema.optional(),
     providerSession: ProviderSessionSchema.optional(),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),

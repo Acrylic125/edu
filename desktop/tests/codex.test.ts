@@ -243,6 +243,8 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
     "read_skill",
     "read_material",
     "save_topic_state",
+    "revise_topic_state",
+    "save_behaviour_memory",
     "save_learning_state",
   ])
   expect(thread.sandbox).toBe("read-only")
@@ -528,10 +530,11 @@ test("resumes the native Codex thread after restart and sends only the new reque
   expect(requests.filter((request) => request.method === "turn/start").at(-1)?.params).toMatchObject({ input: [{ type: "text", text: "Continue the same conversation" }] })
 })
 
-test.each(["pending", "missing", "other-account"])("reconstructs committed history when the saved session is %s", async (reason) => {
+test.each(["pending", "missing", "other-account", "old-tools"])("reconstructs committed history when the saved session is %s", async (reason) => {
   const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 1, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 2, status: "ready" }
+  if (reason === "old-tools") job.chat.providerSession.toolVersion = 1
   if (reason === "pending") job.chat.providerSession.status = "pending"
   if (reason === "other-account") job.chat.providerSession.home = "/different/account"
   const first = { id: randomUUID(), role: "user" as const, content: "An early request that must survive", createdAt: new Date().toISOString(), topicIds: [] }
@@ -546,7 +549,7 @@ test.each(["pending", "missing", "other-account"])("reconstructs committed histo
 test("does not replace a resumable conversation on a transient provider failure", async () => {
   const { job, home } = await fixture("resume-network")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 1, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 2, status: "ready" }
   await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })

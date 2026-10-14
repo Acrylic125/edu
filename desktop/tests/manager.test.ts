@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { afterEach, expect, test, vi } from "vitest"
 import {
   WorkerJobSchema,
@@ -13,6 +13,7 @@ import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
 import { RunnerManager } from "../src/runners/manager"
 import { topicMention } from "../src/shared/topic-mentions"
 import * as titles from "../src/runners/title"
+import { createTutorSession } from "../src/runners/tutor"
 
 class ManagedProcess extends EventEmitter {
   pid = 1234
@@ -144,6 +145,66 @@ test("publishes a reply only after saving the chat handoff", async () => {
   expect(restored.chat(first.id).learning.workpad).toBe("Revision planned.")
 })
 
+test("commits tutor preferences before the reply and restores them in another chat and provider", async () => {
+  const { manager, repository, first, second, other } = await fixture()
+  await manager.send({ chatId: first.id, content: "Use small steps for all my lessons." })
+  const input = children[0].jobs[0]
+  const session = await createTutorSession({ ...input, skillDirectory: resolve("resources/tutor-me") }, () => {})
+  const preferences = "# Tutor preferences\n\n## Explanation and pacing\n\nUse small steps."
+  expect((await session.execute("save_behaviour_memory", { expected: "", content: preferences })).success).toBe(true)
+  await session.execute("save_learning_state", input.chat.learning)
+  children[0].emit("message", { type: "result", ...session.finish("I’ll use small steps.") })
+  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === first.runnerId)?.status).toBe("ready"))
+  const restored = await new WorkspaceRepository(repository.directory).load()
+  expect(restored.behaviourMemory).toBe(preferences)
+  expect(restored.chats.find((chat) => chat.id === first.id)?.messages.at(-1)?.content).toBe("I’ll use small steps.")
+  expect(await readFile(join(repository.directory, "tutor-memory", "behaviour.md"), "utf8")).toBe(preferences)
+  await repository.mutate((state) => {
+    const runner = state.runners.find((runner) => runner.id === second.runnerId)
+    if (runner) runner.provider = "openrouter"
+  })
+  await manager.send({ chatId: second.id, content: `${topicMention(other.id, other.title)} Plan this topic.` })
+  expect(children[1].jobs[0]).toMatchObject({ behaviourMemory: preferences, runner: { provider: "openrouter" } })
+  const next = await createTutorSession({ ...children[1].jobs[0], skillDirectory: resolve("resources/tutor-me") }, () => {})
+  expect(next.instructions).toContain(JSON.stringify(preferences))
+})
+
+test("concurrent preference updates reject stale writes without publishing an unsaved reply", async () => {
+  const { manager, repository, first, second } = await fixture()
+  await manager.send({ chatId: first.id, content: "Explain slowly." })
+  await manager.send({ chatId: second.id, content: "Use source examples." })
+  children[0].emit("message", {
+    type: "result", reply: "I’ll explain slowly.", learning: first.learning,
+    behaviourUpdate: { expected: "", content: "Explain slowly." },
+  })
+  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === first.runnerId)?.status).toBe("ready"))
+  children[1].emit("message", {
+    type: "result", reply: "Preferences saved.", learning: second.learning,
+    behaviourUpdate: { expected: "", content: "Use source examples." },
+  })
+  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === second.runnerId)?.error).toContain("preferences changed"))
+  expect(repository.stateSnapshot.behaviourMemory).toBe("Explain slowly.")
+  expect(repository.chat(second.id).messages.some((message) => message.role === "assistant")).toBe(false)
+  await manager.send({ chatId: second.id, content: "Retry with the current preferences." })
+  expect(children[1].killed).toBe(true)
+  expect(children.at(-1)?.jobs[0].behaviourMemory).toBe("Explain slowly.")
+})
+
+test("topic revisions cannot overwrite learner evidence edited while the tutor was working", async () => {
+  const { manager, repository, first, topic } = await fixture()
+  await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Update my learning need.` })
+  const original = children[0].jobs[0].topics[0].learning
+  const manual = original.notes + "\n\nOriginal learner attempt added manually."
+  await writeFile(join(repository.directory, "topics", topic.id, "topic.md"), manual)
+  children[0].emit("message", {
+    type: "result", reply: "Updated.", learning: first.learning,
+    topicUpdates: [{ topicId: topic.id, expected: original, learning: { ...original, notes: original.notes + "\n\nA stale assessment." } }],
+  })
+  await vi.waitFor(() => expect(manager.statuses[0].error).toContain("Topic notes changed"))
+  expect(repository.topic(topic.id).learning.notes).toBe(manual)
+  expect(repository.chat(first.id).messages.some((message) => message.role === "assistant")).toBe(false)
+})
+
 test("keeps tagged topics in the chat context and saves only their updates", async () => {
   const { manager, repository, first, topic, other } = await fixture()
   await manager.send({
@@ -154,7 +215,12 @@ test("keeps tagged topics in the chat context and saves only their updates", asy
   expect(children[0].jobs[0].topics[0].assetDirectory).toBe(
     join(repository.directory, "topics", topic.id, "assets"),
   )
-  const planned = { ...topic.learning, outline: ["Limits"], workpad: "Planned." }
+  const planned = {
+    ...topic.learning,
+    outline: ["Limits"],
+    notes: `# Calculus\n\n<topic-directory heading="Topic directory" items='[{"title":"Limits"}]' />`,
+    workpad: "Planned.",
+  }
   children[0].emit("message", {
     type: "result",
     reply: "Here is your plan.",
@@ -186,7 +252,7 @@ test("rejects tags for missing topics and confirms only a drafted plan", async (
   ).rejects.toThrow("no draft plan")
   await repository.mutate((state) => {
     const current = state.topics.find((item) => item.id === topic.id)
-    if (current) current.learning.outline = ["Limits"]
+    if (current) current.learning.notes = `# Calculus\n\n<topic-directory heading="Topic directory" items='[{"title":"Limits"}]' />`
   })
   await manager.send({ chatId: first.id, content: "Confirm", confirmTopicId: topic.id })
   expect(repository.topic(topic.id).planConfirmed).toBe(true)
