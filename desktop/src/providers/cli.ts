@@ -45,11 +45,11 @@ export async function prepareCliWorkspace(connection: z.infer<typeof CliConnecti
   if (connection.provider === "antigravity") {
     const agents = join(connection.directory, ".agents", "agents")
     await mkdir(agents, { recursive: true, mode: 0o700 })
-    // The CLI has no --tools switch; a dedicated main agent limits native capabilities.
+    // agy needs finish to emit schema output; exclude all file, shell, and other native tools.
     await writeFile(join(agents, "edu-tutor.md"), `---
 name: edu-tutor
 description: EdU tutoring response adapter
-tools: []
+tools: [finish]
 mainAgent: true
 subagent: false
 commandExecutionPolicy: off
@@ -57,7 +57,7 @@ mcpServers: []
 skills: []
 plugins: []
 ---
-Return the requested structured response. EdU performs all source reads and saves; do not use native tools.
+Return the requested structured response. EdU performs all source reads and saves; do not use native tools except finish to return the requested structured response.
 `, { mode: 0o600 })
   }
 }
@@ -79,7 +79,14 @@ export function runCliCommand(
       reject(new Error("The provider request was canceled."))
       return
     }
-    const child = spawn(connection.executable, args, {
+    let commandArgs = args
+    let stdin = input
+    if (connection.provider === "antigravity" && args.includes("-p")) {
+      // agy parses a bare -p followed by a flag as the prompt, rather than reading stdin.
+      commandArgs = args.map((arg) => arg === "-p" ? `-p=${input}` : arg)
+      stdin = ""
+    }
+    const child = spawn(connection.executable, commandArgs, {
       cwd: connection.directory,
       env: environment,
       stdio: "pipe",
@@ -120,7 +127,7 @@ export function runCliCommand(
       else if (code !== 0) reject(new Error("The provider exited unsuccessfully. Sign in to its CLI, check account access, and retry."))
       else resolve(output)
     })
-    child.stdin.end(input)
+    child.stdin.end(stdin)
   })
 }
 

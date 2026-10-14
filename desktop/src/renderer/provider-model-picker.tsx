@@ -1,7 +1,7 @@
 import { useRef, useState } from "react"
 import { Combobox } from "@base-ui/react/combobox"
 import { Menu } from "@base-ui/react/menu"
-import { Check, ChevronDown, ChevronRight, Search, Settings, Star } from "lucide-react"
+import { Check, ChevronDown, CircleAlert, ChevronRight, Search, Settings, Star } from "lucide-react"
 import { Toolbar } from "@base-ui/react/toolbar"
 import { z } from "zod"
 import {
@@ -202,10 +202,12 @@ export function ProviderModelPicker({
         <Combobox.Trigger
           aria-label="Choose provider and model"
           disabled={disabled}
-          title={`${provider?.name ?? value.provider}: ${label}`}
-          className="flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground disabled:opacity-50"
+          title={provider?.error ?? `${provider?.name ?? value.provider}: ${label}`}
+          data-error={provider?.error ? "" : undefined}
+          className="flex h-7 max-w-56 min-w-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground disabled:opacity-50 data-error:bg-destructive/10 data-error:text-destructive data-error:hover:bg-destructive/15 data-error:hover:text-destructive data-error:data-popup-open:bg-destructive/15 data-error:data-popup-open:text-destructive"
         >
-          <ProviderIcon provider={value.provider} className="size-3.5 shrink-0" />
+          {provider?.error && <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />}
+          {!provider?.error && <ProviderIcon provider={value.provider} className="size-3.5 shrink-0" />}
           <span className="truncate">{label}</span>
           <ChevronDown className="size-3 shrink-0" />
         </Combobox.Trigger>

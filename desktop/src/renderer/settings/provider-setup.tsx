@@ -24,14 +24,14 @@ export function ProviderSetupInstructions({ provider, onRefresh, disabled = fals
             {!cliProvider && <span>No installation needed.</span>}
           </span>
           <span className="flex shrink-0 items-center gap-2">
+            <button type="button" aria-label={`Recheck ${provider.name} setup`} title="Recheck setup" disabled={disabled || provider.loading || provider.connecting} onClick={onRefresh} className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50">
+              <RotateCcw aria-hidden="true" className={`size-3.5 ${provider.loading ? "animate-spin motion-reduce:animate-none" : ""}`} />
+            </button>
             {installed ? (
               <Check role="img" aria-label="Installation complete" className="size-4 text-emerald-500" />
             ) : (
               <Circle role="img" aria-label="Installation incomplete" className="size-4 text-muted-foreground/40" />
             )}
-            <button type="button" aria-label={`Recheck ${provider.name} setup`} title="Recheck setup" disabled={disabled || provider.loading || provider.connecting} onClick={onRefresh} className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50">
-              <RotateCcw aria-hidden="true" className={`size-3.5 ${provider.loading ? "animate-spin motion-reduce:animate-none" : ""}`} />
-            </button>
           </span>
         </div>
       </li>

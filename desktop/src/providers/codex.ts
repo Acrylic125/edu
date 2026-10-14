@@ -151,8 +151,12 @@ export class CodexProvider {
     this.notify()
     let accountChecked = false
     try {
-      this.state.installed = false
-      await access(this.connection.executable, constants.X_OK)
+      try {
+        await access(this.connection.executable, constants.X_OK)
+      } catch (error) {
+        this.state.installed = false
+        throw error
+      }
       this.state.installed = true
       const client = await this.server()
       const { account } = await client.request(

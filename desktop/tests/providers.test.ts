@@ -26,6 +26,7 @@ function model(id: string, prompt = "0", completion = "0", request = "0") {
 }
 
 test("chooses the least expensive text model from live prices, including models without tools", async () => {
+  vi.spyOn(cli, "resolveCliExecutable").mockRejectedValue(new Error("Not installed"))
   vi.spyOn(CodexProvider.prototype, "refresh").mockResolvedValue()
   vi.spyOn(ModelAccount.prototype, "key").mockResolvedValue("test-key")
   let catalog = [
@@ -74,10 +75,11 @@ test("Claude Connect signs in when the installed CLI is signed out", async () =>
 
 
 test("checks all providers immediately and every five minutes, with no login or generation during polls", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-polling-test-"))
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-10-14T00:00:00Z"))
   const settings = ["claude", "antigravity"].map((id) => ProviderSettingsSchema.parse({ id, displayName: id, binaryPath: "/fixture-cli", enabled: true }))
-  const registry = new ProviderRegistry("/tmp/edu-provider-polling", "unused", () => {}, settings)
+  const registry = new ProviderRegistry(directory, "unused", () => {}, settings)
   const codex = vi.spyOn(registry.codex, "refresh").mockImplementation(async () => {
     registry.codex.state.installed = true
     registry.codex.state.connected = true
@@ -92,10 +94,12 @@ test("checks all providers immediately and every five minutes, with no login or 
     if (args[0] === "models") return "gemini-test  Gemini fixture model"
     return "Account quotas available"
   })
+  const poll = vi.spyOn(registry, "refresh")
   try {
     registry.startPolling()
     registry.startPolling()
-    await vi.advanceTimersByTimeAsync(0)
+    const initial = poll.mock.results.at(-1)
+    if (initial?.type === "return") await initial.value
     expect(codex).toHaveBeenCalledTimes(1)
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(resolver).toHaveBeenCalledTimes(2)
@@ -104,12 +108,14 @@ test("checks all providers immediately and every five minutes, with no login or 
     await vi.advanceTimersByTimeAsync(299_999)
     expect(codex).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
+    const periodic = poll.mock.results.at(-1)
+    if (periodic?.type === "return") await periodic.value
     expect(codex).toHaveBeenCalledTimes(2)
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(resolver).toHaveBeenCalledTimes(4)
     expect(command.mock.calls.filter(([, args]) => args.includes("/usage"))).toHaveLength(2)
     expect(command.mock.calls.some(([, args]) => args.includes("login") || args.includes("--json-schema"))).toBe(false)
-    registry.configure(ProviderSettingsSchema.parse({ id: "antigravity", displayName: "Antigravity", binaryPath: "/fixture-cli", enabled: false }))
+    await registry.disconnect("antigravity")
     await registry.refresh("antigravity")
     expect(registry.statuses.find((provider) => provider.id === "antigravity")?.connected).toBe(false)
     expect(command.mock.calls.filter(([, args]) => args.includes("/usage"))).toHaveLength(2)
@@ -118,6 +124,7 @@ test("checks all providers immediately and every five minutes, with no login or 
     expect(codex).toHaveBeenCalledTimes(2)
   } finally {
     registry.close()
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
@@ -140,7 +147,8 @@ test("manual checks reuse pending checks and skip providers during sign-in or af
 })
 
 test("CLI checks discover installation separately from connection and notice removal", async () => {
-  const registry = new ProviderRegistry("/tmp/edu-provider-installation", "unused", () => {})
+  const directory = await mkdtemp(join(tmpdir(), "edu-installation-test-"))
+  const registry = new ProviderRegistry(directory, "unused", () => {})
   const resolver = vi.spyOn(cli, "resolveCliExecutable").mockRejectedValue(new Error("Not installed"))
   const command = vi.spyOn(cli, "runCliCommand").mockResolvedValue(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }))
   try {
@@ -159,6 +167,7 @@ test("CLI checks discover installation separately from connection and notice rem
     expect(registry.statuses.find((provider) => provider.id === "claude")?.error).toBeUndefined()
   } finally {
     registry.close()
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
@@ -179,6 +188,39 @@ test("OpenRouter checks invalidate a revoked account key and recover after recon
     await registry.refresh("openrouter")
     expect(registry.statuses.find((provider) => provider.id === "openrouter")?.connected).toBe(true)
     expect(registry.statuses.find((provider) => provider.id === "openrouter")?.error).toBeUndefined()
+  } finally {
+    registry.close()
+  }
+})
+
+
+test("a pending account check cannot undo an explicit disconnect", async () => {
+  const registry = new ProviderRegistry("/tmp/edu-disconnect-race", "unused", () => {})
+  let hasKey = true
+  vi.spyOn(registry.openrouter, "load").mockImplementation(async () => { registry.openrouter.connected = hasKey })
+  vi.spyOn(registry.openrouter, "key").mockResolvedValue("test-key")
+  const disconnect = vi.spyOn(registry.openrouter, "disconnect").mockImplementation(async () => {
+    hasKey = false
+    registry.openrouter.connected = false
+  })
+  let finish = () => {}
+  const account = new Promise<Response>((resolve) => { finish = () => resolve(Response.json({ data: { is_free_tier: false } })) })
+  const fetcher = vi.fn(async (url: Parameters<typeof fetch>[0]) => {
+    if (url === "https://openrouter.ai/api/v1/key") return account
+    return Response.json({ data: [] })
+  })
+  vi.stubGlobal("fetch", fetcher)
+  try {
+    const checking = registry.refresh("openrouter")
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
+    const disconnecting = registry.disconnect("openrouter")
+    expect(disconnect).not.toHaveBeenCalled()
+    finish()
+    await Promise.all([checking, disconnecting])
+    expect(registry.openrouter.connected).toBe(false)
+    await registry.refresh("openrouter")
+    expect(registry.openrouter.connected).toBe(false)
+    expect(fetcher.mock.calls.filter(([url]) => url === "https://openrouter.ai/api/v1/key")).toHaveLength(1)
   } finally {
     registry.close()
   }

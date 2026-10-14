@@ -120,6 +120,10 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(page.getByLabel("Binary path", { exact: true })).toHaveAttribute("placeholder", "/absolute/path/to/claude")
     await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "Back", exact: true }).click()
+    await expect.poll(async () => page.evaluate(async () => {
+      if (!window.prune) throw new Error("Missing desktop bridge")
+      return (await window.prune.snapshot()).providers.every((provider) => !provider.loading && !provider.connecting)
+    }), { timeout: 30_000 }).toBe(true)
     const pickerSnapshot = await page.evaluate(async () => {
       if (!window.prune) throw new Error("Missing desktop bridge")
       return window.prune.snapshot()
@@ -492,7 +496,7 @@ test("existing chats can set up unconnected providers directly from the model pi
       await provider.click()
       const setup = page.getByRole("region", { name: `Set up ${name}` })
       await expect(setup.getByRole("heading", { name: "Setup", exact: true })).toBeVisible()
-      await expect(setup.getByRole("link", { name: "Install CLI", exact: true })).toBeVisible()
+      await expect(setup.getByRole("img", { name: "Installation complete", exact: true })).toBeVisible()
       await expect(setup.getByRole("listitem")).toHaveCount(2)
       await setup.getByRole("button", { name: "Connect", exact: true }).click()
       await expect(page.getByText(`Start a new chat to use ${name}.`, { exact: true })).toBeVisible()
@@ -540,7 +544,7 @@ test("provider settings show simple setup and keep failures beside the controls 
     const connection = page.getByRole("region", { name: "Antigravity connection" })
     await expect(connection.getByRole("heading", { name: "Setup", exact: true })).toBeVisible()
     await expect(connection.getByRole("listitem")).toHaveCount(2)
-    await expect(connection.getByRole("link", { name: "Install CLI", exact: true })).toHaveAttribute("href", "https://antigravity.google/docs/cli/install")
+    await expect(connection.getByRole("img", { name: "Installation complete", exact: true })).toBeVisible()
     const heading = page.getByRole("heading", { name: "Provider", exact: true })
     const connect = connection.getByRole("button", { name: "Connect", exact: true })
     const beforeHeading = await heading.boundingBox()
@@ -563,6 +567,57 @@ test("provider settings show simple setup and keep failures beside the controls 
     await expect(page.getByRole("alert")).toHaveCount(0)
     await page.getByRole("button", { name: "Appearance", exact: true }).click()
     await expect(page.getByRole("alert")).toHaveCount(0)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+
+test("provider setup rechecks installation and shows completion beside each step and provider", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-setup-checks-"))
+  const bin = join(directory, "bin")
+  const binaryPath = join(bin, "agy")
+  await mkdir(bin)
+  const executable = resolve("tests/fixtures/provider-cli.mjs")
+  await chmod(executable, 0o755)
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  await repository.mutate((workspace) => {
+    workspace.providerSettings.push({ id: "antigravity", displayName: "Antigravity", binaryPath, enabled: false })
+  })
+  const { ELECTRON_RUN_AS_NODE: _nodeMode, ELECTRON_RENDERER_URL: _rendererUrl, ...environment } = process.env
+  const app = await _electron.launch({
+    executablePath: process.env.PRUNE_PACKAGED_APP,
+    args: process.env.PRUNE_PACKAGED_APP ? [] : [resolve(".")],
+    env: { ...environment, PRUNE_DATA_DIR: directory },
+  })
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("button", { name: "Providers", exact: true }).click()
+    const connection = page.getByRole("region", { name: "Antigravity connection" })
+    const recheck = connection.getByRole("button", { name: "Recheck Antigravity setup", exact: true })
+    const provider = page.getByRole("button", { name: "Antigravity", exact: true })
+    await expect(connection.getByRole("img", { name: "Installation incomplete", exact: true })).toBeVisible()
+    await expect(connection.getByRole("link", { name: "Install CLI", exact: true })).toBeVisible()
+    await expect(recheck).toBeEnabled()
+    await symlink(executable, binaryPath)
+    await recheck.click()
+    await expect(connection.getByRole("img", { name: "Installation complete", exact: true })).toBeVisible()
+    await expect(connection.getByText("CLI installed", { exact: true })).toBeVisible()
+    await expect(connection.getByRole("img", { name: "Account not connected", exact: true })).toBeVisible()
+    await connection.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(connection.getByRole("img", { name: "Account connected", exact: true })).toBeVisible()
+    await expect(provider).toHaveAttribute("aria-description", "Connected")
+    await expect(provider.locator("svg")).toBeVisible()
+    await expect(page.getByText("All providers are checked every 5 minutes.", { exact: true })).toBeVisible()
+    await rm(binaryPath)
+    await recheck.click()
+    await expect(connection.getByRole("img", { name: "Installation incomplete", exact: true })).toBeVisible()
+    await expect(connection.getByRole("img", { name: "Account not connected", exact: true })).toBeVisible()
+    await expect(provider).toHaveAttribute("aria-description", "Setup incomplete")
+    await expect(provider.locator("svg")).toHaveCount(0)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

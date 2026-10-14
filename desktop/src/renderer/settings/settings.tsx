@@ -303,7 +303,7 @@ function ProviderEditor({ provider }: {
             <input id="provider-binary-path" className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm disabled:text-muted-foreground" value={binaryPath} disabled={busy || provider.id === "openrouter"} placeholder={binaryPlaceholder} maxLength={4096} onChange={(event) => { setBinaryPathDraft(event.target.value); setSaved(false); setSaveError(undefined) }} />
           </div>
           <p className="mt-3 text-xs leading-5 text-muted-foreground">{binaryHelp}</p>
-          <button type="submit" className="mt-5 h-9 rounded-lg border border-border px-3 text-sm font-medium hover:bg-accent disabled:opacity-50" disabled={busy || !displayName.trim()}>Save changes</button>
+          <button type="submit" className="mt-5 h-9 rounded-lg border border-border px-3 text-sm font-medium hover:bg-accent disabled:opacity-50" disabled={busy || provider.loading || provider.connecting || !displayName.trim()}>Save changes</button>
           <div className="mt-3 h-16 overflow-y-auto">
             {saved && <span className="flex items-center gap-1 text-xs text-muted-foreground" role="status"><Check className="size-3.5" /> Saved</span>}
             {saveError && <p role="alert" className="text-sm leading-5 text-destructive">{saveError}</p>}

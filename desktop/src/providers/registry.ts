@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { z } from "zod"
 import { shell } from "electron"
@@ -35,6 +36,7 @@ const OpenRouterModelsSchema = z.object({
 export class ProviderRegistry {
   private pollingTimer?: ReturnType<typeof setInterval>
   private refreshTasks = new Map<z.infer<typeof ProviderIdSchema>, Promise<void>>()
+  private disconnecting = new Set<z.infer<typeof ProviderIdSchema>>()
   private closed = false
   private titleModel?: z.infer<typeof ProviderModelSchema>
   readonly openrouter
@@ -113,7 +115,7 @@ export class ProviderRegistry {
     await Promise.all(ids.map((id) => {
       const pending = this.refreshTasks.get(id)
       if (pending) return pending
-      if (this.statuses.some((provider) => provider.id === id && provider.connecting)) return
+      if (this.disconnecting.has(id) || this.statuses.some((provider) => provider.id === id && provider.connecting)) return
       const task = (async () => {
         try {
           if (id === "codex") await this.codex.refresh()
@@ -155,6 +157,7 @@ export class ProviderRegistry {
       }
       provider.installed = true
       const connection = { provider: provider.id, executable, directory: join(this.directory, "providers", provider.id) }
+      await mkdir(connection.directory, { recursive: true, mode: 0o700 })
       if (provider.id === "claude") {
         const status = z.object({ loggedIn: z.boolean(), authMethod: z.string().optional(), email: z.string().optional() }).parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
         provider.connected = status.loggedIn && status.authMethod === "claude.ai" && this.settings.some((item) => item.id === "claude" && item.enabled)
@@ -192,8 +195,11 @@ export class ProviderRegistry {
     this.openrouterState.error = undefined
     this.notify()
     try {
+      const previouslyConnected = this.openrouter.connected
       await this.openrouter.load()
-      if (this.openrouter.connected) {
+      const hasKey = this.openrouter.connected
+      this.openrouter.connected = previouslyConnected && hasKey
+      if (hasKey) {
         const key = await this.openrouter.key()
         const account = await fetch("https://openrouter.ai/api/v1/key", {
           headers: { Authorization: `Bearer ${key}` },
@@ -205,6 +211,7 @@ export class ProviderRegistry {
         }
         if (!account.ok) throw new Error("Could not check OpenRouter. Refresh to try again.")
         z.object({ data: z.object({ is_free_tier: z.boolean() }) }).parse(await account.json())
+        this.openrouter.connected = true
       }
       const response = await fetch("https://openrouter.ai/api/v1/models", {
         signal: AbortSignal.any([this.cliAbort.signal, AbortSignal.timeout(20_000)]),
@@ -269,6 +276,7 @@ export class ProviderRegistry {
   }
 
   async connect(id: z.infer<typeof ProviderIdSchema>) {
+    if (this.disconnecting.has(id)) throw new Error("Wait for this provider to finish disconnecting.")
     await this.refreshTasks.get(id)
     if (id === "claude" || id === "antigravity") {
       const provider = this.cliStates.find((item) => item.id === id)
@@ -297,6 +305,8 @@ export class ProviderRegistry {
           const result = await runCliCommand(connection, cliPromptArguments(connection, JSON.stringify(z.toJSONSchema(schema))), "Return ready=true.", undefined, 5 * 60_000, this.cliAbort.signal)
           if (!schema.parse(parseCliResponse(id, result)).ready) throw new Error("Antigravity is not ready. Sign in with agy and try again.")
         }
+        const settings = this.settings.find((item) => item.id === id)
+        if (settings) settings.enabled = true
         provider.connected = true
         provider.installed = true
         provider.checkedAt = new Date().toISOString()
@@ -328,15 +338,24 @@ export class ProviderRegistry {
   }
 
   async disconnect(id: z.infer<typeof ProviderIdSchema>) {
-    if (id === "claude" || id === "antigravity") {
-      const provider = this.cliStates.find((item) => item.id === id)
-      if (provider) provider.connected = false
+    this.disconnecting.add(id)
+    try {
+      // Let a pending check finish before disconnecting so its result cannot restore the account.
+      await this.refreshTasks.get(id)
+      if (id === "claude" || id === "antigravity") {
+        const settings = this.settings.find((item) => item.id === id)
+        if (settings) settings.enabled = false
+        const provider = this.cliStates.find((item) => item.id === id)
+        if (provider) provider.connected = false
+        this.notify()
+        return
+      }
+      if (id === "codex") await this.codex.disconnect()
+      else await this.openrouter.disconnect()
       this.notify()
-      return
+    } finally {
+      this.disconnecting.delete(id)
     }
-    if (id === "codex") await this.codex.disconnect()
-    else await this.openrouter.disconnect()
-    this.notify()
   }
 
   async connection(runner: z.infer<typeof RunnerSchema>) {
