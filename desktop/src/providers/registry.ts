@@ -166,7 +166,7 @@ export class ProviderRegistry {
       } else {
         const output = await runCliCommand(connection, ["models"], "", undefined, 15_000, this.cliAbort.signal)
         const models = output.split("\n").flatMap((line) => {
-          const match = /^\s*([a-z][a-z0-9.-]+)\s{2,}(.+?)\s*$/.exec(line)
+          const match = /^\s*([a-z][a-z0-9.-]+)(?:\t+| {2,})(.+?)\s*$/.exec(line)
           if (!match) return []
           return [ProviderModelSchema.parse({ id: match[1], name: match[2] })]
         })

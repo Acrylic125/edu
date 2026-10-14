@@ -225,3 +225,27 @@ test("a pending account check cannot undo an explicit disconnect", async () => {
     registry.close()
   }
 })
+
+
+test("Antigravity discovers tab-separated models from the CLI catalog", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-agy-models-"))
+  const registry = new ProviderRegistry(directory, "unused", () => {}, [
+    ProviderSettingsSchema.parse({ id: "antigravity", displayName: "Antigravity", binaryPath: "/fixture-cli", enabled: true }),
+  ])
+  vi.spyOn(cli, "resolveCliExecutable").mockResolvedValue("/fixture-cli")
+  vi.spyOn(cli, "runCliCommand").mockImplementation(async (_connection, args) => {
+    if (args[0] === "models") return "Fetching available models...\n gemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n"
+    return "Account quotas available"
+  })
+  try {
+    await registry.refresh("antigravity")
+    expect(registry.statuses.find((provider) => provider.id === "antigravity")?.models).toMatchObject([
+      { id: "default", name: "Default model" },
+      { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
+    ])
+  } finally {
+    registry.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
