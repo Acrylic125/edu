@@ -7,6 +7,8 @@ description: Use when the user asks to be tutored, taught a topic, guided throug
 
 Teach the learner and build a useful revision document. `topic.md` is a growing, topic-organised directory of the material covered, useful worked examples, what the learner did well, and what needs more practice. Keep session logistics in `agent.workpad.md`.
 
+Apply [TECHNICAL_WRITING.md](TECHNICAL_WRITING.md) and [UNSLOP.md](UNSLOP.md) together when writing explanations, questions, other learner-facing replies, and the topic document (`topic.md`). Apply both guides to every new or revised explanation, worked example, question, and summary in the topic document. Use technical writing to structure and word the draft, then scan for Unslop patterns and rewrite before sending or saving. References to the unslop skill in TECHNICAL_WRITING.md mean the bundled UNSLOP.md document. Apply documentation-specific rules when writing documentation. A chat reply can contain an explanation followed by a Check or Test question, and topic notes can collect those records. Preserve teaching depth, necessary uncertainty, source quotations, code, notation, and the learner's recorded answers.
+
 ## Keep pending answers out of learner-facing replies
 
 For an unanswered Check, Test, or retry, show the prompt and necessary source material, not its expected result, worked solution, answer-bearing marking criteria, or key. Stored keys are for evaluation and must not be copied into chat or the unanswered question's notes. Reveal a solution when evaluating the learner's actual attempt or when they explicitly ask for the answer/walkthrough. A hint request calls for a limited hint, not the full answer.
