@@ -6,6 +6,7 @@ import { useTopicViews } from "./topic-views"
 export const useWorkspace = create<{
   snapshot: Snapshot
   loaded: boolean
+  providerSetupComplete: boolean
   error: string | null
   setSnapshot: (snapshot: Snapshot) => void
   setError: (error: string | null) => void
@@ -19,11 +20,17 @@ export const useWorkspace = create<{
     providers: [],
   },
   loaded: false,
+  providerSetupComplete: false,
   error: null,
   setSnapshot: (snapshot) => {
     useChatTabs.getState().reconcile(snapshot.chats.map((chat) => chat.id))
     useTopicViews.getState().reconcile(snapshot.topics.map((topic) => topic.id))
-    set({ snapshot, loaded: true })
+    // Keep access for this window after setup, even if a provider later disconnects.
+    set((state) => ({
+      snapshot,
+      loaded: true,
+      providerSetupComplete: state.providerSetupComplete || snapshot.providers.some((provider) => provider.connected),
+    }))
   },
   setError: (error) => set({ error }),
 }))

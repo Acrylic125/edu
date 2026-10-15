@@ -38,7 +38,7 @@ import {
   WorkspaceSidebar,
   useWorkspaceLayout,
 } from "@edu/ui/workspace"
-import { DesktopSettings } from "./settings/settings"
+import { DesktopSettings, ProviderConnectionSetup } from "./settings/settings"
 import appIcon from "./assets/app-icon.png"
 import { useWorkspace, desktop, desktopErrorMessage } from "./store"
 import { useChatTabs } from "./chat-tabs"
@@ -54,7 +54,7 @@ import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
 
 export function App() {
-  const { snapshot, loaded, error, setError } = useWorkspace()
+  const { snapshot, loaded, providerSetupComplete, error, setError } = useWorkspace()
   const [setupProvider, setSetupProvider] = useState<Snapshot["providers"][number]["id"]>()
   const [view, setView] = useState<"learn" | "settings">("learn")
   const { activeId: topicId, select: selectTopic } = useTopicViews()
@@ -113,6 +113,9 @@ export function App() {
   )
   const chatRunning = chatRunnerBusy && !!chat && runtime.chatId === chat.id
   const chatError = chat && runtime?.chatId === chat.id ? runtime.error : undefined
+  const newModelConnected = snapshot.providers.some(
+    (provider) => provider.id === newModel.provider && provider.connected,
+  )
   const chatModelConnected = snapshot.providers.some(
     (provider) => provider.id === chatModel.provider && provider.connected,
   )
@@ -240,7 +243,7 @@ export function App() {
 
   async function sendChat() {
     let content = (drafts[chatKey] ?? "").trim()
-    if (chatRunnerBusy || busy) return
+    if (chatRunnerBusy || busy || !chatModelConnected) return
     if (!content) {
       if (!chat?.materials.length) return
       content = `Help me understand the attached materials: ${chat.materials.map((material) => material.name).join(", ")}.`
@@ -262,7 +265,7 @@ export function App() {
 
   async function startTopic() {
     let content = (drafts["new-topic"] ?? "").trim()
-    if (newRunnerBusy || busy) return
+    if (newRunnerBusy || busy || !newModelConnected) return
     if (!content) {
       if (topicMaterials.length === 0) return
       content = `Help me learn the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
@@ -335,6 +338,8 @@ export function App() {
         await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
       })
     }
+    const provider = snapshot.providers.find((provider) => provider.id === model.provider)
+    const providerDisconnected = !provider?.connected && !provider?.loading
     const submittingComposer = submitting === key
     let submitLabel = "Send message"
     if (submittingComposer) {
@@ -384,29 +389,40 @@ export function App() {
           void submit()
         }}
         attachments={
-          materials.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-              {materials.map((material) => (
-                <span
-                  key={material.id}
-                  className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
-                >
-                  <FileText className="size-3.5 shrink-0" />
-                  <span className="truncate">{material.name}</span>
-                  {mode === "topic" && (
-                    <button
-                      type="button"
-                      aria-label={`Remove ${material.name}`}
-                      disabled={busy}
-                      onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-          )
+          <>
+            {providerDisconnected && (
+              <div role="alert" className="m-3 flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <span>{provider?.name ?? model.provider} is disconnected. Connect it or choose a connected provider before sending.</span>
+                <button type="button" className="shrink-0 font-medium underline underline-offset-2" onClick={() => {
+                  setSetupProvider(model.provider)
+                  setView("settings")
+                }}>Connect provider</button>
+              </div>
+            )}
+            {materials.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+                {materials.map((material) => (
+                  <span
+                    key={material.id}
+                    className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
+                  >
+                    <FileText className="size-3.5 shrink-0" />
+                    <span className="truncate">{material.name}</span>
+                    {mode === "topic" && (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${material.name}`}
+                        disabled={busy}
+                        onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
         }
         input={
           <TopicMentionInput
@@ -479,7 +495,7 @@ export function App() {
                 type="submit"
                 aria-label={submitLabel}
                 aria-busy={submittingComposer}
-                disabled={(!draft.trim() && materials.length === 0) || busy || runnerBusy}
+                disabled={(!draft.trim() && materials.length === 0) || busy || runnerBusy || !provider?.connected}
               >
                 {submittingComposer ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
               </button>
@@ -704,6 +720,10 @@ export function App() {
         chat={chatPane}
       />
     )
+  }
+
+  if (loaded && !providerSetupComplete) {
+    return <ProviderConnectionSetup snapshot={snapshot} />
   }
 
   if (loaded && view === "settings") {

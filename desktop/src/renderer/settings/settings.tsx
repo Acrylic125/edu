@@ -32,6 +32,18 @@ export function DesktopSettings({ snapshot, onBack, initialProvider }: {
   )
 }
 
+export function ProviderConnectionSetup({ snapshot }: { snapshot: Snapshot }) {
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto bg-card" aria-label="Provider setup required">
+      <div className="mx-auto max-w-4xl px-8 py-14 lg:px-16 lg:py-16">
+        <h1 className="text-2xl font-medium tracking-tight">Connect a provider to get started</h1>
+        <p className="mt-3 mb-10 text-sm text-muted-foreground">Connect at least one provider before continuing to your workspace.</p>
+        <ProviderSettings snapshot={snapshot} />
+      </div>
+    </main>
+  )
+}
+
 function SettingsSidebar({
   section,
   onSection,
