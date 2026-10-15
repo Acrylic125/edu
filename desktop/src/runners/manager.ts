@@ -246,7 +246,9 @@ export class RunnerManager {
         assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
         confirmTopicId: input.confirmTopicId,
         openedTopicId: input.openedTopicId,
-        behaviourMemory: this.repository.stateSnapshot.behaviourMemory,
+        workspaceTopics: this.repository.stateSnapshot.topics.map((topic) => ({
+          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes,
+        })),
       })
       this.notify()
     } finally {
@@ -321,11 +323,6 @@ export class RunnerManager {
         context.includes(update.topicId),
       )
       await this.repository.mutate((workspace) => {
-        if (event.behaviourUpdate) {
-          if (workspace.behaviourMemory !== event.behaviourUpdate.expected)
-            throw new Error("Tutor preferences changed during this turn. Retry to use the latest preferences.")
-          workspace.behaviourMemory = event.behaviourUpdate.content
-        }
         for (const update of updates) {
           const topic = workspace.topics.find((item) => item.id === update.topicId)
           if (topic && update.expected && JSON.stringify(topic.learning) !== JSON.stringify(update.expected))

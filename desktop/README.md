@@ -79,23 +79,25 @@ original deck. Attach a PDF export when the tutor needs to inspect slide visuals
 
 ## Tutor memory
 
-EdU uses the bundled Tutor Me skill for learning records and tutoring preferences.
-Current difficulties live beside their concept in `topics/<topic-id>/topic.md`,
+EdU uses the bundled Tutor Me skill for learning records.
+Past Mistakes entries live beside their concept in `topics/<topic-id>/topic.md`,
 with stable IDs, current status, concise assessments, and links to the original
 attempts. Repeated evidence revises the same difficulty while preserving the
 question and actual learner answers. Assisted performance is distinguished from
-independent success; later evidence can resolve or reopen a difficulty. Tutor
+independent success; later evidence can resolve or reopen a mistake. Resolved
+entries remain in Past Mistakes with their original evidence. Tutor
 errors and contested answers belong in correction/deliberation records.
 
-Explicit reusable preferences, such as explanation pacing or source usage, live
-in `workspace/tutor-memory/behaviour.md`. They are loaded into every tutoring
-turn across chats, topics, and providers. Topic-specific learning needs remain
-in topic notes, and temporary remediation and pending questions stay in the
-private handoff. These files can be edited locally; the next turn refreshes them.
+For cross-topic reviews, the tutor receives a directory of all workspace topics
+and uses `read_topic_notes` to retrieve their notes in bounded pages, including
+archived topics. Historical attempts remain available after a difficulty is
+resolved. Retrieval excludes private handoffs and answer keys and does not grant
+write access to untagged topics. Topic notes can be edited locally; the next turn
+refreshes them.
 
 Existing-topic updates use bounded note revisions and changed handoff fields.
-Preferences, topic updates, the chat handoff, and the reply commit together before
-the reply appears. Concurrent changes to preferences or topic evidence reject a
+Topic updates, the chat handoff, and the reply commit together before
+the reply appears. Concurrent changes to topic evidence reject a
 stale turn with a retry message. SQLite recovery restores committed files after
 an interrupted write. The skill's memory records remain prose; their meaning
 and evidence-based updates are assessed by the selected tutor model.
@@ -167,7 +169,7 @@ runner operations require Electron.
   unseen native output. An explicitly missing native thread is reconstructed;
   transient provider errors are reported without silently replacing the thread.
   Threads created with older study tools are reconstructed from committed history
-  once so the new memory and revision tools are registered.
+  once so the new retrieval and revision tools are registered.
   Providers without native session support receive the full saved transcript.
   Its bundled code-mode host stays enabled because some models require it to
   call those study tools; disabling it silently hides the tools from those models.
@@ -193,9 +195,7 @@ runner operations require Electron.
   discovered from this folder and refreshed before snapshots and saves. Topic
   updates also enter the SQLite transaction; a pending-files marker lets startup
   recover their files after an interrupted write. Files are written through
-  verified temporary files and atomic rename. Behaviour memory uses the same
-  transaction and recovery mechanism, with `tutor-memory/behaviour.md` as its
-  editable mirror. Native session bindings and private keys are omitted from public chats.
+  verified temporary files and atomic rename. Native session bindings and private keys are omitted from public chats.
 - Existing `workspace.json` and per-chat `chat.json` data migrate to SQLite on
   load. After a successful commit and database read-back verification, migration
   sources (`workspace.json`, `workspace.legacy.json`, `chat.json`) and the obsolete
@@ -218,7 +218,7 @@ runner operations require Electron.
   is redacted.
 - Tutor Me is vendored in `resources/tutor-me/`. Its shell/Python bookkeeping
   instructions map to `read_material`, `revise_topic_state`, `save_topic_state`,
-  `save_behaviour_memory`, and the verified save transaction. Source text is
+  `read_topic_notes`, and the verified save transaction. Source text is
   extracted during import; unchanged page images are reused across turns, while
   missing, corrupt, or older images are rendered again. Pending clarification and
   contested assessments retain their question and checked key like active Checks.

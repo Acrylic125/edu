@@ -13,7 +13,6 @@ import {
 import { join } from "node:path"
 import {
   LearningStateSchema,
-  BehaviourMemorySchema,
   ChatSchema,
   LegacyWorkspaceSchema,
   MaterialSchema,
@@ -108,11 +107,11 @@ export class WorkspaceRepository {
     if (saved) {
       this.state = saved.state
       if (saved.filesPending) {
-        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }), true)
+        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
         await this.removeRecoveredFiles(saved.removedFiles)
         this.database.filesSynced()
       }
-      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
+      this.state = { ...this.state, topics: await this.readTopics() }
       await this.pruneObsoleteFiles()
       return this.state
     }
@@ -125,7 +124,6 @@ export class WorkspaceRepository {
         topics: await this.readTopics(),
         chats: await this.readChats(),
       })
-      this.state.behaviourMemory = await this.readBehaviourMemory()
       await this.commit(this.state)
     } else {
       const raw = await readOptionalFile(legacyPath)
@@ -160,7 +158,6 @@ export class WorkspaceRepository {
           model: "default",
         })
       }
-      state.behaviourMemory = BehaviourMemorySchema.parse(await readOptionalFile(join(this.directory, "tutor-memory", "behaviour.md")) ?? state.behaviourMemory)
       await this.commit(state)
       // Keep the legacy transaction until every migrated topic and chat can be read back.
       this.state = WorkspaceSchema.parse({ ...this.state, topics: await this.readTopics(), chats: this.database.load()?.state.chats ?? [] })
@@ -182,9 +179,6 @@ export class WorkspaceRepository {
     for (const name of ["workspace.json", "workspace.legacy.json", "settings.json"])
       await rm(join(this.directory, name), { force: true })
     const directories = [this.directory]
-    const memoryDirectory = join(this.directory, "tutor-memory")
-    if (await readOptionalFile(join(memoryDirectory, "behaviour.md")) !== undefined)
-      directories.push(memoryDirectory)
     for (const collection of ["topics", "chats"] as const) {
       const root = join(this.directory, collection)
       await mkdir(root, { recursive: true })
@@ -205,7 +199,7 @@ export class WorkspaceRepository {
     for (const directory of directories) {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         if (!entry.isFile()) continue
-        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.md|agent\.workpad\.md|behaviour\.md)\.(.+)\.tmp$/.exec(entry.name)
+        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.md|agent\.workpad\.md)\.(.+)\.tmp$/.exec(entry.name)
         if (match && IdSchema.safeParse(match[1]).success)
           await rm(join(directory, entry.name), { force: true })
       }
@@ -258,10 +252,6 @@ export class WorkspaceRepository {
     return topics.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
   }
 
-  private async readBehaviourMemory() {
-    return BehaviourMemorySchema.parse(await readOptionalFile(join(this.directory, "tutor-memory", "behaviour.md")) ?? "")
-  }
-
   private async readChats() {
     const root = join(this.directory, "chats")
     await mkdir(root, { recursive: true })
@@ -280,7 +270,7 @@ export class WorkspaceRepository {
   async refreshTopics() {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
+      this.state = { ...this.state, topics: await this.readTopics() }
     })
     this.writes = operation.catch(() => {})
     return operation
@@ -333,7 +323,7 @@ export class WorkspaceRepository {
   async mutate(update: (state: Workspace) => void) {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics(), behaviourMemory: await this.readBehaviourMemory() }
+      this.state = { ...this.state, topics: await this.readTopics() }
       const next = structuredClone(this.state)
       update(next)
       await this.commit(next)
@@ -365,7 +355,7 @@ export class WorkspaceRepository {
   private async recoverFiles() {
     const saved = this.database.load()
     if (!saved?.filesPending) return
-    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }), true)
+    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
     await this.removeRecoveredFiles(saved.removedFiles)
     this.database.filesSynced()
     this.state = saved.state
@@ -378,17 +368,7 @@ export class WorkspaceRepository {
     }
   }
 
-  private async syncFiles(validated: Workspace, previousState: Workspace, recover = false) {
-    if (recover || validated.behaviourMemory !== previousState.behaviourMemory) {
-      const directory = join(this.directory, "tutor-memory")
-      const path = join(directory, "behaviour.md")
-      if (validated.behaviourMemory) {
-        await mkdir(directory, { recursive: true, mode: 0o700 })
-        await writeAtomic(path, validated.behaviourMemory)
-      } else {
-        await rm(path, { force: true })
-      }
-    }
+  private async syncFiles(validated: Workspace, previousState: Workspace) {
     for (const topic of validated.topics) {
       const previous = previousState.topics.find((item) => item.id === topic.id)
       const directory = join(this.directory, "topics", topic.id)

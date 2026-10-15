@@ -41,23 +41,19 @@ if (args[0] === "auth") {
       }) }] }
     } else action = { reply: "Here is your learning plan. Confirm it to begin.", calls: [] }
     const request = transcript.findLast((item) => item.role === "user")?.content
-    if (request === "Remember to explain in small steps across all my lessons.") {
-      const memoryLine = input.split("\n").find((line) => line.startsWith("Workspace behaviour memory: "))
+    if (request === "Across all topics, what are the past mistakes I have made?") {
+      const directoryLine = input.split("\n").find((line) => line.startsWith("Workspace topic directory: "))
       const handoffLine = input.split("\n").find((line) => line.startsWith("Chat handoff: "))
-      if (!memoryLine || !handoffLine) throw new Error("Missing tutor memory context")
-      if (!results.some((item) => item.tool === "save_behaviour_memory" && !item.result.startsWith("Tool error:"))) {
-        action = { reply: "", calls: [
-          { name: "save_behaviour_memory", arguments: JSON.stringify({ expected: JSON.parse(memoryLine.slice("Workspace behaviour memory: ".length)), content: "# Tutor preferences\n\n## Explanation and pacing\n\nExplain in small steps." }) },
-          { name: "save_learning_state", arguments: handoffLine.slice("Chat handoff: ".length) },
-        ] }
-      } else action = { reply: "I’ll explain in small steps.", calls: [] }
-    } else if (request === "What tutor preference is saved?") {
-      const memoryLine = input.split("\n").find((line) => line.startsWith("Workspace behaviour memory: "))
-      const handoffLine = input.split("\n").find((line) => line.startsWith("Chat handoff: "))
-      if (!memoryLine || !handoffLine) throw new Error("Missing tutor memory context")
-      if (!results.some((item) => item.tool === "save_learning_state" && !item.result.startsWith("Tool error:")))
+      if (!directoryLine || !handoffLine) throw new Error("Missing workspace history context")
+      const topics = JSON.parse(directoryLine.slice("Workspace topic directory: ".length))
+      const records = results.filter((item) => item.tool === "read_topic_notes" && !item.result.startsWith("Tool error:"))
+      if (records.length < topics.length) {
+        action = { reply: "", calls: topics.map((topic) => ({ name: "read_topic_notes", arguments: JSON.stringify({ topicId: topic.id }) })) }
+      } else if (!results.some((item) => item.tool === "save_learning_state" && !item.result.startsWith("Tool error:"))) {
         action = { reply: "", calls: [{ name: "save_learning_state", arguments: handoffLine.slice("Chat handoff: ".length) }] }
-      else action = { reply: `Saved tutor preferences:\n${JSON.parse(memoryLine.slice("Workspace behaviour memory: ".length))}`, calls: [] }
+      } else {
+        action = { reply: records.map((item) => { const record = JSON.parse(item.result); return `${record.title}: ${record.notes}` }).join("\n\n"), calls: [] }
+      }
     }
   }
   if (args.includes("--agent")) console.log(JSON.stringify({ status: "SUCCESS", structured_output: action }))

@@ -1,5 +1,6 @@
 import { createServer } from "node:http"
 import { randomUUID } from "node:crypto"
+import { z } from "zod"
 import { copyFile, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -98,6 +99,7 @@ function job() {
   return {
     chat,
     topics: [{ ...topic, assetDirectory: resolve("tests") }],
+    workspaceTopics: [],
     runner,
     apiKey: "test-only",
     skillDirectory: resolve("resources/tutor-me"),
@@ -389,47 +391,14 @@ test("OpenRouter title requests use the inexpensive model and bound the request"
   expect(mock.requests).toHaveLength(1)
 })
 
-test("loads workspace behaviour memory and stages explicit feedback with the original revision", async () => {
-  const input = { ...job(), behaviourMemory: "# Tutor preferences\n\nUse the lecture's own examples." }
-  const revised = input.behaviourMemory + "\nExplain in smaller steps."
-  const final = revised + "\nAsk one question at a time."
-  const { client, requests } = await provider([
-    call("save_behaviour_memory", { expected: input.behaviourMemory, content: revised }),
-    call("save_behaviour_memory", { expected: revised, content: final }),
-    save(input.chat.learning),
-    reply("I’ll explain in smaller steps and ask one question at a time."),
-  ])
-  const result = await runTutorTurn(input, client, () => {})
-  const session = await createTutorSession(input, () => {})
-  expect(session.instructions).toContain(JSON.stringify(input.behaviourMemory))
-  expect(requests).toHaveLength(4)
-  expect(result.behaviourUpdate).toEqual({ expected: input.behaviourMemory, content: final })
-  expect(input.behaviourMemory).not.toContain("smaller steps")
-})
-
-test("rejected preference saves must be corrected before publishing a reply", async () => {
-  const input = { ...job(), behaviourMemory: "Existing preferences" }
-  const { client, requests } = await provider([
-    call("save_behaviour_memory", { expected: "stale preferences", content: "Overwritten" }),
-    save(input.chat.learning),
-    reply("I saved your preferences."),
-    call("save_behaviour_memory", { expected: input.behaviourMemory, content: "Existing preferences\nUse smaller steps." }),
-    reply("I’ll use smaller steps."),
-  ])
-  const result = await runTutorTurn(input, client, () => {})
-  expect(requests[3]).toContain("Correct rejected saves first")
-  expect(result.reply).toBe("I’ll use smaller steps.")
-  expect(result.behaviourUpdate?.content).toBe("Existing preferences\nUse smaller steps.")
-})
-
 test("bounded difficulty revisions preserve original attempts and merge repeated evidence", async () => {
   const input = job()
   const topic = input.topics[0]
   topic.planConfirmed = true
   const attempt = "### Check C1\nQuestion: Explain limits.\nLearner answer: The function must reach the limit."
-  const difficulty = "### Current difficulties\nD1: unresolved — Confuses approaching with reaching. Evidence: C1."
+  const difficulty = "### Past Mistakes\nD1: unresolved — Confuses approaching with reaching. Evidence: C1."
   topic.learning.notes += `\n\n## Limits\n\n${attempt}\n\n${difficulty}\n\n## Materials\n\nOriginal lecture assets.`
-  const updated = "### Current difficulties\nD1: improving — Independently distinguishes approaching from reaching in C2; broader understanding unassessed. Evidence: C1, C2."
+  const updated = "### Past Mistakes\nD1: improving — Independently distinguishes approaching from reaching in C2; broader understanding unassessed. Evidence: C1, C2."
   const fresh = "### Check C2\nQuestion: Can a limit exist without reaching the value?\nLearner answer: Yes; approaching is enough."
   const { client } = await provider([
     call("revise_topic_state", {
@@ -485,8 +454,6 @@ test.each(["awaiting_clarification", "contested"] as const)("preserves pending a
   const session = await createTutorSession(input, () => {})
   await session.execute("save_learning_state", input.chat.learning)
   expect(() => session.finish(key)).toThrow("private assessment key")
-  await session.execute("save_behaviour_memory", { expected: "", content: key })
-  expect(() => session.finish("Preferences saved.")).toThrow("private assessment key")
   expect(() => LearningStateSchema.parse({ ...topic.learning, pendingQuestion: "" })).toThrow("active question")
 })
 
@@ -514,4 +481,40 @@ test("source images reuse unchanged renders and rebuild corrupt or outdated cach
   await utimes(cache, new Date(0), new Date(0))
   expect((await session.execute("read_material", request)).success).toBe(true)
   expect((await stat(cache)).mtimeMs).toBeGreaterThanOrEqual(originalTime.getTime())
+})
+
+test("pages workspace topic history completely and rejects invalid retrieval requests", async () => {
+  const input = job()
+  const topic = newTopic("Archived physics")
+  topic.archived = true
+  const notes = "Historical learner attempt. ".repeat(900) + "Resolved mistake at the end."
+  const session = await createTutorSession({ ...input, workspaceTopics: [{ id: topic.id, title: topic.title, archived: true, notes }] }, () => {})
+  const PageSchema = z.object({ notes: z.string(), nextOffset: z.number().nullable(), totalCharacters: z.number() })
+  const first = await session.execute("read_topic_notes", { topicId: topic.id })
+  expect(first.success).toBe(true)
+  const page = PageSchema.parse(JSON.parse(first.text))
+  expect(page.notes).toHaveLength(20_000)
+  expect(page.nextOffset).toBe(20_000)
+  expect(page.totalCharacters).toBe(notes.length)
+  const next = await session.execute("read_topic_notes", { topicId: topic.id, offset: page.nextOffset })
+  const tail = PageSchema.parse(JSON.parse(next.text))
+  expect(tail.nextOffset).toBe(null)
+  expect(page.notes + tail.notes).toBe(notes)
+  for (const request of [
+    { topicId: randomUUID() },
+    { topicId: topic.id, offset: notes.length + 1 },
+    { topicId: topic.id, offset: -1 },
+    { topicId: topic.id, limit: 20_001 },
+  ]) {
+    expect((await session.execute("read_topic_notes", request)).success).toBe(false)
+  }
+})
+
+test("does not expose or accept the removed behaviour memory tool", async () => {
+  const session = await createTutorSession(job(), () => {})
+  expect(session.tools.map((tool) => tool.type === "function" && tool.function.name)).not.toContain("save_behaviour_memory")
+  expect(session.instructions).not.toContain("behaviour.md")
+  expect((await session.execute("save_behaviour_memory", { expected: "", content: "Old preference" })).success).toBe(false)
+  await session.execute("save_learning_state", job().chat.learning)
+  expect(session.finish("Feedback applied.")).not.toHaveProperty("behaviourUpdate")
 })

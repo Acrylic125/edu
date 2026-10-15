@@ -57,4 +57,4 @@ When the learner is confused, identify the difficult transition and re-explain i
 
 Distinguish unclear teaching from a prerequisite gap using the learner's actual response. If the cause is uncertain, say only what the evidence supports and choose one small clarification. Offer a brief prerequisite review when needed, then return to the source section.
 
-Read [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment. A short probe can help after clarification, but it is not mandatory after every explanation. Consolidate the useful explanation and the learner's specific difficulty into the topic's notes. Keep temporary remediation steps in the workpad and reusable explicit preferences in behaviour memory.
+Read [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment. A short probe can help after clarification, but it is not mandatory after every explanation. Consolidate the useful explanation and the learner's specific difficulty into the topic's notes. Keep temporary remediation steps in the workpad. Apply explicit teaching feedback at its stated scope.

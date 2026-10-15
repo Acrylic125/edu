@@ -40,7 +40,7 @@ Sourced from: [{SHORT_SOURCE_NAME}, pg. {START}-{END}](<{SOURCE_PATH}#page={STAR
 
 {At section boundaries, consolidate demonstrated strengths and unresolved difficulties if useful. Keep each check and answer intact.}
 
-<!-- When a supported learning need exists, add a Current difficulties subsection beside its concept. Follow references/DIFFICULTY_MEMORY.md. Each entry has a stable difficulty ID, concept, current status, concise evidence-limited summary, and links to the original attempts. Revise that entry as evidence changes; preserve the historical attempts. Omit the subsection when there is no supported difficulty. -->
+<!-- When an observed learner mistake exists, add a Past Mistakes subsection beside its concept. Follow references/DIFFICULTY_MEMORY.md. Each entry has a stable difficulty ID, concept, current status, concise evidence-limited summary, and links to the original attempts. Revise that entry as evidence changes; preserve the historical attempts. Retain resolved mistakes. Omit the subsection when no learner mistake is recorded. -->
 
 ## Topic terminology
 

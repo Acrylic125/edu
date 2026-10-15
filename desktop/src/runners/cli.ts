@@ -8,7 +8,7 @@ import { createTutorSession } from "./tutor"
 const ActionSchema = z.object({
   reply: z.string().max(200_000),
   calls: z.array(z.object({
-    name: z.enum(["read_skill", "read_material", "save_topic_state", "revise_topic_state", "save_learning_state", "save_behaviour_memory"]),
+    name: z.enum(["read_skill", "read_material", "read_topic_notes", "save_topic_state", "revise_topic_state", "save_learning_state"]),
     arguments: z.string().max(350_000),
   })).max(8),
 })
@@ -36,7 +36,7 @@ Available EdU tools: ${JSON.stringify(session.tools)}`
         continue
       }
       let savesSucceeded = true
-      const readsRequested = action.calls.some((call) => call.name === "read_skill" || call.name === "read_material")
+      const readsRequested = action.calls.some((call) => call.name === "read_skill" || call.name === "read_material" || call.name === "read_topic_notes")
       for (const call of action.calls) {
         diagnostic("tool.call", { tool: call.name })
         let input: Parameters<typeof session.execute>[1]

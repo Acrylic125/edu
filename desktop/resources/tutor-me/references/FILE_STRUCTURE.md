@@ -2,8 +2,6 @@
 
 ```text
 <workspace>/
-├── tutor-memory/
-│   └── behaviour.md
 └── <topic-name>/
     ├── assets/
     │   └── answers/<check-id>/   # Original learner solution files, when supplied
@@ -19,7 +17,7 @@ A reader should be able to revise from this file without reconstructing the conv
 
 Consolidate repeated explanations and feedback under the concept they concern. Check entries are the exception to summarisation: preserve the exact question, all necessary code/data, actual learner answer, and links to original solution assets. Each has a stable ID and anchor. An unanswered check contains its question without empty answer/deliberation headings. Add deliberation only for a wrong learner answer, wrong tutor answer, or contention. Surrounding discussion remains concise study notes.
 
-Keep one current-difficulty entry per supported issue beside the relevant concept, with a stable ID, current assessment/status, and evidence links. Read [DIFFICULTY_MEMORY.md](DIFFICULTY_MEMORY.md) when creating or revising these entries. Their summaries evolve; the original attempts remain intact. Existing topics can adopt this structure when evidence changes, without a bulk rewrite of historical notes.
+Keep one entry per observed learner mistake under a `Past Mistakes` heading beside the relevant concept, with a stable ID, current assessment/status, and evidence links. Read [DIFFICULTY_MEMORY.md](DIFFICULTY_MEMORY.md) when creating or revising these entries. Their resolution statuses evolve; preserve the past mistake, original attempts, and resolved entries. Existing topics can adopt this structure when evidence changes, without a bulk rewrite of historical notes.
 
 For an evolving software POC, keep the latest sketch and its supporting evidence under a stable topic anchor, following [PSEUDOCODE_POC.md](PSEUDOCODE_POC.md#persist-and-resume). Link that anchor from the existing `Resume action` or `After resolution` handoff field so a fresh thread can recover it without the old chat. Existing active questions retain priority.
 
@@ -82,7 +80,3 @@ A routine evaluation uses the active question and checked key. No PDF access is 
 Use [FAST_IO.md](FAST_IO.md) for a single startup context read, then save only new content and changed handoff fields with the compact `save` operation in one call per response, prefetching upcoming pages in that same save when necessary. Its helper performs readback verification internally; a verified result needs no additional inspection command. Keep other notes and the directory untouched. Consolidate broader notes when a section ends or the learner asks, not after every answer.
 
 When repairing an existing guide, preserve useful explanations and learner evidence. Recover pending questions from saved evidence into their topic section and link them from the handoff. Do not fabricate missing historical question wording or learner answers. Keep a backup before a substantial rewrite.
-
-## tutor-memory/behaviour.md: reusable preferences
-
-Store explicit learner preferences and agreed tutoring adjustments that apply beyond one exercise. Topic-specific difficulties belong beside the relevant concept in `topic.md`; the current remediation belongs in the workpad. Create behaviour memory only when there is something useful to record.

@@ -119,7 +119,7 @@ export const ProviderSessionSchema = z.object({
   threadId: z.string().min(1),
   home: z.string().min(1),
   executable: z.string().min(1),
-  toolVersion: z.union([z.literal(1), z.literal(2)]),
+  toolVersion: z.number().int().positive(),
   status: z.enum(["ready", "pending"]),
 })
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true }).extend({
@@ -127,18 +127,12 @@ export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true
   messages: z.array(MessageSchema),
   providerSession: ProviderSessionSchema.optional(),
 })
-export const BehaviourMemorySchema = z.string().max(100_000)
-export const BehaviourUpdateSchema = z.object({
-  expected: BehaviourMemorySchema,
-  content: BehaviourMemorySchema,
-})
 export const WorkspaceSchema = z.object({
   version: z.literal(2),
   runners: z.array(RunnerSchema),
   topics: z.array(TopicSchema),
   chats: z.array(ChatSchema),
   providerSettings: z.array(ProviderSettingsSchema).default([]),
-  behaviourMemory: BehaviourMemorySchema.default(""),
 })
 // Version 1 stored one conversation per topic; it is migrated into independent chats on load.
 export const LegacyWorkspaceSchema = WorkspaceSchema.omit({ chats: true }).extend({
@@ -233,6 +227,9 @@ export const TopicUpdateSchema = z.object({
 export const WorkerJobSchema = z.object({
   chat: ChatSchema,
   topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
+  workspaceTopics: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
+    notes: LearningStateSchema.shape.notes,
+  })).default([]),
   runner: RunnerSchema,
   apiKey: z.string().default(""),
   codex: CodexConnectionSchema.optional(),
@@ -242,7 +239,6 @@ export const WorkerJobSchema = z.object({
   assetDirectory: z.string(),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
-  behaviourMemory: BehaviourMemorySchema.optional(),
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
@@ -261,7 +257,6 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
     topicUpdates: z.array(TopicUpdateSchema).default([]),
-    behaviourUpdate: BehaviourUpdateSchema.optional(),
     providerSession: ProviderSessionSchema.optional(),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),

@@ -64,7 +64,7 @@ test("rejects invalid mutations and keeps the last valid disk snapshot", async (
   expect(store.stateSnapshot.runners[0].name).toBe("Recovered")
 })
 
-test.each([1, 2] as const)("starts a saved workspace with Codex tool version %s", async (toolVersion) => {
+test.each([1, 2, 3, 4, 6, 7, 8] as const)("starts a saved workspace with Codex tool version %s", async (toolVersion) => {
   const store = await repository()
   const chat = newChat(store.stateSnapshot.runners[0].id)
   chat.providerSession = {
@@ -394,48 +394,22 @@ test("preserves migration sources when database verification fails", async () =>
   expect(await readFile(join(directory, "workspace.json"), "utf8")).toBe(raw)
 })
 
-test("persists reusable tutor preferences and honours manual edits and deletion", async () => {
+test("ignores legacy behaviour settings and files while preserving learning records", async () => {
   const store = await repository()
-  const path = join(store.directory, "tutor-memory", "behaviour.md")
-  await expect(readFile(path)).rejects.toThrow()
-  const preferences = "# Tutor preferences\n\n## Explanation and pacing\n\nExplain using the source example first."
-  await store.mutate((state) => { state.behaviourMemory = preferences })
-  expect(await readFile(path, "utf8")).toBe(preferences)
-  const restarted = new WorkspaceRepository(store.directory)
-  await restarted.load()
-  expect(restarted.stateSnapshot.behaviourMemory).toBe(preferences)
-  const edited = preferences + "\nGive one question at a time."
-  await writeFile(path, edited)
-  await restarted.mutate((state) => { state.runners[0].name = "Renamed tutor" })
-  expect(restarted.stateSnapshot.behaviourMemory).toBe(edited)
-  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state.behaviourMemory).toBe(edited)
-  await rm(path)
-  await restarted.refreshTopics()
-  expect(restarted.stateSnapshot.behaviourMemory).toBe("")
-})
-
-test.each(["# Tutor preferences\n\nUse small steps.", ""])("recovers committed behaviour memory after an interrupted mirror write: %j", async (content) => {
-  const store = await repository()
-  await store.mutate((state) => { state.behaviourMemory = "Old preferences" })
-  const state = store.stateSnapshot
-  state.behaviourMemory = content
-  new ChatDatabase(join(store.directory, "state.sqlite")).save(state)
-  const restored = await new WorkspaceRepository(store.directory).load()
-  expect(restored.behaviourMemory).toBe(content)
-  const path = join(store.directory, "tutor-memory", "behaviour.md")
-  if (content) expect(await readFile(path, "utf8")).toBe(content)
-  else await expect(readFile(path)).rejects.toThrow()
-  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.filesPending).toBe(false)
-})
-
-test("loads existing SQLite workspaces without behaviour memory and imports an existing preference file", async () => {
-  const store = await repository()
+  const topic = newTopic("Physics")
+  topic.learning.notes = "# Physics\n\nHistorical learner mistake."
+  await store.mutate((state) => { state.topics.push(topic) })
   const database = new DatabaseSync(join(store.directory, "state.sqlite"))
-  database.prepare("UPDATE metadata SET payload = ? WHERE key = 'settings'").run(JSON.stringify({ runners: store.stateSnapshot.runners, providerSettings: [] }))
+  database.prepare("UPDATE metadata SET payload = ? WHERE key = 'settings'").run(JSON.stringify({ runners: store.stateSnapshot.runners, providerSettings: [], behaviourMemory: "Old preferences" }))
   database.close()
-  expect((await new WorkspaceRepository(store.directory).load()).behaviourMemory).toBe("")
+  const path = join(store.directory, "tutor-memory", "behaviour.md")
   await mkdir(join(store.directory, "tutor-memory"))
-  await writeFile(join(store.directory, "tutor-memory", "behaviour.md"), "Existing reusable preferences")
-  const restored = await new WorkspaceRepository(store.directory).load()
-  expect(restored.behaviourMemory).toBe("Existing reusable preferences")
+  await writeFile(path, "Old preference file")
+  const restarted = new WorkspaceRepository(store.directory)
+  const restored = await restarted.load()
+  expect(restored).not.toHaveProperty("behaviourMemory")
+  expect(restored.topics[0].learning.notes).toBe(topic.learning.notes)
+  await restarted.mutate((state) => { state.runners[0].name = "Renamed" })
+  expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state).not.toHaveProperty("behaviourMemory")
+  expect(await readFile(path, "utf8")).toBe("Old preference file")
 })

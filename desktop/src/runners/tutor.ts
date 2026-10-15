@@ -11,7 +11,6 @@ import { createCanvas, loadImage } from "@napi-rs/canvas"
 import { z } from "zod"
 import {
   LearningStateSchema,
-  BehaviourUpdateSchema,
   type WorkerJob,
   type LearningState,
   type Diagnostic,
@@ -32,7 +31,6 @@ export const skillFiles = [
   "references/DIFFICULTY_MEMORY_EVALUATION.md",
   "references/PSEUDOCODE_POC.md",
   "assets/GUIDE_DOCUMENT_TEMPLATE.md",
-  "assets/BEHAVIOUR_TEMPLATE.md",
 ] as const
 
 const ReadMaterialSchema = z.object({
@@ -40,6 +38,11 @@ const ReadMaterialSchema = z.object({
   firstPage: z.number().int().min(1),
   lastPage: z.number().int().min(1),
   includeVisuals: z.boolean().default(false),
+})
+const ReadTopicNotesSchema = z.object({
+  topicId: z.string().uuid(),
+  offset: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(20_000).default(20_000),
 })
 const SaveTopicSchema = z.object({
   topicId: z.string().uuid(),
@@ -78,6 +81,15 @@ const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "read_topic_notes",
+      description:
+        "Read saved study notes, historical learner attempts, corrections, and Past Mistakes from any workspace topic, including archived topics. Read-only; no private handoffs or answer keys. offset and limit count characters; follow nextOffset until null for a complete review.",
+      parameters: z.toJSONSchema(ReadTopicNotesSchema),
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "save_topic_state",
       description:
         "Stage complete study notes and a private handoff for one tagged topic. Call it for each tagged topic you planned, taught, or assessed this turn. Keep checked keys only in privateAnswerKey/workpad. Preserve prior questions and actual answers.",
@@ -89,17 +101,8 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "revise_topic_state",
       description:
-        "Stage a bounded update to a tagged topic. Append new content before Materials; use unique exact-text replacements to insert into an existing concept or revise a difficulty entry. Preserve exact question/answer records. Supply only changed handoff fields. Preserves all untouched notes and handoff fields. Preferred for existing topics.",
+        "Stage a bounded update to a tagged topic. Append new content before Materials; use unique exact-text replacements to insert into an existing concept or revise a Past Mistakes entry. Preserve exact question/answer records. Supply only changed handoff fields. Preserves all untouched notes and handoff fields. Preferred for existing topics.",
       parameters: z.toJSONSchema(ReviseTopicSchema),
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "save_behaviour_memory",
-      description:
-        "Stage workspace-wide tutor preferences from explicit reusable learner feedback. expected must equal the supplied behaviour memory, or your last staged content this turn. Preserve existing preferences and use the behaviour template when creating it. Topic difficulties belong in topic notes.",
-      parameters: z.toJSONSchema(BehaviourUpdateSchema),
     },
   },
   {
@@ -141,20 +144,20 @@ export async function createTutorSession(
 Follow the bundled skill. Use read_skill for its additional references. This harness supplies extracted source pages, cached images, and verified persistence instead of Python scripts or shell commands. read_material maps source preloading/prefetch; revise_topic_state maps compact save and bounded apply operations; save_topic_state creates the initial topic document or stages a necessary full revision. Use the direct-save path: external search and delegation are unavailable. For Tests, inspect supplied assets first, then author and clearly label a question when no asset fits.
 This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); tagged topics and topics opened while sending are listed below with their study notes and private handoffs. Without a topic in context, answer directly and suggest tagging a topic for structured study.
 Currently open topic: ${job.openedTopicId ?? "none"}. Use this topic's saved progress, pending question, outline, and nextAction for requests such as "What is next?" or "Continue". Explicit topic mentions or instructions take precedence. Do not infer the currently open topic from older chat messages.
+For cross-topic reviews, use the workspace topic directory and read_topic_notes to retrieve saved records without asking the learner to tag or open each topic. An all-topics request includes archived topics. Historical reviews do not advance lessons or change active checks. For past mistakes, inspect historical learner attempts and corrections, including resolved difficulties; distinguish learner mistakes from tutor/source errors and unassessed answers. Read every requested topic through all pages before claiming a complete review. Report missing records or incomplete coverage. Retrieved topics are read-only unless also tagged/opened; their private handoffs and keys are not supplied.
 A tagged topic with planConfirmed=false needs an approved plan before lessons: read its materials, propose or revise its outline with save_topic_state, keep it awaiting_plan_confirmation, and do not teach or question it. Only the Confirm plan action approves a plan; do not infer approval from a message. Plan approved on this turn: ${job.confirmTopicId ?? "none"}.
 planConfirmed=true records approval from an earlier Confirm plan action. Continue teaching that approved topic even when this turn has no confirmTopicId; reconcile a stale awaiting_plan_confirmation handoff with that persisted approval instead of asking for confirmation again.
 Explain lecture material before checking it. Resume a topic's saved question and checked key before moving it forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
 The harness writes each topic's agent.workpad.md Handoff from phase, currentSection, pendingQuestion (Active check), and nextAction (Resume action), and its Active check key section from privateAnswerKey. Put only the remaining working state in workpad. The topic title is the first # header of the notes, and outline is read from the topic directory.
 Call save_topic_state or revise_topic_state for each tagged topic you planned, taught, or assessed. Prefer bounded revisions for an existing topic; full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned.
-Store current difficulties beside their concept in topic notes with stable IDs, evidence links, and the statuses from references/DIFFICULTY_MEMORY.md. Reconcile evidence within this response; preserve historical attempts and assisted/independent distinctions. Keep temporary remediation in the workpad. Load references/DIFFICULTY_MEMORY.md when first creating or changing an assessment.
-The workspace behaviour memory below represents tutor-memory/behaviour.md and applies across topics, chats, and providers. Apply explicit feedback immediately; call save_behaviour_memory for reusable preferences. Preserve existing preferences, keep topic-specific difficulties in notes, and clarify unclear lasting preferences. No file tools are needed to read this supplied memory.
+Record observed learner mistakes under a "Past Mistakes" heading beside their concept in topic notes, with stable IDs, evidence links, and resolution statuses from references/DIFFICULTY_MEMORY.md. Retain resolved entries and what originally went wrong. Requests for explanation alone are learning needs, not mistakes. Reconcile evidence within this response; preserve historical attempts and assisted/independent distinctions. Keep temporary remediation in the workpad. Load references/DIFFICULTY_MEMORY.md when first creating or changing an assessment.
 In chat, use clickable Markdown citations: Sourced from: [Lecture 6.pdf, pg. 6-7.](edu-material://<material-id>/6). Use the actual material id, filename, and first cited page. The app opens the original attached source. For diagrams, call read_material with includeVisuals=true, then embed the returned image as ![Diagram description](prune-source://<material-id>/<page>). The chat supports these images; report an unavailable image only if the visual read fails.
 In topic notes, replace the template's "## Topic directory" heading and bullet list with exactly one <topic-directory /> element in the same position. heading is the section heading text. items is single-quoted JSON following the directory rules: title is the source section number and title; anchor is the in-document anchor id, set only when that part's notes exist; sources are its compact source links; children are its subparts in source order. Write any apostrophe inside items as \\u0027. Example:
 ${topicDirectoryFormat}
 Call save_learning_state with this chat's private handoff before the final reply, then deliver the explanation/question/choice in that reply. Saving alone is not a lesson. Workpads are private. The reply is learner-visible.
 Chat materials: ${JSON.stringify(describe(job.chat.materials))}
 Chat handoff: ${JSON.stringify(job.chat.learning)}
-Workspace behaviour memory: ${JSON.stringify(job.behaviourMemory ?? "")}
+Workspace topic directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topic.id, title: topic.title, archived: topic.archived, notesCharacters: topic.notes.length })))}
 Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), learning: topic.learning })))}`
   const sources = [
     ...job.chat.materials.map((material) => ({
@@ -168,8 +171,13 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       })),
     ),
   ]
+  const workspaceTopics = new Map(job.workspaceTopics.map((topic) => [topic.id, topic]))
+  for (const topic of job.topics) {
+    workspaceTopics.set(topic.id, {
+      id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes,
+    })
+  }
   const topicUpdates = new Map<string, LearningState>()
-  let behaviourUpdate: z.infer<typeof BehaviourUpdateSchema> | undefined
   let saved: LearningState | undefined
   const saveErrors = new Map<string, string>()
   return {
@@ -191,7 +199,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           if (job.topics.some((topic) => topic.id === target.data.topicId))
             saveKey = `topic:${target.data.topicId}`
         }
-      } else if (name === "save_learning_state" || name === "save_behaviour_memory") {
+      } else if (name === "save_learning_state") {
         saveKey = name
       }
       try {
@@ -199,6 +207,20 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           const { path } = z.object({ path: z.enum(skillFiles) }).parse(input)
           activity("Reading tutoring guidance")
           result = await readFile(join(job.skillDirectory, path), "utf8")
+        } else if (name === "read_topic_notes") {
+          const { topicId, offset, limit } = ReadTopicNotesSchema.parse(input)
+          const topic = workspaceTopics.get(topicId)
+          if (!topic) throw new Error("Topic not found in this workspace.")
+          const notes = topicUpdates.get(topicId)?.notes ?? topic.notes
+          if (offset > notes.length) throw new Error("Offset is outside this topic's notes.")
+          const end = Math.min(offset + limit, notes.length)
+          let nextOffset: number | null = null
+          if (end < notes.length) nextOffset = end
+          activity(`Reading ${topic.title} study history`)
+          result = JSON.stringify({
+            topicId, title: topic.title, archived: topic.archived,
+            notes: notes.slice(offset, end), offset, nextOffset, totalCharacters: notes.length,
+          })
         } else if (name === "read_material") {
           const { id, firstPage, lastPage, includeVisuals } =
             ReadMaterialSchema.parse(input)
@@ -337,14 +359,6 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           topicUpdates.set(topicId, learning)
           activity(`Saving ${topic.title} notes`)
           result = `Study notes for ${topic.title} staged. Save the chat handoff with save_learning_state before the final reply.`
-        } else if (name === "save_behaviour_memory") {
-          const update = BehaviourUpdateSchema.parse(input)
-          const current = behaviourUpdate?.content ?? job.behaviourMemory ?? ""
-          if (update.expected !== current)
-            throw new Error("The expected tutor preferences do not match the current behaviour memory.")
-          behaviourUpdate = { expected: job.behaviourMemory ?? "", content: update.content }
-          activity("Saving tutor preferences")
-          result = "Tutor preferences staged for all topics and chats. Save the chat handoff before the final reply."
         } else if (name === "save_learning_state") {
           saved = undefined
           const candidate = LearningStateSchema.parse(input)
@@ -398,7 +412,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
           pendingKey.length > 20 &&
           states.some(
-            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey) || behaviourUpdate?.content.includes(pendingKey),
+            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey),
           )
         )
           throw new Error(
@@ -413,7 +427,6 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           learning,
           expected: job.topics.find((topic) => topic.id === topicId)?.learning,
         })),
-        behaviourUpdate,
       }
     },
   }

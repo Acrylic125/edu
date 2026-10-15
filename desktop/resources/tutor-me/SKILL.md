@@ -61,7 +61,7 @@ Read [references/PSEUDOCODE_POC.md](references/PSEUDOCODE_POC.md) when designing
 
 ## Start or resume
 
-On a new thread, find the matching topic and read its `agent.workpad.md` first, plus workspace `tutor-memory/behaviour.md` if present. Follow the active check's link to its exact question in `topic.md`. An unanswered or contested check takes precedence over any next-section suggestion. Resume it; never infer completion from the last heading or from a section marked covered. Read the current difficulties beside the relevant concept and their supporting evidence when needed, plus the relevant notes and cached source content. Use [references/FILE_STRUCTURE.md](references/FILE_STRUCTURE.md) for the handoff fields, source cache, file layout, and citation format.
+On a new thread, find the matching topic and read its `agent.workpad.md` first. Follow the active check's link to its exact question in `topic.md`. An unanswered or contested check takes precedence over any next-section suggestion. Resume it; never infer completion from the last heading or from a section marked covered. Read the Past Mistakes entries beside the relevant concept and their supporting evidence when needed, plus the relevant notes and cached source content. Use [references/FILE_STRUCTURE.md](references/FILE_STRUCTURE.md) for the handoff fields, source cache, file layout, and citation format.
 
 If the handoff says `awaiting_plan_confirmation`, present the saved proposed plan and wait for the learner's confirmation before teaching. A thread change does not imply confirmation.
 
@@ -114,7 +114,7 @@ Keep exact Check questions and learner answers as a compact exercise record unde
 
 Current mode, active-check status, deferred-check links, checked answer keys, and resumption instructions belong in `agent.workpad.md`; the canonical question and learner answer belong in `topic.md`. Omit answer and deliberation headings until there is content to record. Keep a concise terminology table when it helps revision.
 
-Maintain topic difficulties as the learner's **current learning needs**, separate from the preserved question/answer history. Read [DIFFICULTY_MEMORY.md](references/DIFFICULTY_MEMORY.md) when first recording a difficulty or when new evidence changes an existing assessment. Merge repeated evidence into one current entry, retaining evidence links and the distinction between assisted and independent performance. Reuse these rules in subsequent updates; a routine answer needs no additional assessment or LLM call solely for memory maintenance.
+Record observed learner mistakes under **Past Mistakes** beside the relevant concept. Preserve the mistake and its evidence as its resolution status changes. Read [DIFFICULTY_MEMORY.md](references/DIFFICULTY_MEMORY.md) when first recording a difficulty or when new evidence changes an existing assessment. Merge repeated evidence into the same mistake entry, retaining evidence links and the distinction between assisted and independent performance. Reuse these rules in subsequent updates; a routine answer needs no additional assessment or LLM call solely for memory maintenance.
 
 For a requested scope change, use an existing matching topic or propose a separate topic when appropriate. A short prerequisite explanation may stay beside the concept it supports.
 
@@ -124,4 +124,4 @@ When asked to design, run, or compare evaluations of difficulty memory, read [DI
 
 ## Adapt to the learner
 
-Record explicit, reusable tutor preferences in `tutor-memory/behaviour.md`, using [assets/BEHAVIOUR_TEMPLATE.md](assets/BEHAVIOUR_TEMPLATE.md). Apply direct feedback immediately. Keep topic-specific misconceptions and remediation in the topic notes. If a lasting preference is unclear, ask briefly instead of inferring it from frustration. Routine clarification of behaviour is handled directly.
+Apply explicit teaching feedback immediately at its stated scope. Keep topic-specific misconceptions and remediation in the topic notes. If the requested adjustment is unclear, ask briefly instead of inferring it from frustration. Routine clarification of behaviour is handled directly.

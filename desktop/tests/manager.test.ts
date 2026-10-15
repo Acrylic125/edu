@@ -145,51 +145,6 @@ test("publishes a reply only after saving the chat handoff", async () => {
   expect(restored.chat(first.id).learning.workpad).toBe("Revision planned.")
 })
 
-test("commits tutor preferences before the reply and restores them in another chat and provider", async () => {
-  const { manager, repository, first, second, other } = await fixture()
-  await manager.send({ chatId: first.id, content: "Use small steps for all my lessons." })
-  const input = children[0].jobs[0]
-  const session = await createTutorSession({ ...input, skillDirectory: resolve("resources/tutor-me") }, () => {})
-  const preferences = "# Tutor preferences\n\n## Explanation and pacing\n\nUse small steps."
-  expect((await session.execute("save_behaviour_memory", { expected: "", content: preferences })).success).toBe(true)
-  await session.execute("save_learning_state", input.chat.learning)
-  children[0].emit("message", { type: "result", ...session.finish("I’ll use small steps.") })
-  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === first.runnerId)?.status).toBe("ready"))
-  const restored = await new WorkspaceRepository(repository.directory).load()
-  expect(restored.behaviourMemory).toBe(preferences)
-  expect(restored.chats.find((chat) => chat.id === first.id)?.messages.at(-1)?.content).toBe("I’ll use small steps.")
-  expect(await readFile(join(repository.directory, "tutor-memory", "behaviour.md"), "utf8")).toBe(preferences)
-  await repository.mutate((state) => {
-    const runner = state.runners.find((runner) => runner.id === second.runnerId)
-    if (runner) runner.provider = "openrouter"
-  })
-  await manager.send({ chatId: second.id, content: `${topicMention(other.id, other.title)} Plan this topic.` })
-  expect(children[1].jobs[0]).toMatchObject({ behaviourMemory: preferences, runner: { provider: "openrouter" } })
-  const next = await createTutorSession({ ...children[1].jobs[0], skillDirectory: resolve("resources/tutor-me") }, () => {})
-  expect(next.instructions).toContain(JSON.stringify(preferences))
-})
-
-test("concurrent preference updates reject stale writes without publishing an unsaved reply", async () => {
-  const { manager, repository, first, second } = await fixture()
-  await manager.send({ chatId: first.id, content: "Explain slowly." })
-  await manager.send({ chatId: second.id, content: "Use source examples." })
-  children[0].emit("message", {
-    type: "result", reply: "I’ll explain slowly.", learning: first.learning,
-    behaviourUpdate: { expected: "", content: "Explain slowly." },
-  })
-  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === first.runnerId)?.status).toBe("ready"))
-  children[1].emit("message", {
-    type: "result", reply: "Preferences saved.", learning: second.learning,
-    behaviourUpdate: { expected: "", content: "Use source examples." },
-  })
-  await vi.waitFor(() => expect(manager.statuses.find((runtime) => runtime.runnerId === second.runnerId)?.error).toContain("preferences changed"))
-  expect(repository.stateSnapshot.behaviourMemory).toBe("Explain slowly.")
-  expect(repository.chat(second.id).messages.some((message) => message.role === "assistant")).toBe(false)
-  await manager.send({ chatId: second.id, content: "Retry with the current preferences." })
-  expect(children[1].killed).toBe(true)
-  expect(children.at(-1)?.jobs[0].behaviourMemory).toBe("Explain slowly.")
-})
-
 test("topic revisions cannot overwrite learner evidence edited while the tutor was working", async () => {
   const { manager, repository, first, topic } = await fixture()
   await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Update my learning need.` })
@@ -431,4 +386,27 @@ test("keeps interrupted native sessions pending across restart", async () => {
   await manager.send({ chatId: first.id, content: "Retry" })
   expect(children[1].jobs[0].chat.providerSession?.status).toBe("pending")
   expect((await new WorkspaceRepository(repository.directory).load()).chats.find((chat) => chat.id === first.id)?.providerSession?.status).toBe("pending")
+})
+
+test("retrieves past learner mistakes from untagged topics without exposing their private handoffs", async () => {
+  const { manager, repository, first, topic, other } = await fixture()
+  const evidence = "# Physics\n\n## Check P1\nQuestion: Explain acceleration.\nLearner answer: Acceleration is speed.\nDeliberation: Confused speed with change in velocity.\n\nCurrent difficulty: resolved after an independent retry."
+  await repository.mutate((state) => {
+    const saved = state.topics.find((item) => item.id === other.id)
+    if (!saved) throw new Error("Missing fixture topic")
+    saved.learning.notes = evidence
+    saved.learning.privateAnswerKey = "PRIVATE_UNANSWERED_PHYSICS_KEY"
+    saved.archived = true
+  })
+  await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Across all topics, what are the past mistakes I have made?` })
+  const input = children[0].jobs[0]
+  expect(input.topics.map((item) => item.id)).toEqual([topic.id])
+  const session = await createTutorSession({ ...input, skillDirectory: resolve("resources/tutor-me") }, () => {})
+  const result = await session.execute("read_topic_notes", { topicId: other.id })
+  expect(result.success).toBe(true)
+  expect(result.text).toContain(JSON.stringify(evidence))
+  expect(result.text).not.toContain("PRIVATE_UNANSWERED_PHYSICS_KEY")
+  expect(session.instructions).toContain(other.id)
+  expect(session.instructions).not.toContain(evidence)
+  expect((await session.execute("save_topic_state", { topicId: other.id, learning: other.learning })).success).toBe(false)
 })

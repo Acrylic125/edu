@@ -19,7 +19,7 @@ test("renders PDF source images in an Electron utility process without a DOM", a
   try {
     const { createTutorSession } = await import("../src/runners/tutor")
     const session = await createTutorSession({
-      runner, chat, topics: [], apiKey: "", assetDirectory: directory, skillDirectory: resolve("resources/tutor-me"),
+      runner, chat, topics: [], workspaceTopics: [], apiKey: "", assetDirectory: directory, skillDirectory: resolve("resources/tutor-me"),
     }, () => {})
     const result = await session.execute("read_material", { id, firstPage: 1, lastPage: 1, includeVisuals: true })
     expect(result.text).not.toContain("Tool error:")

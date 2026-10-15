@@ -3,7 +3,7 @@ import { z } from "zod"
 import { ChatSchema, MessageSchema, WorkspaceSchema, type Workspace } from "../shared/contracts"
 
 const ChatStateSchema = ChatSchema.omit({ messages: true })
-const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true, behaviourMemory: true })
+const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true })
 const RemovedFilesSchema = z.object({ topics: z.array(z.string().uuid()), chats: z.array(z.string().uuid()) })
 const JsonRowSchema = z.object({ payload: z.string() })
 

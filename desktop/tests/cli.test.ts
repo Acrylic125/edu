@@ -90,7 +90,7 @@ test("canceling a provider request terminates its native subprocess", async () =
   expect(() => process.kill(pid, 0)).toThrow()
 })
 
-test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferences and bounded difficulty updates", async (provider) => {
+test.each(["claude", "antigravity"] as const)("%s can persist bounded difficulty updates", async (provider) => {
   const cli = await connection(provider)
   const chat = newChat(randomUUID())
   chat.messages.push({ id: randomUUID(), role: "user", content: "Explain slowly and record my limit difficulty.", createdAt: new Date().toISOString(), topicIds: [] })
@@ -98,13 +98,12 @@ test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferen
   topic.planConfirmed = true
   topic.learning.notes = "# Limits\n\n<topic-directory heading=\"Topic directory\" items='[{\"title\":\"1. Limits\"}]' />\n\n## Limits\n\nOriginal learner answer."
   const job = WorkerJobSchema.parse({
-    chat, topics: [{ ...topic, assetDirectory: cli.directory }], behaviourMemory: "Use source examples.",
+    chat, topics: [{ ...topic, assetDirectory: cli.directory }],
     runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
     skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
   })
   const actions = [
     { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [
-      { name: "save_behaviour_memory", arguments: JSON.stringify({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." }) },
       { name: "revise_topic_state", arguments: JSON.stringify({ topicId: topic.id, notes: { append: "D1: needs_explanation — Needs the approach/reach distinction explained." } }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
@@ -116,7 +115,6 @@ test.each(["claude", "antigravity"] as const)("%s can persist behaviour preferen
     return JSON.stringify({ type: "result", is_error: false, structured_output: action })
   })
   const result = await runCliTutorTurn(job, () => {}, () => {})
-  expect(result.behaviourUpdate).toEqual({ expected: job.behaviourMemory, content: "Use source examples.\nExplain slowly." })
   expect(result.topicUpdates[0].learning.notes).toContain("Original learner answer.")
   expect(result.topicUpdates[0].learning.notes).toContain("D1: needs_explanation")
   expect(command).toHaveBeenCalledTimes(1)
@@ -200,4 +198,35 @@ test("a reply accompanying source reads waits for the tool results", async () =>
   expect(result.reply).toBe("Reply using the tool results")
   expect(command).toHaveBeenCalledTimes(2)
   expect(command.mock.calls[1][2]).toContain('"tool":"read_skill"')
+})
+
+test.each(["claude", "antigravity"] as const)("%s consumes cross-topic retrieval results before publishing a review", async (provider) => {
+  const cli = await connection(provider)
+  const chat = newChat(randomUUID())
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Across all topics, what are my past mistakes?", createdAt: new Date().toISOString(), topicIds: [] })
+  const topic = newTopic("Archived physics")
+  const evidence = "Learner confused speed with acceleration; later resolved."
+  const job = WorkerJobSchema.parse({
+    chat, topics: [], workspaceTopics: [{ id: topic.id, title: topic.title, archived: true, notes: evidence }],
+    runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli,
+    skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory,
+  })
+  const actions = [
+    { reply: "Premature review", calls: [
+      { name: "read_topic_notes", arguments: JSON.stringify({ topicId: topic.id }) },
+      { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
+    ] },
+    { reply: evidence, calls: [] },
+  ]
+  const command = vi.spyOn(cliTools, "runCliCommand").mockImplementation(async () => {
+    const action = actions.shift()
+    if (!action) throw new Error("Unexpected CLI request")
+    if (provider === "antigravity") return JSON.stringify({ status: "SUCCESS", structured_output: action })
+    return JSON.stringify({ type: "result", is_error: false, structured_output: action })
+  })
+  const result = await runCliTutorTurn(job, () => {}, () => {})
+  expect(result.reply).toBe(evidence)
+  expect(result.topicUpdates).toEqual([])
+  expect(command).toHaveBeenCalledTimes(2)
+  expect(command.mock.calls[1][2]).toContain(evidence)
 })
