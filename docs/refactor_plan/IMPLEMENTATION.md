@@ -3,7 +3,7 @@
 `topic.md` now serves as a conceptual summary. Versioned `topic.state.json`
 contains parts, source references, goals, mistakes, and per-thread question and
 answer history. Existing topics start with empty structured content/progress,
-as requested. Their old notes and workpads remain historical evidence.
+as requested. Their old notes remain intact; per-topic workpads are unused and are neither read nor written.
 
 StateService exposes the planned readers and writers across OpenRouter, Codex,
 Claude, and Antigravity. Reads leave tutor membership unchanged. Writers register
@@ -19,15 +19,15 @@ without replacing preserved legacy workpads.
 
 ## LangGraph orchestration
 
-`desktop/src/runners/tutor-graph.ts` compiles an actual LangGraph `StateGraph`.
-All provider adapters use its model, tools, validation, recovery, publish, and
-exhausted nodes. Conditional edges decide whether to execute tool calls, request
-a corrected save/reply, consume read results in another model request, publish a
-validated reply, or stop at the provider's attempt budget. Native Codex dynamic
-tools also run through the sequential tool subgraph.
+`desktop/src/runners/graph.ts` compiles an actual LangGraph `StateGraph`.
+All provider adapters use its agent, tools, validate, recover, and finish nodes.
+Conditional edges decide whether to execute tool calls, request a corrected
+save/reply, consume read results in another runner request, or finish a validated
+reply. The graph bounds runner attempts. Native Codex dynamic tools execute
+sequentially inside its native agent runner.
 
-The graph owns the per-turn attempt count, pending calls, results, reply and
-publication decision. Provider adapters retain their protocol transcripts and
+The graph owns the per-turn attempt count and completion decision. Provider
+adapters retain pending calls, tool results, protocol transcripts, replies, and
 native connection lifecycle. StateService continues staging domain changes, and
 the repository commits them atomically with the final reply. LangGraph does not
 introduce another durable topic state or checkpoint store. Node transitions are
@@ -35,7 +35,7 @@ visible in existing diagnostics without logging private handoff contents.
 
 Dependencies: `@langchain/langgraph` and its `@langchain/core` peer. The
 [LangGraph Graph API](https://docs.langchain.com/oss/javascript/langgraph/graph-api)
-describes the StateGraph/Annotation and conditional-edge APIs used here.
+describes the StateGraph and conditional-edge APIs used here.
 
 Graph tests exercise rejected-save recovery, sequential malformed-save
 invalidation, read-result consumption before publication, and bounded retries.
@@ -56,7 +56,7 @@ Provider tests assert actual graph-node execution across all adapters.
   tool call. A failed or stopped turn leaves its staged mutations uncommitted.
 - Legacy LearningState fields remain for database compatibility and existing UI
   projections. New tutor progress uses structured state; checked keys remain in
-  each chat's private handoff. Old native Codex sessions restart with tool version 9.
+  each chat's private handoff. Old native Codex sessions restart with tool version 12.
 
 ## Verified behavior
 
@@ -112,3 +112,36 @@ connecting a provider and fail before exercising this refactor:
 Their onboarding fixtures remain unchanged. The focused connected-provider smoke
 coverage includes curriculum confirmation, thread registration, and question
 persistence without adding question transcripts to the summary.
+
+
+## Incremental topic summaries
+
+`topic.md` follows the title, special `<topic-directory />`, taught part headings,
+Topic terminology, and Materials structure. Curriculum setup creates the directory
+without presenting goal text as an explanation. Topic edits retain existing
+explanations and refresh the directory hierarchy. The tutor fills gaps as material
+is discussed and clarifies conceptual phrasing when learner mistakes expose an
+ambiguity. Exact questions, actual answers, mistake history, and progress stay in
+`topic.state.json`; checked keys and temporary logistics stay in the private chat
+handoff. The summary is a revision document, not a conversation transcript.
+
+
+## Question responses
+
+The tutor follows `QUESTIONS.md` for source questions/examples, own-words
+summaries, goal-based follow-ups, and the distinct sourcing rules for practice
+and tests. Part-boundary optionality follows the learner's explicit instructions:
+continue or quick practice after a check, with a continue option for short,
+optional, unimportant parts. Continuing without assessment does not verify mastery.
+
+`save_learning_state.responseQuestion` optionally supplies a prompt and response
+options. The harness saves them with the assistant message in the same transaction
+as its handoff and topic writes. The chat renders keyboard-accessible response
+buttons; clicking sends the option through the existing chat send path. Typed
+responses remain available. Older choices stay visible but inactive after a reply,
+and choosing an option preserves any composer draft. Model conversation history
+and message copies retain the choice prompt and options.
+
+Tests cover choice validation, message persistence and public projection,
+private-key protection, Codex session refresh for the changed tool schema, and
+native keyboard submission with draft preservation and inactive history.

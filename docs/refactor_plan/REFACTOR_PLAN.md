@@ -96,3 +96,31 @@ Refer to [EXPLANATION_STYLE](EXPLANATION_STYLE.md)
 
 ## Conflict Resolution
 In situations where the user has multiple continuation points, ASK FOR OPTIONS
+
+## Topic summary contract
+
+`topic.md` is a self-contained conceptual summary of the topic being covered. Fill gaps and expand the relevant topic-part explanation incrementally as material is discussed. When a mistake reveals ambiguous teaching, clarify the phrasing in that explanation. Follow [EXPLANATION_STYLE.md](EXPLANATION_STYLE.md) for conceptual depth and worked examples.
+
+Use this structure:
+
+```md
+# {TOPIC_NAME}
+
+<topic-directory heading="Topic directory" items='[{"title":"{TOPIC_PART}","children":[]}]' />
+
+## {TOPIC_PART}
+{Incremental explanation of the material discussed so far.}
+
+## Topic terminology
+
+| Term | Meaning / useful distinction |
+|---|---|
+| {encountered term} | {concise accurate explanation} |
+
+## Materials
+{Links to supplied materials and relevant page ranges.}
+```
+
+The special directory element follows the source hierarchy with nested `children`, compact `sources` (`label`, `href`), and an `anchor` only when the corresponding notes exist. Keep uncovered parts in the directory without inventing explanations. Encode apostrophes inside its single-quoted JSON as `\u0027`.
+
+The summary is neither a chat log nor a conversation. Exact questions, actual learner answers, mistakes, active/completed progress, and continuation state live in `topic.state.json`, accessed through StateService tools. Per-topic `topic.workpad.md` and `agent.workpad.md` files are unused; existing files do not restore state. Private checked answer keys and temporary session logistics remain in the chat handoff.
