@@ -19,6 +19,7 @@ if (args[0] === "auth") {
   console.log(JSON.stringify({ key: process.env.ANTHROPIC_API_KEY ?? null, gemini: process.env.GEMINI_API_KEY ?? null }))
 } else {
   let input = readFileSync(0, "utf8")
+  if (input.includes("Hold concurrent turn")) await new Promise((resolve) => setTimeout(resolve, 60_000))
   if (args.includes("--agent")) {
     const prompt = args.find((arg) => arg.startsWith("-p="))
     if (!prompt || input) throw new Error("Antigravity requires an attached print prompt and empty stdin")
@@ -57,6 +58,22 @@ if (args[0] === "auth") {
         } else {
           calls = [
             { name: "activatePart", arguments: JSON.stringify({ topicId: topic.id, topicPartId: "tp-structured-limits" }) },
+            { name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, summary: `# ${topic.title}
+
+<topic-directory heading="Topic directory" items='[{"title":"Limits","anchor":"limits"}]' />
+
+<a id="limits"></a>
+## Limits
+
+A function's limit describes its nearby behavior as the input approaches a point. The value at that point can differ, or be undefined.
+
+## Topic terminology
+
+| Term | Meaning / useful distinction |
+|---|---|
+| Limit | Value approached by nearby function values. |
+
+## Materials` }) },
             { name: "recordQuestion", arguments: JSON.stringify({ topicId: topic.id, topicPartId: "tp-structured-limits", question: "Why can a limit exist where the function is undefined?" }) },
           ]
           handoff.phase = "awaiting_answer"

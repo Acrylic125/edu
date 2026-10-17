@@ -9,6 +9,7 @@ import { MediaPreview } from "./media-preview"
 import { normalizeMathDelimiters } from "./normalize-math"
 import { linkSourceCitations } from "./source-citations"
 import { resolveMaterialLink } from "../shared/material-links"
+import { sectionAnchors } from "./section-anchors"
 import type { Snapshot } from "../shared/contracts"
 
 export function StudyMarkdown({
@@ -33,7 +34,7 @@ export function StudyMarkdown({
             ? url
             : defaultUrlTransform(url)
         }
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath, sectionAnchors]}
         rehypePlugins={[rehypeKatex]}
         components={{
           img: ({ src, alt, title }) => (
@@ -78,6 +79,17 @@ export function StudyMarkdown({
             return <pre>{children}</pre>
           },
           a: ({ href, children }) => {
+            if (href?.startsWith("#")) {
+              return (
+                <a href={href} onClick={(event) => {
+                  event.preventDefault()
+                  const document = event.currentTarget.closest(".study-document") ?? event.currentTarget.closest(".markdown")
+                  Array.from(document?.querySelectorAll("[id]") ?? [])
+                    .find((element) => element.id === href.slice(1))
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }}>{children}</a>
+              )
+            }
             const source = resolveMaterialLink(href ?? "", materials)
             if (source && onOpenMaterial) {
               return (

@@ -37,6 +37,9 @@ test("persists concurrent changes without losing topics and restores private pen
     nextAction: "Evaluate the explanation, then teach the chain rule.",
     workpad: "Private checked key and handoff.",
   }
+  const chat = newChat(store.stateSnapshot.runners[0].id)
+  chat.learning = first.learning
+  await store.mutate((state) => state.chats.push(chat))
   await Promise.all([
     store.mutate((state) => state.topics.push(first)),
     store.mutate((state) => state.topics.push(newTopic("Physics"))),
@@ -44,7 +47,9 @@ test("persists concurrent changes without losing topics and restores private pen
   const restored = new WorkspaceRepository(store.directory)
   await restored.load()
   expect(restored.stateSnapshot.topics).toHaveLength(2)
-  expect(restored.topic(first.id).learning).toEqual(first.learning)
+  expect(restored.chat(chat.id).learning).toEqual(chat.learning)
+  expect(restored.topic(first.id).learning.privateAnswerKey).toBe("")
+  expect(restored.topic(first.id).learning.pendingQuestion).toBe("")
   expect(JSON.stringify(restored.publicTopics)).not.toContain(
     first.learning.privateAnswerKey,
   )
@@ -141,7 +146,7 @@ test("migrates v2 chats and settings into SQLite while retaining editable topic 
   expect(await readdir(store.directory)).not.toContain("workspace.json")
   await expect(readFile(join(store.directory, "settings.json"))).rejects.toThrow()
   expect(await readdir(join(store.directory, "topics", topic.id))).not.toContain("topic.json")
-  expect(await readFile(join(store.directory, "topics", topic.id, "agent.workpad.md"), "utf8")).toMatch(/^## Handoff\n/)
+  await expect(readFile(join(store.directory, "topics", topic.id, "agent.workpad.md"))).rejects.toThrow(/ENOENT/)
   expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state.chats).toEqual([chat])
   await expect(readFile(join(store.directory, "workspace.legacy.json"))).rejects.toThrow()
 })
@@ -204,8 +209,8 @@ test("rejects corrupt database and topic state without replacing their files", a
   const other = await repository()
   const topic = newTopic("Calculus")
   await other.mutate((state) => state.topics.push(topic))
-  const path = join(other.directory, "topics", topic.id, "agent.workpad.md")
-  const corrupt = (await readFile(path, "utf8")).replace(/^Phase: .*$/m, "Phase: unknown")
+  const path = join(other.directory, "topics", topic.id, "topic.state.json")
+  const corrupt = '{"version":"invalid"}'
   await writeFile(path, corrupt)
   await expect(new WorkspaceRepository(other.directory).load()).rejects.toThrow()
   expect(await readFile(path, "utf8")).toBe(corrupt)
@@ -229,14 +234,18 @@ test("retains legacy handoffs while structured topic progress starts fresh", asy
   await store.mutate((state) => state.topics.push(topic))
   const directory = join(store.directory, "topics", topic.id)
   expect(await readdir(directory)).not.toContain("topic.json")
-  expect(await readFile(join(directory, "agent.workpad.md"), "utf8")).toBe(
-    `## Handoff\nCreated: ${topic.createdAt}\nPlan: confirmed\nPhase: awaiting_answer\nCurrent section: 1. Limits\nActive check: C1-01 — [question](topic.md#check-c1-01)\n  \n  Explain a limit.\nResume action: Evaluate C1-01.\n\n## Active check key\nThe value a function approaches.\n\n## Not a section\n\n## Working notes\nSource map: Lecture 1.pdf pages 1-4.`,
-  )
+  await writeFile(join(directory, "agent.workpad.md"), "Unused legacy handoff.")
   const restored = await new WorkspaceRepository(store.directory).load()
-  expect(restored.topics[0]).toEqual({ ...topic, learning: { ...topic.learning, outline: [] } })
+  expect(restored.topics[0]).toMatchObject({
+    planConfirmed: true,
+    materials: topic.materials,
+    state: { content: [], threadTutors: [] },
+    learning: { phase: "awaiting_plan_confirmation", pendingQuestion: "", privateAnswerKey: "", outline: [] },
+  })
+  expect(await readFile(join(directory, "agent.workpad.md"), "utf8")).toBe("Unused legacy handoff.")
 })
 
-test("migrates topic.json into the workpad handoff and material caches", async () => {
+test("migrates topic.json metadata and material caches without restoring a topic handoff", async () => {
   const store = await repository()
   const topic = newTopic("Limits")
   topic.planConfirmed = true
@@ -248,7 +257,7 @@ test("migrates topic.json into the workpad handoff and material caches", async (
   await writeFile(join(directory, "topic.json"), JSON.stringify({ ...metadata, planConfirmed: true, materials: [material], learning: { ...handoff, phase: "ready_to_continue" } }))
   await writeFile(join(directory, "agent.workpad.md"), "Legacy handoff.")
   const restored = await new WorkspaceRepository(store.directory).load()
-  expect(restored.topics[0]).toMatchObject({ planConfirmed: true, materials: [material], learning: { phase: "ready_to_continue", workpad: "Legacy handoff." } })
+  expect(restored.topics[0]).toMatchObject({ planConfirmed: true, materials: [material], learning: { phase: "awaiting_plan_confirmation", pendingQuestion: "", privateAnswerKey: "" } })
   expect(await readdir(directory)).not.toContain("topic.json")
   expect(JSON.parse(await readFile(join(directory, "assets", "cache", "prepared", material.id, "manifest.json"), "utf8"))).toEqual(material)
   expect((await new WorkspaceRepository(store.directory).load()).topics).toEqual(restored.topics)

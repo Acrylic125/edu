@@ -12,6 +12,15 @@ export function materialCitationNames(name: string) {
   return [name, compact]
 }
 
+export function topicSourceMaterials(topic: Snapshot["topics"][number], chats: Snapshot["chats"]) {
+  const materials = [
+    ...topic.materials,
+    ...chats.filter((chat) => chat.messages.some((message) => message.topicIds.includes(topic.id)))
+      .flatMap((chat) => chat.materials),
+  ]
+  return materials.filter((material, index) => materials.findIndex((item) => item.id === material.id) === index)
+}
+
 export function resolveMaterialLink(href: string, materials: Snapshot["topics"][number]["materials"]) {
   const direct = /^edu-material:\/\/([^/]+)\/(\d+)$/.exec(href)
   if (direct) {

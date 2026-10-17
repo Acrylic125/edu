@@ -11,6 +11,7 @@ export const TopicReferenceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("pdf"), path: RelativePathSchema, pages: z.array(PageRangeSchema).min(1).max(1000) }),
   z.object({ type: z.literal("ppt"), path: RelativePathSchema, pages: z.array(PageRangeSchema).min(1).max(1000) }),
   z.object({ type: z.literal("image"), path: RelativePathSchema }),
+  z.object({ type: z.literal("text"), path: RelativePathSchema }),
   z.object({ type: z.literal("website"), url: z.url({ protocol: /^https?$/ }) }),
 ])
 export const TopicPartSchema = z.object({
@@ -26,7 +27,7 @@ export const TopicPartSchema = z.object({
   mistakes: z.array(z.object({ context: z.string().trim().min(1).max(20_000), issue: z.string().trim().min(1).max(20_000) })),
 })
 export const PartProgressSchema = z.object({
-  status: z.enum(["active", "completed"]),
+  status: z.enum(["active", "covered", "completed"]),
   steps: z.array(z.object({ question: z.string().trim().min(1).max(30_000), answerFromUser: z.string().max(30_000).optional() })),
 })
 export const TopicStateSchema = z.object({
@@ -63,7 +64,7 @@ export const TopicStateSchema = z.object({
 
 export const TopicMutationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("activatePart"), topicId: z.uuid(), topicPartId: TopicPartIdSchema }),
-  z.object({ type: z.literal("complete"), topicId: z.uuid(), topicPartId: TopicPartIdSchema }),
+  z.object({ type: z.literal("complete"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, masteryVerified: z.boolean().default(true) }),
   z.object({ type: z.literal("documentMistake"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
   z.object({ type: z.literal("recordQuestion"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, question: PartProgressSchema.shape.steps.element.shape.question }),
   z.object({ type: z.literal("recordAnswer"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, answerFromUser: z.string().max(30_000), stepIndex: z.number().int().nonnegative() }),
@@ -71,7 +72,7 @@ export const TopicMutationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("createTopic"), topicId: z.uuid(), topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true }), materialIds: z.array(z.uuid()).optional() }),
 ])
 
-export const TopicToolNames = ["getMistakesForTopic", "whereAmI", "whatIsNext", "getQuestions", "documentMistake", "complete", "activatePart", "createTopic", "updateTopic", "recordQuestion", "recordAnswer"] as const
+export const TopicToolNames = ["getMistakesForTopic", "whereAmI", "getTopicProgress", "whatIsNext", "getQuestions", "documentMistake", "complete", "activatePart", "createTopic", "updateTopic", "recordQuestion", "recordAnswer"] as const
 
 export function freshTopicState(name: string, createdAt: string) {
   return TopicStateSchema.parse({ version: "11-10-2026", createdAt, name, content: [], threadTutors: [] })

@@ -26,6 +26,10 @@ See [desktop/README.md](desktop/README.md) for account setup, packaging, and har
 boundaries. The repository contains the desktop app, its shared UI package, and
 an Astro landing page.
 
+Tutoring turns use LangGraph to orchestrate the provider agent runners. Phoenix
+OTLP traces are saved locally for manual upload; see [Phoenix Exporter](phoenix/README.md)
+for the portable `uv` exporter and local Phoenix instance setup.
+
 ## Landing page
 
 ```sh

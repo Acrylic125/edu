@@ -7,6 +7,13 @@ files:
   - out/**
   - package.json
 extraResources:
+  - from: ../phoenix
+    to: phoenix
+    filter:
+      - export_traces.py
+      - export_traces.py.lock
+      - README.md
+      - compose.yaml
   - from: resources
     to: resources
 asar: true

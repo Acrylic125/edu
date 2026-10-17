@@ -79,15 +79,17 @@ original deck. Attach a PDF export when the tutor needs to inspect slide visuals
 
 ## Tutor memory
 
-EdU uses `topics/<topic-id>/topic.md` for conceptual summaries and
+EdU uses `topics/<topic-id>/topic.md` for incremental conceptual summaries and
 `topic.state.json` for curriculum parts, references, goals, mistakes, and progress.
-Each writer chat has its own active/completed parts and exact question/answer
+Summaries use the special `<topic-directory />` marker, explanations under taught
+part headings, Topic terminology, and Materials. Teaching fills gaps and clarifies
+confusing phrasing in place. Each writer chat has its own active/completed parts and exact question/answer
 steps. Read-only topic references do not register that chat as a tutor.
 
 Tutor turns run through a compiled LangGraph `StateGraph` in
-`src/runners/tutor-graph.ts`: model → tools → validation → recovery or publication.
+`src/runners/graph.ts`: runner → tools → validation → recovery or completion.
 OpenRouter, Claude, Antigravity, and Codex share that graph. Codex native tool
-callbacks enter the same sequential tool subgraph. Provider adapters translate
+callbacks execute serially inside the native agent runner. Provider adapters translate
 protocol messages and source images; graph nodes control retries and whether a
 reply can be published. Diagnostics record node transitions as `graph.node`.
 Graph state lasts for one turn. SQLite and StateService remain the durable
@@ -105,8 +107,8 @@ those topics unchanged. Conceptual summaries and preserved legacy notes remain
 available through paginated `read_topic_notes`; private chat handoffs and checked
 answer keys stay private.
 
-Existing topics start structured progress fresh. Their notes and legacy workpads
-remain as historical evidence; they do not establish current progress. State
+Existing topics start structured progress fresh. Their notes remain intact;
+per-topic workpads are neither read nor written. Topic state comes from JSON. State
 writes, the private chat handoff, and the reply commit together before the reply
 appears. Mutations replay under the repository's serialized transaction, merging
 independent thread progress. Stale curriculum/summary replacements are rejected.
@@ -148,6 +150,24 @@ published by these commands.
 runner operations require Electron.
 
 ## Harness boundaries
+
+LangGraph coordinates the tutoring turn through `agent`, `tools`, `validate`,
+`recover`, and `finish` nodes. Codex, Claude Code, and Antigravity remain the
+underlying agent runners; LangGraph does not replace them with a chat model.
+Codex retains its native tool loop and resumable threads. CLI adapters retain
+their structured EdU tool protocol. OpenRouter retains direct model requests.
+The graph enforces each adapter's existing request limit, while the manager
+retains process supervision, the turn deadline, and the final SQLite commit.
+
+Phoenix-compatible OpenTelemetry spans are saved as OTLP protobuf files under
+the active `workspace/phoenix/` directory. Main-process and worker spans share
+trace context and include graph nodes, agent invocations, EdU tools, repair, and
+commit status. Operational metadata excludes learner content and credentials.
+Tracing failures appear in diagnostics without invalidating a saved lesson.
+The exporter and its README are installed in that directory and included outside
+ASAR in packaged resources. Inherited LangSmith tracing flags are disabled in
+the runner. No collector connection is made by the app.
+See [Phoenix Exporter](../phoenix/README.md) for manual upload and local Docker setup.
 
 - The renderer is sandboxed with context isolation and no Node integration.
   A narrow preload bridge exposes validated domain operations; the main process
@@ -198,7 +218,7 @@ runner operations require Electron.
 - Topics contain `topic.md` (conceptual summary), `topic.state.json`
   (versioned curriculum and per-thread progress), and `assets/` (original
   materials and prepared manifests under `assets/cache/prepared/`). Legacy
-  `agent.workpad.md` and older notes remain historical evidence. Private current
+  workpad files are ignored; older notes remain intact. Private current
   keys and session logistics belong to the chat handoff in SQLite. Topics are
   discovered from these folders and refreshed before snapshots and saves.
   Structured topic mutations enter the SQLite transaction; a pending-files marker

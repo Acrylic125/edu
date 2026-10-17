@@ -2,5 +2,9 @@
 temp
 .DS_Store
 .tmp
+.local-test-env/
+__pycache__/
+*.otlp
+.phoenix-export.sqlite3*
 node_modules/
 *.tsbuildinfo

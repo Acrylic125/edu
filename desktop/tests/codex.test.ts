@@ -18,6 +18,8 @@ import { generateTopicTitle } from "../src/runners/title"
 import { createTutorSession } from "../src/runners/tutor"
 import { newChat } from "../src/main/workspace"
 import { WorkerJobSchema, WorkspaceSchema } from "../src/shared/contracts"
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base"
+import { TurnTelemetry } from "../src/runners/telemetry"
 
 const directories: string[] = []
 const clients: CodexAppServer[] = []
@@ -125,6 +127,12 @@ createInterface({input:process.stdin}).on("line",line=>{
  } else if(message.id==="tool-call") {
   let text="Here is your proposed plan. Please review it."
   if(${JSON.stringify(mode)}==="missing-reply" && turns===1) text=""
+  send({method:"item/started",params:{threadId:"thread",item:{id:"comment",type:"agentMessage",phase:"commentary"}}})
+  send({method:"item/agentMessage/delta",params:{threadId:"thread",itemId:"comment",delta:"Private commentary"}})
+  send({method:"item/started",params:{threadId:"thread",item:{id:"answer",type:"agentMessage",phase:"final_answer"}}})
+  send({method:"item/agentMessage/delta",params:{threadId:"other-thread",itemId:"answer",delta:"Wrong thread"}})
+  send({method:"item/agentMessage/delta",params:{threadId:"thread",itemId:"answer",delta:text.slice(0,12)}})
+  send({method:"item/agentMessage/delta",params:{threadId:"thread",itemId:"answer",delta:text.slice(12)}})
   send({method:"item/completed",params:{threadId:"thread",item:{type:"agentMessage",phase:"final_answer",text}}})
   send({method:"turn/completed",params:{threadId:"thread",turn:{status:${JSON.stringify(mode === "failed" ? "failed" : "completed")},error:${mode === "failed" ? '{message:"Provider request failed"}' : "null"}}}})
  } else if(message.method==="echo") setTimeout(()=>send({id:message.id,result:message.params}),message.params.delay)
@@ -135,6 +143,19 @@ createInterface({input:process.stdin}).on("line",line=>{
   )
   return { job, home }
 }
+
+test("native Codex tool spans remain children of the agent runner span", async () => {
+  const { job, home } = await fixture()
+  const exporter = new InMemorySpanExporter()
+  const telemetry = new TurnTelemetry({ directory: home, name: "test", exporter })
+  await runCodexTutorTurn(job, () => {}, () => {}, () => {}, telemetry)
+  const spans = exporter.getFinishedSpans()
+  const agent = spans.find((span) => span.name === "runner.codex")!
+  const tool = spans.find((span) => span.name === "save_learning_state")!
+  expect(tool.parentSpanContext?.spanId).toBe(agent.spanContext().spanId)
+  expect(agent.attributes["openinference.span.kind"]).toBe("AGENT")
+  await telemetry.finish()
+})
 
 test("bundled Codex initializes, reads an isolated account, and discovers models without a CLI installation", async () => {
   const home = await directory()
@@ -221,8 +242,8 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
       if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
     },
   )
-  expect(nodes).toContain("execute_tools")
-  expect(nodes.at(-1)).toBe("publish")
+  expect(nodes).toContain("agent")
+  expect(nodes.at(-1)).toBe("finish")
   expect(result.learning.outline).toEqual(["Limits", "Derivatives"])
   expect(result.learning.workpad).toBe("Waiting for plan confirmation.")
   expect(result.reply).toContain("review")
@@ -258,6 +279,7 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
     "createTopic",
     "getMistakesForTopic",
     "whereAmI",
+    "getTopicProgress",
     "whatIsNext",
     "getQuestions",
     "save_learning_state",
@@ -545,12 +567,14 @@ test("resumes the native Codex thread after restart and sends only the new reque
   expect(requests.filter((request) => request.method === "turn/start").at(-1)?.params).toMatchObject({ input: [{ type: "text", text: "Continue the same conversation" }] })
 })
 
-test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2"])("reconstructs committed history when the saved session is %s", async (reason) => {
+test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "old-handoff-tools", "old-response-tools"])("reconstructs committed history when the saved session is %s", async (reason) => {
   const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 9, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 12, status: "ready" }
   if (reason === "old-tools") job.chat.providerSession.toolVersion = 1
   if (reason === "old-tools-v2") job.chat.providerSession.toolVersion = 2
+  if (reason === "old-handoff-tools") job.chat.providerSession.toolVersion = 10
+  if (reason === "old-response-tools") job.chat.providerSession.toolVersion = 11
   if (reason === "pending") job.chat.providerSession.status = "pending"
   if (reason === "other-account") job.chat.providerSession.home = "/different/account"
   const first = { id: randomUUID(), role: "user" as const, content: "An early request that must survive", createdAt: new Date().toISOString(), topicIds: [] }
@@ -565,7 +589,17 @@ test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2"])(
 test("does not replace a resumable conversation on a transient provider failure", async () => {
   const { job, home } = await fixture("resume-network")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 9, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 12, status: "ready" }
   await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
+})
+
+test("Codex streams final answer deltas while keeping commentary and other threads hidden", async () => {
+  const { job } = await fixture()
+  const updates: string[] = []
+  const result = await runCodexTutorTurn(job, () => {}, () => {}, undefined, undefined, (text: string) => updates.push(text))
+  expect(updates).toContain("Here is your")
+  expect(updates.at(-1)).toBe(result.reply)
+  expect(updates.join(" ")).not.toContain("Private commentary")
+  expect(updates.join(" ")).not.toContain("Wrong thread")
 })

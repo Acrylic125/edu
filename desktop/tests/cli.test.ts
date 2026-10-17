@@ -149,7 +149,7 @@ test.each(["claude", "antigravity"] as const)("%s returns a reply and validated 
   const result = await runCliTutorTurn(job, () => {}, () => {}, (event, details) => {
     if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
   })
-  expect(nodes).toEqual(["model", "execute_tools", "validate", "publish"])
+  expect(nodes).toEqual(["agent", "tools", "validate", "finish"])
   expect(result.reply).toBe(reply)
   expect(result.learning).toEqual(chat.learning)
   expect(command).toHaveBeenCalledTimes(1)

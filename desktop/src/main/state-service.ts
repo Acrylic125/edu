@@ -3,6 +3,8 @@ import { z } from "zod"
 import { type Topic, type Workspace } from "../shared/contracts"
 import { TopicMutationSchema, TopicStateSchema, freshTopicState } from "../shared/topic-state"
 import { newTopic, type WorkspaceRepository } from "./workspace"
+import { parseTopicDirectory, type TopicDirectoryEntrySchema } from "../shared/topic-directory"
+import { materialCitationNames } from "../shared/material-links"
 
 export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats">, threadId: string, input: z.infer<typeof TopicMutationSchema>) {
   const { topics } = workspace
@@ -45,12 +47,14 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
     TopicStateSchema.parse(state)
     attachReferencedMaterials(topic, state, workspace, mutation.materialIds)
     topic.title = state.name
+    const previousContent = mutation.content === undefined ? undefined : topic.state?.content ?? []
     if (mutation.summary !== undefined) {
       const body = mutation.summary.replace(/^\s*# [^\r\n]*(?:\r?\n|$)/, "").trimStart()
-      topic.learning.notes = `# ${state.name}\n\n${body}`
+      topic.learning.notes = summaryFor(state, body, previousContent)
     } else {
       const body = topic.learning.notes.replace(/^\s*# [^\r\n]*(?:\r?\n|$)/, "").trimStart()
-      if (!body.trim()) topic.learning.notes = summaryFor(state)
+      if (mutation.content !== undefined) topic.learning.notes = summaryFor(state, body, previousContent)
+      else if (!body.trim()) topic.learning.notes = summaryFor(state)
       else if (mutation.name !== undefined) topic.learning.notes = `# ${state.name}\n\n${body}`
     }
     topic.learning.outline = state.content.slice(0, 100).map((part) => part.name)
@@ -62,7 +66,8 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
       thread.progress[part.id] = { status: "active", steps: progress?.steps ?? [] }
     } else if (mutation.type === "complete") {
       if (!progress) throw new Error("Visit and activate the part before completing it.")
-      progress.status = "completed"
+      if (mutation.masteryVerified) progress.status = "completed"
+      else progress.status = "covered"
     } else if (mutation.type === "documentMistake") {
       part.mistakes.push({ context: mutation.context, issue: mutation.issue })
     } else if (mutation.type === "recordQuestion") {
@@ -88,14 +93,64 @@ function attachReferencedMaterials(topic: Topic, state: z.infer<typeof TopicStat
       .map((material) => [material.id, material]))
     if (matches.size !== 1) throw new Error(`Reference ${reference.path} needs one supplied source. Use materialIds to select it when filenames are ambiguous.`)
     const material = [...matches.values()][0]
-    if (reference.type !== "image" && reference.pages.some((range) => range.to > material.pages.length))
+    if ((reference.type === "pdf" || reference.type === "ppt") && reference.pages.some((range) => range.to > material.pages.length))
       throw new Error(`Reference pages are outside ${material.name}.`)
     topic.materials.push(material)
   }
 }
 
-function summaryFor(state: z.infer<typeof TopicStateSchema>) {
-  return `# ${state.name}\n\n${state.content.map((part) => `## ${part.name}\n\n${part.goals.objective}`).join("\n\n")}`
+function summaryFor(state: z.infer<typeof TopicStateSchema>, summary = "", previousContent?: z.infer<typeof TopicStateSchema>["content"]) {
+  let body = summary.trim()
+  const parsed = parseTopicDirectory(body)
+  if (!parsed.directory || previousContent !== undefined) {
+    const previous = [...(parsed.directory?.items ?? [])]
+    for (const entry of previous) previous.push(...entry.children)
+    if (parsed.directory) body = `${parsed.before}${parsed.after}`.trim()
+    const entries = (parentId?: string): z.infer<typeof TopicDirectoryEntrySchema>[] =>
+      state.content.filter((part) => part.parent?.id === parentId).map((part) => {
+        let existing = previous.find((entry) => entry.title === part.name)
+        if (!existing) {
+          const previousName = previousContent?.find((previous) => previous.id === part.id)?.name
+          existing = previous.find((entry) => entry.title === previousName)
+        }
+        let anchor = existing?.anchor
+        if (anchor && !body.includes(`<a id="${anchor}"></a>`)) anchor = undefined
+        return {
+          title: part.name,
+          anchor,
+          sources: part.references.map((reference) => {
+            if (reference.type === "website") return { label: reference.url, href: reference.url }
+            const filename = reference.path.split("/").at(-1) ?? reference.path
+            const label = materialCitationNames(filename).at(-1) ?? filename
+            if (reference.type === "image" || reference.type === "text") return { label, href: reference.path }
+            const pages = reference.pages.map(({ from, to }) => {
+              if (from === to) return `${from}`
+              return `${from}-${to}`
+            }).join(", ")
+            return { label: `${label}, pg. ${pages}`, href: `${reference.path}#page=${reference.pages[0].from}` }
+          }),
+          children: entries(part.id),
+        }
+      })
+    let items = entries()
+    if (!items.length) items = [{ title: state.name, sources: [], children: [] }]
+    const encoded = JSON.stringify(items).replace(/'/g, "\\u0027")
+    body = `<topic-directory heading="Topic directory" items='${encoded}' />\n\n${body}`.trim()
+  }
+  if (!/^## Topic terminology\s*$/m.test(body)) {
+    const terminology = "## Topic terminology\n\n| Term | Meaning / useful distinction |\n|---|---|"
+    const materials = /^## Materials\s*$/m.exec(body)
+    if (materials) body = `${body.slice(0, materials.index).trimEnd()}\n\n${terminology}\n\n${body.slice(materials.index)}`
+    else body += `\n\n${terminology}`
+  }
+  if (!/^## Materials\s*$/m.test(body)) {
+    const sources = [...new Set(state.content.flatMap((part) => part.references.map((reference) => {
+      if (reference.type === "website") return `[${reference.url}](${reference.url})`
+      return `[${reference.path.split("/").at(-1)}](<${reference.path}>)`
+    })))].join("\n\n")
+    body += `\n\n## Materials${sources ? `\n\n${sources}` : ""}`
+  }
+  return `# ${state.name}\n\n${body}`
 }
 
 export class StateService {
@@ -136,6 +191,18 @@ export class StateService {
     return options
   }
 
+  async getTopicProgress(topicId: string) {
+    const { state } = this.topic(topicId)
+    return state.content.map((part) => ({
+      part,
+      threads: state.threadTutors.flatMap((thread) => {
+        const progress = thread.progress[part.id]
+        if (!progress) return []
+        return [{ threadId: thread.id, progress }]
+      }),
+    }))
+  }
+
   async getQuestions(topicId: string, topicPartId: string) {
     const { state } = this.topic(topicId)
     if (!state.content.some((part) => part.id === topicPartId)) throw new Error("Topic part not found.")
@@ -151,8 +218,8 @@ export class StateService {
     await this.write({ type: "activatePart", topicId, topicPartId })
   }
 
-  async complete(topicId: string, topicPartId: string) {
-    await this.write({ type: "complete", topicId, topicPartId })
+  async complete(topicId: string, topicPartId: string, masteryVerified = true) {
+    await this.write({ type: "complete", topicId, topicPartId, masteryVerified })
   }
 
   async documentMistake(topicId: string, topicPartId: string, context: string, issue: string) {

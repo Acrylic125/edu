@@ -1,5 +1,6 @@
+import { messageText } from "../shared/message-text"
 import { randomUUID } from "node:crypto"
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import OpenAI from "openai"
 import type {
@@ -7,8 +8,6 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions"
-import { createIsomorphicCanvasFactory, getDocumentProxy, renderPageAsImage } from "unpdf"
-import { createCanvas, loadImage } from "@napi-rs/canvas"
 import { z } from "zod"
 import {
   LearningStateSchema,
@@ -19,7 +18,17 @@ import {
 } from "../shared/contracts"
 import { TopicMutationSchema, TopicToolNames, TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
 import { StateService } from "../main/state-service"
-import { runTutorGraph } from "./tutor-graph"
+import { runAgentGraph } from "./graph"
+import type { TurnTelemetry } from "./telemetry"
+import { readSourceImages } from "../main/source-images"
+import { parseTopicDirectory, validateTopicDirectory, topicDirectoryFormat } from "../shared/topic-directory"
+import { resolveMaterialLink } from "../shared/material-links"
+
+// Persisted chats may have an empty handoff; tool submissions must be ready to publish.
+const SaveLearningStateSchema = LearningStateSchema.safeExtend({
+  workpad: LearningStateSchema.shape.workpad.min(1, "A private handoff and a concrete next action are required.").regex(/\S/, "A private handoff and a concrete next action are required.").describe("Private handoff for the next turn. If no question is pending, record the current status explicitly."),
+  nextAction: LearningStateSchema.shape.nextAction.min(1, "A private handoff and a concrete next action are required.").regex(/\S/, "A private handoff and a concrete next action are required.").describe("Concrete next action, including waiting for the learner when appropriate."),
+})
 
 export const skillFiles = [
   "references/FILE_STRUCTURE.md",
@@ -51,10 +60,11 @@ const MistakesSchema = z.object({ topics: z.array(z.uuid()).nullable() })
 const stateToolDescriptions = {
   getMistakesForTopic: "Read structured mistakes for the supplied topics, or all topics including archived topics when topics=null. Call only to create evaluation questions for these topics or when explicitly asked. Read-only.",
   whereAmI: "Read the current thread's active topic parts and question progress. Reading never registers this thread as a tutor.",
+  getTopicProgress: "Read curriculum-ordered progress across all tutor threads for topic status questions, including covered parts with mastery unverified, completed parts with verified mastery, and untouched parts. Read-only; never registers this thread as a tutor.",
   whatIsNext: "Read every active continuation across tutor threads and only the very next part untouched by any thread. Call only for a fresh thread, when explicitly asked, or after completing a part or step. Present multiple choices to the learner.",
   getQuestions: "Read exact questions and learner answers across all tutor threads for a part. Call only when explicitly asked or to deduplicate evaluation questions.",
   documentMistake: "Record context and issue after an incorrect answer has been deliberated and confirmed. Registers this thread as a writer. Distinguish tutor mistakes in the issue.",
-  complete: "Mark a part completed for this thread only when all its goals and understoodWhen criteria are satisfied by the learner's reasoning. The tutor must evaluate this. Registers this thread as a writer.",
+  complete: "Finish a part for this thread only after its understanding checks are resolved or the learner explicitly skips them. Keep a part with a pending check active. Set masteryVerified=false when its walkthrough is finished but mastery remains unverified; this records covered status. Set masteryVerified=true only when the learner's reasoning satisfies every goal and understoodWhen criterion; this records completed status. Registers this thread as a writer.",
   activatePart: "Mark a part active when this thread visits it. Completed parts can be reactivated. Registers this thread as a writer.",
   createTopic: "Create a topic folder, topic summary, topic.state.json and assets only when explicitly requested or when a prerequisite topic is necessary. Referenced supplied assets are copied into the new topic; use materialIds to select sources when filenames are ambiguous. Registers this thread as a writer. Returns topicId.",
   updateTopic: "Set curriculum content, references and goals, or revise the topic summary. Keep summaries conceptual; questions, answers, mistakes and progress belong in structured state. Preserve IDs and existing evidence. Referenced supplied assets are copied into this topic; materialIds selects ambiguous source filenames. Registers this thread as a writer.",
@@ -109,6 +119,7 @@ const tools: ChatCompletionTool[] = [
   ...mutationTools,
   { type: "function", function: { name: "getMistakesForTopic", description: stateToolDescriptions.getMistakesForTopic, parameters: z.toJSONSchema(MistakesSchema) } },
   { type: "function", function: { name: "whereAmI", description: stateToolDescriptions.whereAmI, parameters: z.toJSONSchema(TopicReadSchema) } },
+  { type: "function", function: { name: "getTopicProgress", description: stateToolDescriptions.getTopicProgress, parameters: z.toJSONSchema(TopicReadSchema) } },
   { type: "function", function: { name: "whatIsNext", description: stateToolDescriptions.whatIsNext, parameters: z.toJSONSchema(TopicReadSchema) } },
   { type: "function", function: { name: "getQuestions", description: stateToolDescriptions.getQuestions, parameters: z.toJSONSchema(QuestionsSchema) } },
   {
@@ -117,7 +128,7 @@ const tools: ChatCompletionTool[] = [
       name: "save_learning_state",
       description:
         "Stage this chat's private handoff. Required on every turn before your final reply. Record a pending cross-topic question here; keep checked keys only in privateAnswerKey/workpad.",
-      parameters: z.toJSONSchema(LearningStateSchema),
+      parameters: z.toJSONSchema(SaveLearningStateSchema),
     },
   },
 ]
@@ -125,6 +136,7 @@ const tools: ChatCompletionTool[] = [
 export async function createTutorSession(
   job: WorkerJob,
   activity: (message: string) => void,
+  telemetry?: TurnTelemetry,
 ) {
   const guide = await readFile(join(job.skillDirectory, "SKILL.md"), "utf8")
   const references = await Promise.all(
@@ -147,14 +159,16 @@ export async function createTutorSession(
       sourceUrl: `edu-material://${material.id}/1`,
     }))
   const instructions = `${guide}\n\n${references.join("\n\n")}\n\nDesktop harness contract:
-Follow the bundled skill. read_material supplies extracted pages and source images. read_skill loads additional guidance. Native shell access and delegation are unavailable. External web search is unavailable in this harness: after exhausting supplied practice sources, explain the limitation and end practice; never present an authored question as an internet source.
+Follow the bundled skill. read_material supplies extracted pages and source images. read_skill loads additional guidance. Guidance already included below does not need to be read again. Batch independent source reads and guidance reads together when possible. Native shell access and delegation are unavailable. External web search is unavailable in this harness: after exhausting supplied practice sources, explain the limitation and end practice; never present an authored question as an internet source.
 This is an independent chat. A topic can be taught by several chat threads. Use structured state tools for all topic progress, questions, answers, and mistakes. All writers register the current app chat ID (${job.chat.id}) as a threadTutor. Never supply another thread's id to write its progress. Read-only references never register a tutor. Topic tool changes are staged, then replayed under the repository mutex against current state and committed with the final reply.
-Currently open topic: ${job.openedTopicId ?? "none"}. Explicit topic mentions or instructions take precedence. Read whereAmI for this thread's current part. For a fresh thread, an explicit continuation request, or after completion of a part or step, read whatIsNext. If more than one continuation is returned, ask the learner to choose. A continuation in another thread is evidence to resume from, not permission to overwrite that thread. Activate the chosen part for this thread.
+Currently open topic: ${job.openedTopicId ?? "none"}. Explicit topic mentions or instructions take precedence. Initial topic status below supplies whereAmI, topicProgress (getTopicProgress), and whatIsNext results for this turn. Use these supplied results without repeating the same reads; refresh through the tools after staged progress changes or for topics absent from the snapshot. For a topic status question such as 'Which part are we on?', use topicProgress and report the furthest covered/completed part, any active part, and the next untouched part across threads. State when coverage has unverified mastery. An empty whereAmI only means this thread has no active part; it does not mean the topic has no progress. Answer status questions directly without making the learner choose a resumption or activating a part. Use whereAmI for this thread's active work and whatIsNext for a fresh thread or explicit continuation request. Refresh whatIsNext after completing a part or step. When the learner asks to resume and more than one continuation is returned, ask the learner to choose. A continuation in another thread is evidence to resume from, not permission to overwrite that thread. Activate the chosen part for this thread.
 Only tagged/open topics and topics created this turn may be written. Read-only cross-topic reviews include archived topics. getMistakesForTopic retrieves structured mistakes; old Markdown records are legacy evidence and do not establish new structured progress. read_topic_notes reads conceptual summaries and preserved legacy notes.
 A tagged topic with planConfirmed=false needs an approved curriculum before teaching. Use updateTopic to propose its content and goals; keep this chat awaiting_plan_confirmation. Only the Confirm plan action approves a plan. Plan approved on this turn: ${job.confirmTopicId ?? "none"}. Persisted planConfirmed=true remains approval on later turns.
-topic.md is a conceptual topic summary. Use updateTopic.summary only for subject explanations, worked examples and source references. Use recordQuestion and recordAnswer for exact questions and actual learner answers. Use documentMistake for confirmed mistakes after deliberation. Use complete only when all part goals are satisfied. Keep answer keys, temporary remediation and session logistics in this chat's private handoff. Legacy topic workpads are historical and cannot direct progress.
-Call save_learning_state before the final reply. Its notes field is private chat context, not the topic summary. Keep checked keys only in privateAnswerKey/workpad. Repair rejected state writes with the same tool and target before publishing. Provide the learner-facing explanation, question or choice in the final reply.
-In chat, cite sources as Sourced from: [Lecture.pdf, pg. 6-7](edu-material://<material-id>/6). For visuals call read_material with includeVisuals=true and embed ![Description](prune-source://<material-id>/<page>). Use relative assets/<filename> links in summaries and paths relative to topic.state.json in structured references. A source reference type is pdf, ppt, image or website. PDF and PPT ranges are 1-based and inclusive.
+topic.md is a growing conceptual summary of what has actually been discussed. Use updateTopic.summary to fill gaps incrementally and clarify the relevant explanation when a mistake reveals ambiguous phrasing. Preserve useful existing explanations; do not append a transcript or a learner mistake log. Follow GUIDE_DOCUMENT_TEMPLATE.md: title, one <topic-directory /> element, headings for the topic parts taught so far, Topic terminology, and Materials. Explain each part using references/TUTOR_EXPLANATION.md. The directory follows the curriculum hierarchy; link a part only once its notes exist. Use single-quoted JSON items and encode apostrophes as \\u0027. Example:
+${topicDirectoryFormat}
+Use updateTopic.summary only for subject explanations, worked examples, terminology and source references. Use recordQuestion and recordAnswer for exact questions and actual learner answers. Use documentMistake for confirmed mistakes after deliberation. Follow the bundled skill's walkthrough questions, own-words summary, and goal-based follow-ups. Offer the permitted choices at part boundaries; choosing to continue does not demonstrate mastery. After those checks are resolved or explicitly skipped, call complete with masteryVerified=false if mastery is unverified. Use masteryVerified=true only when all part goals are satisfied by the learner’s reasoning. Keep answer keys, temporary remediation and session logistics in this chat's private handoff. Topic workpads are unused. Read all topic curriculum, progress, questions, answers and mistakes through the structured state tools backed by topic.state.json.
+Call save_learning_state once after completing the other state writes and before the final reply. Both workpad and nextAction must contain non-whitespace text, even for status requests or when waiting for confirmation. Its notes field is private chat context, not the topic summary. Keep checked keys only in privateAnswerKey/workpad. Repair rejected state writes with the same tool and target before publishing. Provide the learner-facing explanation, question or choice in the final reply.
+In chat, cite sources as Sourced from: [Lecture.pdf, pg. 6-7](edu-material://<material-id>/6). For visuals call read_material with includeVisuals=true and embed ![Description](prune-source://<material-id>/<page>). For summaries, including Materials, use the local Markdown link syntax in references/FILE_STRUCTURE.md: [Lecture.pdf](<assets/Lecture.pdf#page=1>), retaining the exact supplied filename inside angle brackets. Structured reference paths remain relative to topic.state.json. A source reference type is pdf, ppt, image, text or website. Use text for plain-text, Markdown and source-code attachments, for example {"type":"text","path":"assets/Lecture 4 - Code used in lecture.txt"}; text and image references have no page ranges. PDF and PPT ranges are 1-based and inclusive.
 Chat materials: ${JSON.stringify(describe(job.chat.materials))}
 Chat handoff: ${JSON.stringify(job.chat.learning)}
 Workspace topic directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topic.id, title: topic.title, archived: topic.archived, notesCharacters: topic.notes.length })))}
@@ -198,10 +212,29 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       return operation
     },
   }, job.chat.id)
+  const initialStatus = await Promise.all(job.topics.map(async (topic) => {
+    const current = await stateService.whereAmI(topic.id)
+    const progress = await stateService.getTopicProgress(topic.id)
+    const continuations = await stateService.whatIsNext(topic.id)
+    return {
+      topicId: topic.id,
+      whereAmI: current.map(({ part, progress }) => ({
+        topicPartId: part.id, name: part.name, status: progress.status,
+        latestQuestion: progress.steps.at(-1)?.question ?? null,
+      })),
+      topicProgress: progress.map(({ part, threads }) => ({
+        topicPartId: part.id, name: part.name,
+        threads: threads.map(({ threadId, progress }) => ({ threadId, status: progress.status })),
+      })),
+      whatIsNext: continuations.map(({ label, threadId, part, progress }) => ({
+        label, threadId, topicPartId: part.id, name: part.name, status: progress?.status ?? null,
+      })),
+    }
+  }))
   let saved: LearningState | undefined
   const saveErrors = new Map<string, string>()
-  return {
-    instructions,
+  const session = {
+    instructions: `${instructions}\nInitial topic status: ${JSON.stringify(initialStatus)}`,
     tools,
     async execute(
       name: string,
@@ -259,70 +292,23 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           ) {
             if (lastPage - firstPage >= 3)
               throw new Error("Read at most 3 visual pages at a time.")
-            const sourcePath = join(directory, material.name)
-            const sourceStat = await stat(sourcePath)
-            const cachedPages = await Promise.all(
-              Array.from({ length: lastPage - firstPage + 1 }, async (_, index) => {
-                const path = join(directory, `source-${id}-${firstPage + index}.png`)
-                try {
-                  if ((await stat(path)).mtimeMs < sourceStat.mtimeMs) return
-                  const png = await readFile(path)
-                  if (png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return png
-                } catch (error) {
-                  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
-                }
-              }),
-            )
-            let bytes: Buffer | undefined
-            if (cachedPages.some((png) => !png)) bytes = await readFile(sourcePath)
-            const pdf =
-              material.kind === "pdf" && bytes
-                ? await getDocumentProxy(new Uint8Array(bytes), {
-                    // PDF.js otherwise picks a DOM canvas in Electron utility processes.
-                    CanvasFactory: await createIsomorphicCanvasFactory(() => import("@napi-rs/canvas")),
-                  })
-                : undefined
-            try {
-              for (let page = firstPage; page <= lastPage; page++) {
-                let png = cachedPages[page - firstPage]
-                if (!png) {
-                  if (pdf) {
-                    png = Buffer.from(
-                      await renderPageAsImage(pdf, page, {
-                        canvasImport: () => import("@napi-rs/canvas"),
-                        scale: 1.3,
-                      }),
-                    )
-                  } else {
-                    if (!bytes) throw new Error("Source image is unavailable.")
-                    const source = await loadImage(bytes)
-                    const scale = Math.min(1, 1600 / Math.max(source.width, source.height))
-                    const canvas = createCanvas(
-                      Math.max(1, Math.round(source.width * scale)),
-                      Math.max(1, Math.round(source.height * scale)),
-                    )
-                    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height)
-                    png = Buffer.from(canvas.toBuffer("image/png"))
-                  }
-                  await writeFile(join(directory, `source-${id}-${page}.png`), png, { mode: 0o600 })
-                }
-                const url = `prune-source://${id}/${page}`
-                result += `\nSource image page ${page}: ${url}. Embed this image when discussing its visual content. Exclude answer annotations for pending assessments.`
-                sourceImages.push(
-                  {
-                    type: "text",
-                    text: `${material.name}, page ${page}. Display URL: ${url}`,
+            const images = await readSourceImages(material, directory, firstPage, lastPage)
+            for (let page = firstPage; page <= lastPage; page++) {
+              const png = images[page - firstPage]
+              const url = `prune-source://${id}/${page}`
+              result += `\nSource image page ${page}: ${url}. Embed this image when discussing its visual content. Exclude answer annotations for pending assessments.`
+              sourceImages.push(
+                {
+                  type: "text",
+                  text: `${material.name}, page ${page}. Display URL: ${url}`,
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/png;base64,${png.toString("base64")}`,
                   },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:image/png;base64,${png.toString("base64")}`,
-                    },
-                  },
-                )
-              }
-            } finally {
-              await pdf?.loadingTask.destroy()
+                },
+              )
             }
           }
         } else if (TopicToolNames.some((tool) => tool === name)) {
@@ -332,6 +318,8 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
             result = JSON.stringify(await stateService.getMistakesForTopic(MistakesSchema.parse(input).topics))
           } else if (name === "whereAmI") {
             result = JSON.stringify(await stateService.whereAmI(TopicReadSchema.parse(input).topicId))
+          } else if (name === "getTopicProgress") {
+            result = JSON.stringify(await stateService.getTopicProgress(TopicReadSchema.parse(input).topicId))
           } else if (name === "whatIsNext") {
             result = JSON.stringify(await stateService.whatIsNext(TopicReadSchema.parse(input).topicId))
           } else if (name === "getQuestions") {
@@ -350,6 +338,18 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
                 if (mutation.content !== undefined) mutation.expectedContent = topic.state?.content ?? []
               }
             }
+            if (mutation.type === "updateTopic" && mutation.summary !== undefined && /<topic-directory|^#{1,6}\s+Topic directory\b/im.test(mutation.summary)) {
+              validateTopicDirectory(mutation.summary)
+              const entries = [...(parseTopicDirectory(mutation.summary).directory?.items ?? [])]
+              const materials = [...new Map(sources.map(({ material }) => [material.id, material])).values()]
+              for (const entry of entries) {
+                entries.push(...entry.children)
+                for (const source of entry.sources) {
+                  if (!/^https?:\/\//.test(source.href) && !resolveMaterialLink(source.href, materials))
+                    throw new Error(`Unknown directory source: ${source.href}. Use the exact supplied material filename or source URL.`)
+                }
+              }
+            }
             await stateService.write(mutation)
             if (mutation.type === "createTopic" || mutation.type === "updateTopic") {
               mutation.materialIds = staged.topics.find((topic) => topic.id === mutation.topicId)?.materials.map((material) => material.id)
@@ -361,11 +361,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           }
         } else if (name === "save_learning_state") {
           saved = undefined
-          const candidate = LearningStateSchema.parse(input)
-          if (!candidate.workpad.trim() || !candidate.nextAction.trim())
-            throw new Error(
-              "A private handoff and a concrete next action are required.",
-            )
+          const candidate = SaveLearningStateSchema.parse(input)
           saved = candidate
           activity("Saving the chat handoff")
           result =
@@ -379,6 +375,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
 
         }
       } catch (error) {
+        telemetry?.reject()
         success = false
         result = `Tool error: ${error instanceof Error ? error.message : "Invalid tool arguments."}`
         if (saveKey) saveErrors.set(saveKey, result)
@@ -393,6 +390,12 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
         return [...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected topic write. ${error}`).join("\n")
       }
     },
+    previewReply(reply: string) {
+      if (!saved || saveErrors.size) return ""
+      // Pending assessment replies stay buffered so a rejected private key never flashes in chat.
+      if (["awaiting_answer", "awaiting_clarification", "contested"].includes(saved.phase) && saved.privateAnswerKey.trim().length > 20) return ""
+      return reply
+    },
     finish(reply: string) {
       if (!saved || saveErrors.size)
         throw new Error(
@@ -401,6 +404,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
         )
       if (!reply.trim())
         throw new Error("The runner returned no lesson. Retry this turn.")
+      const visibleResponse = messageText({ content: reply, responseQuestion: saved.responseQuestion })
       const states = [saved]
       for (const state of states) {
         const pendingKey = state.privateAnswerKey.trim()
@@ -408,7 +412,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
           pendingKey.length > 20 &&
           states.some(
-            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey) || staged.topics.some((topic) => topic.learning.notes.includes(pendingKey) || JSON.stringify(topic.state).includes(pendingKey)),
+            (other) => visibleResponse.includes(pendingKey) || other.notes.includes(pendingKey) || staged.topics.some((topic) => topic.learning.notes.includes(pendingKey) || JSON.stringify(topic.state).includes(pendingKey)),
           )
         )
           throw new Error(
@@ -423,6 +427,12 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       }
     },
   }
+  if (telemetry) {
+    const execute = session.execute
+    session.execute = (name, input) => telemetry.span(name, "TOOL",
+      () => execute(name, input), { "tool.name": name })
+  }
+  return session
 }
 
 export async function runTutorTurn(
@@ -430,55 +440,97 @@ export async function runTutorTurn(
   client: Pick<OpenAI, "chat">,
   activity: (message: string) => void,
   diagnostic: Diagnostic = () => {},
+  telemetry?: TurnTelemetry,
+  onReply: (text: string) => void = () => {},
 ) {
-  const session = await createTutorSession(job, activity)
+  const session = await createTutorSession(job, activity, telemetry)
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: session.instructions },
-    ...job.chat.messages.map((message) => ({ role: message.role, content: message.content })),
+    ...job.chat.messages.map((message) => ({ role: message.role, content: messageText(message) })),
   ]
-  return runTutorGraph({
-    session,
-    maxAttempts: 16,
+  let response: OpenAI.Chat.Completions.ChatCompletionMessage | undefined
+  return runAgentGraph({
+    limit: 16,
     diagnostic,
-    exhausted: () => new Error("The runner reached its tool limit. Retry with a narrower request."),
-    async model(attempt) {
+    telemetry,
+    runner: job.runner,
+    async run(iteration) {
       activity("Preparing your lesson")
-      diagnostic("model.request", { iteration: attempt, model: job.runner.model })
-      const completion = await client.chat.completions.create({
+      diagnostic("model.request", {
+        iteration,
+        model: job.runner.model,
+      })
+      onReply("")
+      const stream = client.chat.completions.stream({
         model: job.runner.model,
         messages,
         tools: session.tools,
         max_completion_tokens: 12_000,
-        stream: false,
+        stream: true,
       })
-      const response = completion.choices[0]?.message
-      if (!response) throw new Error("The model returned no response. Try another runner or retry.")
+      stream.on("content", (_delta, text) => onReply(session.previewReply(text)))
+      const completion = await stream.finalChatCompletion()
+      response = completion.choices[0]?.message
+      if (!response)
+        throw new Error(
+          "The model returned no response. Try another runner or retry.",
+        )
       if (completion.choices[0].finish_reason === "length")
-        throw new Error("The lesson exceeded the model response limit. Ask for a smaller section and retry.")
+        throw new Error(
+          "The lesson exceeded the model response limit. Ask for a smaller section and retry.",
+        )
       messages.push(response)
       diagnostic("model.response", {
-        iteration: attempt,
+        iteration,
         finishReason: completion.choices[0].finish_reason,
         toolCalls: response.tool_calls?.length ?? 0,
         replyCharacters: response.content?.length ?? 0,
         saved: session.saved,
       })
-      const calls = (response.tool_calls ?? []).map((call) => {
-        if (call.type !== "function") throw new Error("The model requested an unsupported tool.")
-        return { id: call.id, name: call.function.name, arguments: call.function.arguments }
-      })
-      return { reply: response.content ?? "", calls, finishAfterTools: false }
+      if (response.tool_calls?.length) return "tools"
+      return "validate"
     },
-    consumeTools(calls, results) {
+    ready: () => session.saved && !!response?.content?.trim(),
+    recover() {
+      messages.push({
+        role: "user",
+        content:
+          `Save the complete learning state with save_learning_state, then provide the learner-facing reply.${session.saveError ? `\nCorrect rejected saves first: ${session.saveError}` : ""}`,
+      })
+    },
+    async tools() {
       const sourceImages: ChatCompletionContentPart[] = []
-      for (const [index, call] of calls.entries()) {
-        const result = results[index]
-        if (!call.id || !result) throw new Error("A tutoring tool result is missing its call ID.")
-        messages.push({ role: "tool", tool_call_id: call.id, content: result.text })
+      for (const call of response?.tool_calls ?? []) {
+        if (call.type !== "function")
+          throw new Error("The model requested an unsupported tool.")
+        diagnostic("tool.call", { tool: call.function.name })
+        let input: Parameters<typeof LearningStateSchema.parse>[0]
+        try {
+          input = JSON.parse(call.function.arguments)
+        } catch {
+          // Failed saves must invalidate publication even if an earlier handoff was valid.
+          input = null
+        }
+        const result = await session.execute(call.function.name, input)
+        diagnostic("tool.result", {
+          tool: call.function.name,
+          success: result.success,
+          error: result.success ? null : result.text,
+        })
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: result.text,
+        })
         sourceImages.push(...result.images)
       }
-      if (sourceImages.length) messages.push({ role: "user", content: sourceImages })
+      if (sourceImages.length)
+        messages.push({ role: "user", content: sourceImages })
+      return "agent"
     },
-    recover(message) { messages.push({ role: "user", content: message }) },
+    finish: () => session.finish(response?.content ?? ""),
+    exhausted: () => new Error(
+      "The runner reached its tool limit. Retry with a narrower request.",
+    ),
   })
 }

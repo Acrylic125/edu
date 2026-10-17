@@ -3,7 +3,10 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, test, vi } from "vitest"
 import { importMaterials, MaterialDrafts } from "../src/main/materials"
-import { newChat, WorkspaceRepository } from "../src/main/workspace"
+import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
+import { StateService } from "../src/main/state-service"
+import { parseTopicDirectory } from "../src/shared/topic-directory"
+import { resolveMaterialLink } from "../src/shared/material-links"
 
 const selection = vi.hoisted(() => ({ canceled: false, filePaths: [] as string[] }))
 vi.mock("electron", () => ({ dialog: { showOpenDialog: async () => selection } }))
@@ -26,6 +29,38 @@ async function fixture() {
   selection.canceled = false
   return { repository, chat, source, destination: join(repository.directory, "chats", chat.id, "assets", "source.txt") }
 }
+
+test("a structured lecture text reference copies its asset and survives reload without advancing progress", async () => {
+  const { repository, chat, source } = await fixture()
+  const name = "Lecture 4 - Code used in lecture.txt"
+  const lecture = join(repository.directory, name)
+  await writeFile(lecture, await readFile(source))
+  await importMaterials(repository, { kind: "chat", id: chat.id }, [lecture])
+  const material = repository.chat(chat.id).materials[0]
+  const topic = newTopic("Fresh Walkthrough")
+  await repository.mutate((state) => state.topics.push(topic))
+  const service = new StateService(repository, chat.id)
+  const content = ["4a", "4c"].map((section) => ({
+    id: `tp-${section}`, name: section.toUpperCase(), references: [],
+    goals: { id: `tpg-${section}`, objective: "Trace the code", understoodWhen: ["Explain the output"] }, mistakes: [],
+  }))
+  await service.updateTopic(topic.id, { content })
+  await service.activatePart(topic.id, "tp-4c")
+  await service.complete(topic.id, "tp-4c", false)
+  await service.updateTopic(topic.id, {
+    materialIds: [material.id],
+    content: [{ ...content[0], references: [{ type: "text", path: `assets/${name}` }] }, content[1]],
+  })
+  const reloaded = new WorkspaceRepository(repository.directory)
+  await reloaded.load()
+  const saved = reloaded.topic(topic.id)
+  expect(saved.state?.content[0].references).toEqual([{ type: "text", path: "assets/Lecture 4 - Code used in lecture.txt" }])
+  expect(saved.state?.threadTutors).toEqual([{ id: chat.id, progress: { "tp-4c": { status: "covered", steps: [] } } }])
+  expect(await readFile(join(repository.directory, "topics", topic.id, "assets", name), "utf8")).toBe("Useful study material")
+  const citation = parseTopicDirectory(saved.learning.notes).directory?.items[0].sources[0]
+  expect(citation).toEqual({ label: "Lecture 4.txt", href: "assets/Lecture 4 - Code used in lecture.txt" })
+  expect(resolveMaterialLink(citation?.href ?? "", saved.materials)).toEqual({ id: material.id, page: 1 })
+})
 
 test("removes copied assets when a later import validation fails", async () => {
   const { repository, chat, source, destination } = await fixture()

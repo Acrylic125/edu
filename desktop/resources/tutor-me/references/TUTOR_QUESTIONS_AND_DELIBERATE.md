@@ -4,17 +4,21 @@ Ask one question at a time. Let the answer determine the next question rather th
 
 ## Walk through a topic
 
-Explain a coherent source section first. If it contains a question or example, ask the relevant question after teaching the concepts. For an unsolved exercise, preserve the learner's chance to attempt it. Ask the learner to summarize the part in their own words. Probe the reasoning until the part's goals and [understanding criteria](WHAT_IS_UNDERSTANDING.md) are met.
+Explain a coherent source section first. While walking through, if the source material poses a question or example, ask. Explain worked examples as required by TUTOR_EXPLANATION.md; preserve the learner's attempt at an unsolved exercise before revealing its solution unless they request a walkthrough.
+
+Ask the learner to summarize the part in their own words. Push on understanding with targeted follow-ups until the part's goals meet the [understanding criteria](WHAT_IS_UNDERSTANDING.md). Evaluate the reasoning, not just the result; a correct choice alone does not establish understanding. Ask one question at a time, chosen from the preceding answer.
+
+After a check establishes understanding, offer continue or quick practice as a multiple-choice response. A test can be offered at a part boundary. For a short, optional, unimportant part, an option to continue can be provided. If the learner continues without assessment, preserve the unassessed goals rather than claiming mastery.
 
 ## Practice after a part
 
-Call `getQuestions(topicId, topicPartId)` to deduplicate prior questions. Source exercises from attached practice assets, excluding walkthrough examples. Reuse an earlier question for remediation only when it was not correctly answered, and identify the attempt as assisted practice. Move to internet questions when no suitable unused attached exercise remains; if none can be sourced, end practice. If web search is unavailable, state that limitation and end practice instead of inventing an internet source.
+Call `getQuestions(topicId, topicPartId)` to deduplicate prior questions. Source questions from attached assets, excluding walkthroughs and questions already answered correctly. When no suitable attached question remains, source internet questions that have not been asked previously. End practice when neither source has a suitable question. If web search is unavailable, state that limitation and end practice instead of inventing an internet source.
 
 ## Independent tests
 
 Retrieve `getMistakesForTopic` for the topics being evaluated and `getQuestions` for their relevant parts. These reads can run concurrently. Use `topics: null` only for an all-topics evaluation or explicit all-topics mistake request.
 
-Prioritize attached practice assets, then internet questions, then end the test when neither has a viable unused question. Exclude walkthrough examples and questions already answered correctly. Favor opportunities to revisit recorded mistakes and combine understanding across topics. Increase difficulty based on demonstrated understanding. [TUTOR_TESTS.md](TUTOR_TESTS.md) describes the same selection boundary for a requested test.
+Prioritize questions from attached assets, excluding walkthroughs and questions already answered correctly. Then source internet questions that have not been asked previously. End the test when neither source has a suitable question. Favor opportunities to revisit recorded mistakes and combine understanding across topics. [TUTOR_TESTS.md](TUTOR_TESTS.md) describes the same selection boundary for a requested test.
 
 ## Deliberate before documenting a mistake
 
@@ -24,4 +28,4 @@ Offer to verify disputed reasoning with a small test script or walkthrough, expl
 
 After deliberation confirms an incorrect answer, call `documentMistake` with its context and the issue plus rationale. Clearly distinguish learner errors from tutor errors. An unanswered question, wording preference, or request for explanation is not evidence of a mistake.
 
-Record each exact question with `recordQuestion` and each actual learner answer with `recordAnswer`. Keep a checked key in the private chat handoff. When a follow-up is needed, preserve the original answer and append a new question step. Use `complete` only after the learner's reasoning satisfies every goal. Exact question/answer records and mistake history live in topic.state.json; the topic summary contains useful conceptual explanations.
+Record each exact question with `recordQuestion` and each actual learner answer with `recordAnswer`. Keep a checked key in the private chat handoff. When a follow-up is needed, preserve the original answer and append a new question step. Use `complete` with `masteryVerified=true` only after the learner's reasoning satisfies every goal. After the part's checks are resolved or explicitly skipped, a finished walkthrough with unverified mastery uses `masteryVerified=false`, recording coverage without mastery. Keep a part with a pending check active. Exact question/answer records and mistake history live in topic.state.json; the topic summary contains useful conceptual explanations.

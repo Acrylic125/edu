@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { _electron, expect, test } from "@playwright/test"
@@ -10,7 +10,13 @@ test("dropping native files into topic and chat composers attaches them without 
   const repository = new WorkspaceRepository(join(directory, "workspace"))
   await repository.load()
   const chat = newChat(repository.stateSnapshot.runners[0].id, "Existing chat")
-  await repository.mutate((state) => state.chats.push(chat))
+  const executable = resolve("tests/fixtures/provider-cli.mjs")
+  await chmod(executable, 0o755)
+  await repository.mutate((state) => {
+    state.chats.push(chat)
+    state.runners[0].provider = "claude"
+    state.providerSettings.push({ id: "claude", displayName: "Fixture tutor", binaryPath: executable, enabled: true })
+  })
   const source = join(directory, "notes.txt")
   const code = join(directory, "example.ts")
   const slides = resolve("tests/fixtures/materials/lecture.pptx")
@@ -36,6 +42,7 @@ test("dropping native files into topic and chat composers attaches them without 
       }
     })
     const page = await app.firstWindow()
+    await page.getByRole("button", { name: "New topic", exact: true }).click()
     const topicDraft = page.getByRole("textbox", { name: "Message your tutor" })
     await expect(topicDraft).toBeVisible()
     await topicDraft.fill("Teach me limits")
@@ -82,8 +89,9 @@ test("dropping native files into topic and chat composers attaches them without 
     await chatDraft.fill("Explain these notes")
     await chatDraft.dispatchEvent("dragover", { dataTransfer: transfer })
     await chatDraft.dispatchEvent("drop", { dataTransfer: transfer })
-    await expect(chatDraft.locator("xpath=ancestor::form").getByText("notes.txt", { exact: true })).toBeVisible()
+    await expect(chatDraft.locator("xpath=ancestor::form").getByText("notes.txt", { exact: true })).toHaveCount(0)
     await expect(chatDraft).toHaveText("Explain these notes")
+    await expect.poll(async () => (await page.evaluate(() => window.prune?.snapshot()))?.chats[0].materials.length).toBe(3)
     expect((await page.evaluate(() => window.prune?.snapshot()))?.chats[0].materials)
       .toEqual([
         expect.objectContaining({ name: "notes.txt", kind: "text" }),
@@ -95,8 +103,9 @@ test("dropping native files into topic and chat composers attaches them without 
     await page.getByRole("button", { name: "New chat", exact: true }).click()
     await chatDraft.fill("A new chat draft")
     await chatDraft.dispatchEvent("drop", { dataTransfer: transfer })
-    await expect(chatDraft.locator("xpath=ancestor::form").getByText("notes.txt", { exact: true })).toBeVisible()
+    await expect(chatDraft.locator("xpath=ancestor::form").getByText("notes.txt", { exact: true })).toHaveCount(0)
     await expect(chatDraft).toHaveText("A new chat draft")
+    await expect.poll(async () => (await page.evaluate(() => window.prune?.snapshot()))?.chats[0].materials.length).toBe(3)
     const afterNewChat = await page.evaluate(() => window.prune?.snapshot())
     expect(afterNewChat?.chats).toHaveLength(2)
     expect(afterNewChat?.chats[0].materials).toHaveLength(3)

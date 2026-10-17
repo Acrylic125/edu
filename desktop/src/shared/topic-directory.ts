@@ -1,25 +1,26 @@
 import { z } from "zod"
+import { TopicPartSchema } from "./topic-state"
 
 const TopicDirectorySourceSchema = z.object({
-  label: z.string().trim().min(1).max(200),
-  href: z.string().trim().min(1).max(1000),
+  label: z.string().trim().min(1),
+  href: z.string().trim().min(1),
 })
 
 export const TopicDirectoryEntrySchema = z.object({
-  title: z.string().trim().min(1).max(300),
+  title: TopicPartSchema.shape.name,
   anchor: z
     .string()
     .regex(/^[a-z0-9][a-z0-9-]*$/)
     .optional(),
-  sources: z.array(TopicDirectorySourceSchema).max(10).default([]),
+  sources: z.array(TopicDirectorySourceSchema).max(1000).default([]),
   get children() {
-    return z.array(TopicDirectoryEntrySchema).max(100).default([])
+    return z.array(TopicDirectoryEntrySchema).max(1000).default([])
   },
 })
 
 const TopicDirectorySchema = z.object({
   heading: z.string().trim().min(1).max(150),
-  items: z.array(TopicDirectoryEntrySchema).min(1).max(100),
+  items: z.array(TopicDirectoryEntrySchema).min(1).max(1000),
 })
 
 // Single-quoted so the JSON's double quotes need no escaping; apostrophes must be written as \u0027.

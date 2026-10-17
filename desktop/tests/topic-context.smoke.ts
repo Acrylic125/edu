@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -109,6 +110,30 @@ test("topic context menus tag drafts and persist archive and unarchive actions",
   }
 })
 
+test("chat assets stay available without composer chips even when their IDs differ from topic assets", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  await repository.mutate((state) => {
+    const material = { id: calculus.id, name: "Lecture 4.pdf", kind: "pdf" as const, text: "Limits", pages: ["Limits"] }
+    state.topics[0].materials.push(material)
+    state.chats[0].materials.push({ ...material, id: randomUUID() })
+  })
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    const composer = page.getByRole("form", { name: "Chat composer" })
+    await expect(composer.getByText("Lecture 4.pdf", { exact: true })).toHaveCount(0)
+    const snapshot = await page.evaluate(() => window.prune?.snapshot())
+    expect(snapshot?.topics[0].materials[0].name).toBe("Lecture 4.pdf")
+    expect(snapshot?.chats[0].materials[0].name).toBe("Lecture 4.pdf")
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("a chat with attached files can send without typed text", async () => {
   const { directory, launch } = await fixture()
   const source = join(directory, "notes.txt")
@@ -121,14 +146,14 @@ test("a chat with attached files can send without typed text", async () => {
     const page = await app.firstWindow()
     const composer = page.getByRole("form", { name: "Chat composer" })
     await composer.getByRole("button", { name: "Attach files to this chat" }).click()
-    await expect(composer.getByText("notes.txt", { exact: true })).toBeVisible()
+    await expect(composer.getByText("notes.txt", { exact: true })).toHaveCount(0)
     const send = composer.getByRole("button", { name: "Send message" })
     await expect(send).toBeEnabled({ timeout: 3000 })
     await send.click()
     await expect(page.getByText("Here is your learning plan. Confirm it to begin.", { exact: true })).toBeVisible()
     await page.getByRole("button", { name: "New chat", exact: true }).click()
     await composer.getByRole("button", { name: "Attach files to this chat" }).click()
-    await expect(composer.getByText("notes.txt", { exact: true })).toBeVisible()
+    await expect(composer.getByText("notes.txt", { exact: true })).toHaveCount(0)
     await expect(send).toBeEnabled()
     await send.click()
     await expect(page.getByText("Here is your learning plan. Confirm it to begin.", { exact: true })).toBeVisible()
@@ -192,11 +217,40 @@ test("structured curriculum confirmation records the asking thread and keeps que
     const topic = snapshot?.topics.find((topic) => topic.id === calculus.id)
     const threadId = snapshot?.chats[0].id
     expect(topic?.state?.threadTutors).toEqual([{ id: threadId, progress: { "tp-structured-limits": { status: "active", steps: [{ question: "Why can a limit exist where the function is undefined?" }] } } }])
-    expect(topic?.learning.notes).toContain("Distinguish a limit from a function value")
+    expect(topic?.learning.notes).toContain("A function's limit describes its nearby behavior")
+    expect(topic?.learning.notes).not.toContain("Distinguish a limit from a function value")
+    await expect(page.getByRole("navigation", { name: "Topic directory", exact: true })).toBeVisible()
+    await expect(page.getByRole("navigation", { name: "Topic directory", exact: true }).getByRole("button", { name: "Limits", exact: true })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Topic terminology", exact: true })).toBeVisible()
     expect(topic?.learning.notes).not.toContain("Why can a limit exist")
     const reloaded = new WorkspaceRepository(join(directory, "workspace"))
     await reloaded.load()
     expect(reloaded.topic(calculus.id).state?.threadTutors).toEqual(topic?.state?.threadTutors)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("chat renders partial reply snapshots and replaces them with one completed message", async () => {
+  const { directory, launch } = await fixture()
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await expect(page.getByRole("textbox", { name: "Message this chat" })).toBeVisible()
+    const snapshot = await page.evaluate(() => window.prune!.snapshot())
+    const chat = snapshot.chats[0]
+    chat.messages.push({ id: chat.id, role: "user", content: "Explain limits", createdAt: new Date().toISOString(), topicIds: [] })
+    snapshot.runtime = [{ runnerId: chat.runnerId, chatId: chat.id, status: "running", activity: "Preparing your lesson", reply: "A limit describes" }]
+    await app.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].webContents.send("prune:update", value), snapshot)
+    await expect(page.getByText("A limit describes", { exact: true })).toBeVisible()
+    snapshot.runtime[0].reply = "A limit describes nearby behavior."
+    await app.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].webContents.send("prune:update", value), snapshot)
+    await expect(page.getByText("A limit describes nearby behavior.", { exact: true })).toBeVisible()
+    chat.messages.push({ id: randomUUID(), role: "assistant", content: "A limit describes nearby behavior.", createdAt: new Date().toISOString(), topicIds: [] })
+    snapshot.runtime = [{ runnerId: chat.runnerId, chatId: chat.id, status: "ready", activity: "Ready" }]
+    await app.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].webContents.send("prune:update", value), snapshot)
+    await expect(page.getByText("A limit describes nearby behavior.", { exact: true })).toHaveCount(1)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

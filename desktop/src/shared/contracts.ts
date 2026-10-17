@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { TopicStateSchema, TopicMutationSchema } from "./topic-state"
+import { TopicStateSchema, TopicMutationSchema, TopicPartSchema } from "./topic-state"
 
 export const IdSchema = z.string().uuid()
 export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity", "openrouter"])
@@ -56,11 +56,18 @@ export const RunnerInputSchema = z.object({
   model: z.string().trim().min(1).max(150).default("openrouter/auto"),
 })
 export const RunnerSchema = RunnerInputSchema.extend({ id: IdSchema })
+export const ResponseQuestionSchema = z.object({
+  prompt: z.string().trim().min(1).max(20_000),
+  options: z.array(z.string().trim().min(1).max(1000)).min(2).max(6)
+    .refine((options) => new Set(options).size === options.length, "Response options must be distinct."),
+})
 export const MessageSchema = z.object({
   id: IdSchema,
   role: z.enum(["user", "assistant"]),
   content: z.string().max(200_000),
   createdAt: z.string().datetime(),
+  durationMs: z.number().nonnegative().optional(),
+  responseQuestion: ResponseQuestionSchema.optional(),
   topicIds: z.array(IdSchema).default([]),
 })
 export const MaterialSchema = z.object({
@@ -85,10 +92,11 @@ export const LearningStateSchema = z
       "awaiting_choice",
       "paused",
     ]),
-    outline: z.array(z.string().max(300)).max(100),
+    outline: z.array(TopicPartSchema.shape.name).max(100),
     currentSection: z.string().max(1000),
     pendingQuestion: z.string().max(20_000),
     privateAnswerKey: z.string().max(20_000),
+    responseQuestion: ResponseQuestionSchema.optional().describe("Multiple-choice response UI for the current reply. Supply its prompt and options when offering a choice; omit when no choice is pending. This is learner-visible and must contain no answer key."),
     nextAction: z.string().max(10_000),
     notes: z.string().max(200_000),
     workpad: z.string().max(100_000),
@@ -161,6 +169,7 @@ export const RuntimeSchema = z.object({
   status: z.enum(["stopped", "ready", "running", "error"]),
   chatId: IdSchema.optional(),
   activity: z.string(),
+  reply: z.string().max(200_000).optional(),
   error: z.string().optional(),
   pid: z.number().optional(),
   traceId: IdSchema.optional(),
@@ -227,6 +236,14 @@ export const TopicUpdateSchema = z.object({
   expected: LearningStateSchema.optional(),
 })
 export const WorkerJobSchema = z.object({
+  telemetry: z.object({
+    directory: z.string().min(1),
+    parent: z.object({
+      traceId: z.string().regex(/^[a-f0-9]{32}$/),
+      spanId: z.string().regex(/^[a-f0-9]{16}$/),
+      traceFlags: z.number().int().min(0).max(255),
+    }),
+  }).optional(),
   chat: ChatSchema,
   topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
   workspaceTopics: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
@@ -244,6 +261,7 @@ export const WorkerJobSchema = z.object({
   openedTopicId: IdSchema.optional(),
 })
 export const WorkerEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("reply"), text: z.string().max(200_000) }),
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
   z.object({ type: z.literal("activity"), activity: z.string() }),
   z.object({
@@ -316,7 +334,7 @@ export type DesktopBridge = {
   addRunner: (input: z.input<typeof RunnerInputSchema>) => Promise<string>
   removeRunner: (id: string) => Promise<void>
   startRunner: (id: string) => Promise<void>
-  stopRunner: (id: string) => Promise<void>
+  stopRunner: (id: string, chatId?: string) => Promise<void>
   createTopic: (input: z.infer<typeof CreateTopicSchema>) => Promise<string>
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
   archiveTopic: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>

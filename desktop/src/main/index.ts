@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { access, constants, mkdir, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
-import { pathToFileURL } from "node:url"
 import {
   app,
   BrowserWindow,
@@ -9,7 +8,6 @@ import {
   dialog,
   ipcMain,
   Menu,
-  net,
   protocol,
   shell,
 } from "electron"
@@ -33,8 +31,10 @@ import {
 import { resolveCliExecutable } from "../providers/cli"
 import { ProviderRegistry } from "../providers/registry"
 import { importMaterials, MaterialDrafts } from "./materials"
+import { readSourceImages } from "./source-images"
 import { newChat, WorkspaceRepository } from "./workspace"
 import { RunnerManager } from "../runners/manager"
+import { installPhoenixExporter } from "../runners/telemetry"
 
 const environment = z
   .object({
@@ -71,36 +71,32 @@ else {
       const directory = join(app.getPath("userData"), "workspace")
       const repository = new WorkspaceRepository(directory)
       await repository.load()
+      const phoenixResources = app.isPackaged
+        ? join(process.resourcesPath, "phoenix")
+        : join(app.getAppPath(), "..", "phoenix")
+      const phoenixExporterInstalled = await installPhoenixExporter(phoenixResources, directory)
       const materialDrafts = new MaterialDrafts()
-      protocol.handle("prune-source", (request) => {
+      protocol.handle("prune-source", async (request) => {
         const url = new URL(request.url)
         const id = IdSchema.safeParse(url.hostname)
-        const page = /^\/(\d+)$/.exec(url.pathname)?.[1]
-        if (!id.success || !page)
+        const page = z.coerce.number().int().min(1).max(1000).safeParse(/^\/(\d+)$/.exec(url.pathname)?.[1])
+        if (!id.success || !page.success)
           return new Response("Source not found", { status: 404 })
         const { topics, chats } = repository.stateSnapshot
-        const owns = (owner: { materials: { id: string }[] }) =>
-          owner.materials.some((material) => material.id === id.data)
-        let collection = "topics"
-        let owner = topics.find(owns)?.id
-        if (!owner) {
-          collection = "chats"
-          owner = chats.find(owns)?.id
+        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+          const owner = owners.find((item) => item.materials.some((material) => material.id === id.data))
+          const material = owner?.materials.find((item) => item.id === id.data)
+          if (!owner || !material) continue
+          if (material.kind !== "pdf" && material.kind !== "image") break
+          if (page.data > (material.pages.length || 1)) break
+          try {
+            const [png] = await readSourceImages(material, join(directory, collection, owner.id, "assets"), page.data, page.data)
+            return new Response(new Uint8Array(png), { headers: { "Content-Type": "image/png" } })
+          } catch {
+            return new Response("Source not found", { status: 404 })
+          }
         }
-        if (!owner) return new Response("Source not found", { status: 404 })
-        return net
-          .fetch(
-            pathToFileURL(
-              join(
-                directory,
-                collection,
-                owner,
-                "assets",
-                `source-${id.data}-${page}.png`,
-              ),
-            ).href,
-          )
-          .catch(() => new Response("Source not found", { status: 404 }))
+        return new Response("Source not found", { status: 404 })
       })
       const resources = app.isPackaged
         ? join(process.resourcesPath, "resources")
@@ -128,6 +124,7 @@ else {
         skillDirectory,
         (runner) => registry.connection(runner),
         notify,
+        phoenixExporterInstalled,
       )
       manager = runnerManager
 
@@ -312,9 +309,9 @@ else {
         trusted(event)
         runnerManager.start(IdSchema.parse(raw))
       })
-      ipcMain.handle(Channel.stopRunner, (event, raw) => {
+      ipcMain.handle(Channel.stopRunner, (event, raw, rawChatId) => {
         trusted(event)
-        runnerManager.stop(IdSchema.parse(raw))
+        runnerManager.stop(IdSchema.parse(raw), IdSchema.optional().parse(rawChatId))
       })
       ipcMain.handle(Channel.createTopic, async (event, raw) => {
         trusted(event)

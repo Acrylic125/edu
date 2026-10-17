@@ -87,6 +87,17 @@ describe("study Markdown", () => {
     expect(html).toContain("Lecture 6.pdf, pg. 6-7")
   })
 
+  it.each(["pdf", "pptx", "txt"])("renders Materials links for %s files", (extension) => {
+    const name = `Lecture 4A - Pointers and Functions.${extension}`
+    const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+      text: `## Materials\n\n- [${name}](<assets/${name}>), pages 1-15.`,
+      materials: [{ ...material, name }],
+      onOpenMaterial: vi.fn(),
+    }))
+    expect(html).toContain(`<a href="edu-material://${material.id}/1">${name}</a>`)
+    expect(html).toContain(", pages 1-15.")
+  })
+
   it("preserves source images returned by the tutor", () => {
     const html = render(`![ISA diagram](prune-source://${material.id}/6)`)
     expect(html).toContain(`src="prune-source://${material.id}/6"`)
@@ -127,9 +138,15 @@ describe("study Markdown", () => {
 
   it("hides raw section anchors while keeping their headings visible", () => {
     const html = render('<a id="foundations"></a>\n\n## 1. Foundations: alphabets, strings, and languages')
-    expect(html).toContain("<h2>1. Foundations: alphabets, strings, and languages</h2>")
+    expect(html).toContain('<h2 id="foundations">1. Foundations: alphabets, strings, and languages</h2>')
     expect(html).not.toContain("&lt;a")
     expect(html).not.toContain("&lt;/a&gt;")
+  })
+
+  it("renders evidence links to their explicit Check anchors", () => {
+    const html = render('<a id="check-c1-01"></a>\n#### Check C1-01 — Explain the instruction cycle\n\nEvidence: [Attempt](#check-c1-01).')
+    expect(html).toContain('id="check-c1-01"')
+    expect(html).toContain('<a href="#check-c1-01">Attempt</a>')
   })
 
   it("preserves anchor markup when it is an intentional code example", () => {

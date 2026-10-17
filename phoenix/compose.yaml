@@ -1,0 +1,20 @@
+services:
+  phoenix:
+    image: arizephoenix/phoenix@sha256:c542e7de1dc1fdd0f938de337d44ebefa7266e91391eed6e7978523d7f6e1f2f
+    ports:
+      - target: 6006
+        host_ip: 127.0.0.1
+        protocol: tcp
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_HOST: 0.0.0.0
+    volumes:
+      - phoenix-data:/mnt/data
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+volumes:
+  phoenix-data: {}

@@ -77,11 +77,13 @@ export function ChatMessage({
   actions,
   copyText,
   onCopy,
+  durationMs,
 }: {
   role: "user" | "assistant"
   children: ReactNode
   actions?: ReactNode
   copyText?: string
+  durationMs?: number
   onCopy?: (text: string) => Promise<void>
 }) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle")
@@ -92,35 +94,42 @@ export function ChatMessage({
     copyLabel = "Couldn't copy. Try again"
   }
 
-  const messageActions = (copyText || actions) && (
-    <div className="mt-1 flex h-7 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
-      {copyText && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={copyLabel}
-          title={copyLabel}
-          className="text-muted-foreground"
-          onClick={async () => {
-            try {
-              if (onCopy) {
-                await onCopy(copyText)
-              } else {
-                await navigator.clipboard.writeText(copyText)
+  const messageActions = (copyText || actions || durationMs !== undefined) && (
+    <div className={cn("mt-1 flex h-7 items-center justify-between gap-2", role === "assistant" && "self-stretch")}>
+      <div className="flex h-full items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 motion-reduce:transition-none">
+        {copyText && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={copyLabel}
+            title={copyLabel}
+            className="text-muted-foreground"
+            onClick={async () => {
+              try {
+                if (onCopy) {
+                  await onCopy(copyText)
+                } else {
+                  await navigator.clipboard.writeText(copyText)
+                }
+                setCopyStatus("copied")
+              } catch {
+                setCopyStatus("error")
               }
-              setCopyStatus("copied")
-            } catch {
-              setCopyStatus("error")
-            }
-          }}
-        >
-          {copyStatus === "copied" ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
-        </Button>
+            }}
+          >
+            {copyStatus === "copied" ? <CheckIcon aria-hidden="true" /> : <CopyIcon aria-hidden="true" />}
+          </Button>
+        )}
+        <span role="status" className="text-xs text-muted-foreground">
+          {copyStatus !== "idle" && copyLabel}
+        </span>
+        {actions}
+      </div>
+      {role === "assistant" && durationMs !== undefined && (
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-label="Response duration">
+          {(durationMs / 1000).toFixed(1)}s
+        </span>
       )}
-      <span role="status" className="text-xs text-muted-foreground">
-        {copyStatus !== "idle" && copyLabel}
-      </span>
-      {actions}
     </div>
   )
 
@@ -129,7 +138,7 @@ export function ChatMessage({
       <div
         data-message-role="user"
         aria-label="Your message"
-        className="group flex flex-col items-end py-3"
+        className="group flex flex-col items-end"
         onMouseLeave={() => setCopyStatus("idle")}
       >
         <div className="max-w-[90%] min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm leading-relaxed text-secondary-foreground [overflow-wrap:anywhere]">
@@ -143,7 +152,7 @@ export function ChatMessage({
     <div
       data-message-role="assistant"
       aria-label="EdU's message"
-      className="group py-4"
+      className="group"
       onMouseLeave={() => setCopyStatus("idle")}
     >
       {children}

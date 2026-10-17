@@ -1,23 +1,24 @@
 # {TOPIC_NAME}
 
-{Topic scope, prerequisite concepts, and source materials.}
+<topic-directory heading="Topic directory" items='[{"title":"{TOPIC_PART}","children":[]}]' />
 
-## Key ideas
+<!-- Build the directory from the curriculum/source hierarchy. Add anchors only for parts with notes. Follow references/FILE_STRUCTURE.md for source links and JSON escaping. -->
 
-{Self-contained explanations of the topic, organized by source headings. Explain notation and meaningful transitions.}
+## {TOPIC_PART}
 
-## Worked examples
+{Explain the material discussed so far using references/TUTOR_EXPLANATION.md. Fill gaps incrementally as the topic develops, retaining useful existing explanations and source examples. Clarify the phrasing in place when a mistake reveals a confusing distinction. Add further part headings as they are taught.}
 
-{Explain source examples using their actual values and code. Cite the relevant materials after each example.}
+Sourced from: [{SHORT_SOURCE_NAME}, pg. {START}-{END}](<assets/{SOURCE_FILENAME}#page={START}>).
 
-Sourced from: [{SOURCE_NAME}, pg. {FROM}-{TO}](<assets/{SOURCE_NAME}#page={FROM}>).
+## Topic terminology
 
-## Terminology
-
-| Term | Meaning |
+| Term | Meaning / useful distinction |
 |---|---|
-| {TERM} | {CONCEPTUAL_MEANING} |
+| {encountered term} | {concise accurate explanation} |
 
 ## Materials
 
-{Links to the original assets. This summary is conceptual. The StateService stores curriculum goals, progress, question/answer records, and mistakes in topic.state.json.}
+- [{SHORT_SOURCE_NAME}](<assets/{SOURCE_FILENAME}#page={START}>), pages {START}-{END}.
+- [{SHORT_TEXT_SOURCE_NAME}](<assets/{TEXT_SOURCE_FILENAME}>).
+
+<!-- Follow references/FILE_STRUCTURE.md for local link syntax and exact asset filenames. Exact questions, learner answers, mistakes, and progress live in topic.state.json. Checked keys and session logistics live in the private chat handoff. -->

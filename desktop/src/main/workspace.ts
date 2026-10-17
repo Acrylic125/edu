@@ -25,10 +25,9 @@ import {
   type Topic,
   type Workspace,
 } from "../shared/contracts"
-import { topicDirectoryMarkdown, topicOutline } from "../shared/topic-directory"
+import { topicDirectoryMarkdown } from "../shared/topic-directory"
 import { z } from "zod"
 import { ChatDatabase } from "./chat-database"
-import { parseTopicWorkpad, topicWorkpad } from "./topic-workpad"
 import { TopicStateSchema, freshTopicState } from "../shared/topic-state"
 
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true }).extend({
@@ -227,43 +226,32 @@ export class WorkspaceRepository {
       topic.id = entry.name
       topic.createdAt = (await stat(join(directory, "topic.md"))).birthtime.toISOString()
       topic.learning.notes = notes
-      const workpad = await readOptionalFile(join(directory, "agent.workpad.md"))
-      if (workpad !== undefined) topic.learning.workpad = workpad
       const legacy = await readOptionalFile(join(directory, "topic.json"))
       if (legacy !== undefined) {
         const stored = LegacyTopicStateSchema.parse(JSON.parse(legacy))
-        Object.assign(topic, stored, { learning: { ...topic.learning, ...stored.learning } })
+        Object.assign(topic, stored, { learning: topic.learning })
       } else {
         topic.materials = await readMaterialManifests(directory)
-        const handoff = workpad === undefined ? undefined : parseTopicWorkpad(workpad)
-        if (handoff) {
-          const { createdAt, planConfirmed, ...learning } = handoff
-          Object.assign(topic, { createdAt, planConfirmed, learning: { ...topic.learning, ...learning } })
-        }
       }
-      topic.learning.outline = topicOutline(notes)
       const structured = await readOptionalFile(join(directory, "topic.state.json"))
       if (structured !== undefined) {
         topic.state = TopicStateSchema.parse(JSON.parse(structured))
         topic.createdAt = topic.state.createdAt
-        topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
-        // The JSON state owns curriculum and progress; the Markdown stays an editable summary.
-        const saved = savedTopics.find((item) => item.id === topic.id)
-        if (saved) {
-          // Approval is app metadata: a preserved legacy workpad may predate the committed confirmation.
-          topic.planConfirmed = saved.planConfirmed
-          topic.titleGenerated = saved.titleGenerated
-        }
       } else {
         topic.state = freshTopicState(topic.title, topic.createdAt)
         await writeAtomic(join(directory, "topic.state.json"), JSON.stringify(topic.state, null, 2))
       }
+      const saved = savedTopics.find((item) => item.id === topic.id)
+      if (saved && legacy === undefined) {
+        topic.planConfirmed = saved.planConfirmed
+        topic.titleGenerated = saved.titleGenerated
+      }
+      topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
       topic.archived = archivedIds.has(topic.id) || topic.archived
       const parsed = TopicSchema.parse(topic)
       if (legacy !== undefined) {
         // Migrate once into the Tutor Me layout, removing topic.json only after its replacements are written.
         for (const material of parsed.materials) await writeMaterialManifest(directory, material)
-        await writeAtomic(join(directory, "agent.workpad.md"), topicWorkpad(parsed))
         await rm(join(directory, "topic.json"))
       }
       topics.push(parsed)
@@ -361,7 +349,7 @@ export class WorkspaceRepository {
       topic.title = topic.title.replace(/\s+/g, " ").trim()
       topic.learning.notes = topicNotes(topic.title, topic.learning.notes)
       if (topic.state?.content.length) topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
-      else topic.learning.outline = topicOutline(topic.learning.notes)
+      else topic.learning.outline = []
       topic.state ??= freshTopicState(topic.title, topic.createdAt)
       topic.state.name = topic.title
       topic.materials.sort((left, right) => left.name.localeCompare(right.name))
@@ -443,9 +431,6 @@ export class WorkspaceRepository {
         if (!previous?.materials.some((item) => item.id === material.id))
           await writeMaterialManifest(directory, material)
       }
-      const workpad = topicWorkpad(topic)
-      if ((!previous && await readOptionalFile(join(directory, "agent.workpad.md")) === undefined) || (previous && workpad !== topicWorkpad(previous)))
-        await writeAtomic(join(directory, "agent.workpad.md"), workpad)
     }
     for (const topic of previousState.topics) {
       if (!validated.topics.some((item) => item.id === topic.id))

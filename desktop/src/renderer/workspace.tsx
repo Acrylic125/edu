@@ -1,3 +1,4 @@
+import { messageText } from "../shared/message-text"
 import { useEffect, useRef, useState } from "react"
 import {
   ArrowUp,
@@ -52,6 +53,7 @@ import { z } from "zod"
 import { type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
+import { topicSourceMaterials } from "../shared/material-links"
 
 export function App() {
   const { snapshot, loaded, providerSetupComplete, error, setError } = useWorkspace()
@@ -74,6 +76,7 @@ export function App() {
     >()
   const [busy, setBusy] = useState(false)
   const [submitting, setSubmitting] = useState<string>()
+  const responding = useRef(new Set<string>())
   const draftValues = useRef(drafts)
   draftValues.current = drafts
   const [draggingOver, setDraggingOver] = useState<string>()
@@ -105,12 +108,9 @@ export function App() {
   let chatModel = newModel
   if (chat && chatRunnerConfig) chatModel = chatRunnerConfig
   const runtime = snapshot.runtime.find(
-    (item) => item.runnerId === chatRunnerConfig?.id,
+    (item) => item.chatId === chat?.id && item.chatId !== undefined,
   )
   const chatRunnerBusy = runtime?.status === "running"
-  const newRunnerBusy = snapshot.runtime.some(
-    (item) => item.runnerId === newRunner && item.status === "running",
-  )
   const chatRunning = chatRunnerBusy && !!chat && runtime.chatId === chat.id
   const chatError = chat && runtime?.chatId === chat.id ? runtime.error : undefined
   const newModelConnected = snapshot.providers.some(
@@ -125,7 +125,7 @@ export function App() {
       top: thread.current.scrollHeight,
       behavior: "instant",
     })
-  }, [chatId, chat?.messages.length])
+  }, [chatId, chat?.messages.length, runtime?.reply])
 
   useEffect(() => {
     if (view !== "learn" || !loaded) return
@@ -263,9 +263,23 @@ export function App() {
     }
   }
 
+  async function respondToQuestion(messageId: string, option: string) {
+    const message = chat?.messages.at(-1)
+    if (!chat || message?.id !== messageId || !message.responseQuestion?.options.includes(option)) return
+    if (chatRunnerBusy || busy || !chatModelConnected || responding.current.has(messageId)) return
+    responding.current.add(messageId)
+    setSubmitting(chat.id)
+    try {
+      await perform(() => desktop().send({ chatId: chat.id, content: option, openedTopicId: topic?.id }))
+    } finally {
+      responding.current.delete(messageId)
+      setSubmitting(undefined)
+    }
+  }
+
   async function startTopic() {
     let content = (drafts["new-topic"] ?? "").trim()
-    if (newRunnerBusy || busy || !newModelConnected) return
+    if (busy || !newModelConnected) return
     if (!content) {
       if (topicMaterials.length === 0) return
       content = `Help me learn the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
@@ -307,8 +321,8 @@ export function App() {
   function composer(mode: "topic" | "chat") {
     const key = mode === "topic" ? "new-topic" : chatKey
     const existing = mode === "chat" ? chat : undefined
-    const draft = drafts[key] ?? ""
     const materials = mode === "topic" ? topicMaterials : existing?.materials ?? []
+    const draft = drafts[key] ?? ""
     let runnerBusy = chatRunnerBusy
     let model = chatModel
     let placeholder = "Ask anything, or type @ to tag a topic…"
@@ -320,7 +334,7 @@ export function App() {
       })
     }
     if (mode === "topic") {
-      runnerBusy = newRunnerBusy
+      runnerBusy = false
       model = newModel
       placeholder = "What would you like to learn?"
       submit = startTopic
@@ -399,25 +413,23 @@ export function App() {
                 }}>Connect provider</button>
               </div>
             )}
-            {materials.length > 0 && (
+            {mode === "topic" && topicMaterials.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-                {materials.map((material) => (
+                {topicMaterials.map((material) => (
                   <span
                     key={material.id}
                     className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
                   >
                     <FileText className="size-3.5 shrink-0" />
                     <span className="truncate">{material.name}</span>
-                    {mode === "topic" && (
-                      <button
-                        type="button"
-                        aria-label={`Remove ${material.name}`}
-                        disabled={busy}
-                        onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${material.name}`}
+                      disabled={busy}
+                      onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
+                    >
+                      <X className="size-3.5" />
+                    </button>
                   </span>
                 ))}
               </div>
@@ -484,7 +496,7 @@ export function App() {
                 type="button"
                 aria-label="Stop runner"
                 onClick={() => {
-                  void perform(() => desktop().stopRunner(existing.runnerId))
+                  void perform(() => desktop().stopRunner(existing.runnerId, existing.id))
                 }}
               >
                 <Square className="size-4" fill="currentColor" />
@@ -517,7 +529,7 @@ export function App() {
   const newTopicContent = (
     <NewTopicView>
       <LearningSuggestions
-        disabled={busy || newRunnerBusy}
+        disabled={busy}
         onSelect={(prompt) => {
           openTopic()
           replaceDraft("new-topic", prompt)
@@ -541,7 +553,7 @@ export function App() {
         ) : (
           <ChatConversation ref={thread} className="px-4">
             {chat.messages.map((message) => (
-              <ChatMessage key={message.id} role={message.role} copyText={message.content} onCopy={window.prune?.copyText}>
+              <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={window.prune?.copyText} durationMs={message.durationMs}>
                 <StudyMarkdown
                   text={message.content}
                   topics={snapshot.topics}
@@ -549,9 +561,38 @@ export function App() {
                   materials={chatMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
+                {message.role === "assistant" && message.responseQuestion && (
+                  <fieldset
+                    className="mt-4 flex min-w-0 flex-col gap-2"
+                    disabled={message.id !== chat.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting === chat.id}
+                  >
+                    <legend className="mb-2 text-sm font-medium">{message.responseQuestion.prompt}</legend>
+                    {message.responseQuestion.options.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className="rounded-md border border-border px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+                        onClick={() => { void respondToQuestion(message.id, option) }}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </fieldset>
+                )}
               </ChatMessage>
             ))}
-            {chatRunning && (
+            {chatRunning && runtime.reply && (
+              <ChatMessage role="assistant">
+                <StudyMarkdown
+                  text={runtime.reply}
+                  topics={snapshot.topics}
+                  onOpenTopic={openTopic}
+                  materials={chatMaterials}
+                  onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
+                />
+              </ChatMessage>
+            )}
+            {chatRunning && !runtime.reply && (
               <ChatThinking>
                 {runtime.activity}
               </ChatThinking>
@@ -640,6 +681,9 @@ export function App() {
       />
     )
   } else {
+    const documentMaterials = topicSourceMaterials(topic, snapshot.chats)
+    const thread = topic.state?.threadTutors.find((thread) => thread.id === chat?.id)
+    const currentPart = topic.state?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
       topic.learning.notes.replace(/^# .+\n+/, ""),
     )
@@ -667,13 +711,18 @@ export function App() {
             materials={
               topic.materials.length > 0
                 ? topic.materials.map((material) => (
-                    <span
+                    <button
+                      type="button"
                       key={material.id}
-                      className="flex max-w-full items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground"
+                      className="flex max-w-full cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      title={`Open ${material.name}`}
+                      onClick={() =>
+                        void perform(() => desktop().openMaterial(material.id))
+                      }
                     >
                       <FileText className="size-4 shrink-0" />
                       <span className="truncate">{material.name}</span>
-                    </span>
+                    </button>
                   ))
                 : null
             }
@@ -706,15 +755,17 @@ export function App() {
               )
             }
           >
-            <StudyMarkdown text={notes.before} materials={topic.materials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            <StudyMarkdown text={notes.before} materials={documentMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             {notes.directory && (
               <TopicDirectory
                 heading={notes.directory.heading}
                 items={notes.directory.items}
-                currentSection={topic.learning.currentSection}
+                currentSection={currentPart?.name ?? ""}
+                materials={documentMaterials}
+                onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
               />
             )}
-            {notes.after.trim() && <StudyMarkdown text={notes.after} materials={topic.materials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
+            {notes.after.trim() && <StudyMarkdown text={notes.after} materials={documentMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
           </LearningDocumentLayout>
         }
         chat={chatPane}

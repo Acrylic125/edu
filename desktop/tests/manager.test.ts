@@ -14,6 +14,8 @@ import { RunnerManager } from "../src/runners/manager"
 import { topicMention } from "../src/shared/topic-mentions"
 import * as titles from "../src/runners/title"
 import { createTutorSession } from "../src/runners/tutor"
+import { StateService } from "../src/main/state-service"
+import { TurnTelemetry } from "../src/runners/telemetry"
 
 class ManagedProcess extends EventEmitter {
   pid = 1234
@@ -82,7 +84,7 @@ async function fixture() {
   return { manager, repository, first, second, topic, other }
 }
 
-test("allows independent runners but rejects overlapping turns on the same runner", async () => {
+test("allows independent runners but rejects overlapping turns on the same chat", async () => {
   const { manager, first, second } = await fixture()
   await Promise.all([
     manager.send({ chatId: first.id, content: "Teach" }),
@@ -95,6 +97,67 @@ test("allows independent runners but rejects overlapping turns on the same runne
   await expect(
     manager.send({ chatId: first.id, content: "Overlap" }),
   ).rejects.toThrow("already working")
+})
+
+test("runs chats sharing a runner concurrently and saves each reply to its own chat", async () => {
+  const { manager, repository, first } = await fixture()
+  const second = newChat(first.runnerId)
+  await repository.mutate((state) => state.chats.push(second))
+  await Promise.all([
+    manager.send({ chatId: first.id, content: "Teach calculus" }),
+    manager.send({ chatId: second.id, content: "Teach physics" }),
+  ])
+  expect(manager.statuses.filter((state) => state.status === "running").map((state) => state.chatId).sort()).toEqual([first.id, second.id].sort())
+  await expect(manager.send({ chatId: first.id, content: "Overlap" })).rejects.toThrow("already working")
+  for (const [index, child] of children.entries()) {
+    const job = child.jobs[0]
+    child.emit("message", { type: "result", reply: `Reply ${index + 1}`, learning: job.chat.learning })
+  }
+  await vi.waitFor(() => expect(manager.statuses.filter((state) => state.runnerId === first.runnerId).every((state) => state.status === "ready")).toBe(true))
+  const restored = new WorkspaceRepository(repository.directory)
+  await restored.load()
+  for (const [index, child] of children.entries()) {
+    expect(restored.chat(child.jobs[0].chat.id).messages.at(-1)?.content).toBe(`Reply ${index + 1}`)
+  }
+})
+
+test("passes runtime-relative Phoenix context to workers and closes stopped turns", async () => {
+  const finish = vi.spyOn(TurnTelemetry.prototype, "finish")
+  const { manager, repository, first } = await fixture()
+  await manager.send({ chatId: first.id, content: "Teach" })
+  const job = children[0].jobs[0]
+  expect(job.telemetry?.directory).toBe(join(repository.directory, "phoenix"))
+  expect(job.telemetry?.parent.traceId).toMatch(/^[a-f0-9]{32}$/)
+  manager.stop(first.runnerId)
+  expect(finish).toHaveBeenCalledWith(true)
+})
+
+test.each(["stop", "crash", "error"] as const)("isolates a chat %s from another chat sharing its runner", async (failure) => {
+  const { manager, repository, first } = await fixture()
+  const second = newChat(first.runnerId)
+  await repository.mutate((state) => state.chats.push(second))
+  await manager.send({ chatId: first.id, content: "First request" })
+  await manager.send({ chatId: second.id, content: "Second request" })
+  if (failure === "stop") manager.stop(first.runnerId, first.id)
+  else if (failure === "crash") children[0].emit("exit", 1)
+  else children[0].emit("message", { type: "error", error: "Model failed" })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === first.id)?.status).toBe(failure === "stop" ? "stopped" : "error"))
+  expect(manager.statuses.find((state) => state.chatId === second.id)?.status).toBe("running")
+  children[0].emit("message", { type: "result", reply: "Late reply", learning: first.learning })
+  children[1].emit("message", { type: "result", reply: "Second reply", learning: second.learning })
+  await vi.waitFor(() => expect(repository.chat(second.id).messages.at(-1)?.content).toBe("Second reply"))
+  expect(repository.chat(first.id).messages.map((message) => message.content)).toEqual(["First request"])
+})
+
+test("stops all chats for runner-wide operations", async () => {
+  const { manager, repository, first } = await fixture()
+  const second = newChat(first.runnerId)
+  await repository.mutate((state) => state.chats.push(second))
+  await manager.send({ chatId: first.id, content: "First" })
+  await manager.send({ chatId: second.id, content: "Second" })
+  manager.stop(first.runnerId)
+  expect(manager.statuses.filter((state) => state.runnerId === first.runnerId).map((state) => state.status)).toEqual(["stopped", "stopped"])
+  expect(children.every((child) => child.killed)).toBe(true)
 })
 
 test("ignores late results after stop and restarts with the previous saved handoff", async () => {
@@ -179,9 +242,13 @@ test("keeps tagged topics in context and rejects mutations to read-only topics a
   expect(children[1].jobs[0].topics.map((item) => item.id)).toEqual([topic.id])
 })
 
-test("concurrent runner commits merge per-thread progress and mistakes into the same topic", async () => {
+test("concurrent chats sharing a runner merge per-thread progress and mistakes into the same topic", async () => {
   const { StateService } = await import("../src/main/state-service")
   const { manager, repository, first, second, topic } = await fixture()
+  await repository.mutate((state) => {
+    const chat = state.chats.find((chat) => chat.id === second.id)
+    if (chat) chat.runnerId = first.runnerId
+  })
   await new StateService(repository, first.id).updateTopic(topic.id, { content: [{ id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Explain approaching"] }, mistakes: [] }] })
   await repository.mutate((state) => { state.topics[0].planConfirmed = true })
   await Promise.all([
@@ -198,7 +265,7 @@ test("concurrent runner commits merge per-thread progress and mistakes into the 
       ],
     })
   }
-  await vi.waitFor(() => expect(manager.statuses.every((status) => status.status === "ready")).toBe(true))
+  await vi.waitFor(() => expect(manager.statuses.filter((status) => status.runnerId === first.runnerId).every((status) => status.status === "ready")).toBe(true), { timeout: 5_000 })
   const reloaded = new WorkspaceRepository(repository.directory)
   await reloaded.load()
   const state = reloaded.topic(topic.id).state
@@ -220,10 +287,10 @@ test("rejects tags for missing topics and confirms only a drafted plan", async (
   await expect(
     manager.send({ chatId: first.id, content: "Confirm", confirmTopicId: topic.id }),
   ).rejects.toThrow("no draft plan")
-  await repository.mutate((state) => {
-    const current = state.topics.find((item) => item.id === topic.id)
-    if (current) current.learning.notes = `# Calculus\n\n<topic-directory heading="Topic directory" items='[{"title":"Limits"}]' />`
-  })
+  await new StateService(repository, first.id).updateTopic(topic.id, { content: [{
+    id: "tp-limits", name: "Limits", references: [], mistakes: [],
+    goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Distinguish limit and value"] },
+  }] })
   await manager.send({ chatId: first.id, content: "Confirm", confirmTopicId: topic.id })
   expect(repository.topic(topic.id).planConfirmed).toBe(true)
   expect(children[0].jobs[0].confirmTopicId).toBe(topic.id)
@@ -232,16 +299,18 @@ test("rejects tags for missing topics and confirms only a drafted plan", async (
 
 test("passes the open topic and its saved progress to the worker without modifying the learner's message", async () => {
   const { manager, repository, first, topic } = await fixture()
-  await repository.mutate((state) => {
-    const current = state.topics.find((item) => item.id === topic.id)
-    if (!current) throw new Error("Missing fixture topic")
-    current.learning.nextAction = "Explain derivatives next."
-  })
+  const service = new StateService(repository, first.id)
+  await service.updateTopic(topic.id, { content: [{
+    id: "tp-derivatives", name: "Derivatives", references: [], mistakes: [],
+    goals: { id: "tpg-derivatives", objective: "Explain derivatives", understoodWhen: ["Justify the limit"] },
+  }] })
+  await service.activatePart(topic.id, "tp-derivatives")
+  await service.recordQuestion(topic.id, "tp-derivatives", "What does a derivative measure?")
   await manager.send({ chatId: first.id, content: "What is next?", openedTopicId: topic.id })
   const job = children[0].jobs[0]
   expect(job.openedTopicId).toBe(topic.id)
   expect(job.topics.map((item) => item.id)).toEqual([topic.id])
-  expect(job.topics[0].learning.nextAction).toBe("Explain derivatives next.")
+  expect(job.topics[0].state?.threadTutors).toEqual([{ id: first.id, progress: { "tp-derivatives": { status: "active", steps: [{ question: "What does a derivative measure?" }] } } }])
   expect(repository.chat(first.id).messages[0].content).toBe("What is next?")
   expect(repository.chat(first.id).messages[0].topicIds).toEqual([topic.id])
   expect(repository.topic(topic.id).planConfirmed).toBe(false)
@@ -273,7 +342,7 @@ test("restarts cleanly after a model failure", async () => {
   children[0].emit("message", { type: "error", error: "Model unavailable" })
   expect(children[0].killed).toBe(true)
   expect(manager.statuses[0].status).toBe("error")
-  manager.start(first.runnerId)
+  manager.start(first.runnerId, first.id)
   expect(children).toHaveLength(2)
   expect(manager.statuses[0].status).toBe("ready")
 })
@@ -470,8 +539,64 @@ test.each(["chat", "topic"] as const)("topics created from %s sources retain rea
   const chat = newChat(first.runnerId)
   await repository.mutate((state) => state.chats.push(chat))
   await manager.send({ chatId: chat.id, content: `${topicMention(topicId, "Source Limits")} Read the source.` })
-  const session = await createTutorSession({ ...children[0].jobs[1], skillDirectory: resolve("resources/tutor-me") }, () => {})
+  const session = await createTutorSession({ ...children[1].jobs[0], skillDirectory: resolve("resources/tutor-me") }, () => {})
   const result = await session.execute("read_material", { id: material.id, firstPage: 1, lastPage: 1 })
   expect(result.success).toBe(true)
   expect(result.text).toContain("Limits source")
+})
+
+
+test("persists each response's generation duration independently across concurrent chats", async () => {
+  const { manager, repository, first, second } = await fixture()
+  const clock = vi.spyOn(performance, "now").mockReturnValue(1000)
+  await manager.send({ chatId: first.id, content: "First question" })
+  clock.mockReturnValue(2000)
+  await manager.send({ chatId: second.id, content: "Second question" })
+  clock.mockReturnValue(4500)
+  children[1].emit("message", { type: "result", reply: "Second reply", learning: second.learning })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === second.id)?.status).toBe("ready"))
+  clock.mockReturnValue(6000)
+  children[0].emit("message", { type: "result", reply: "First reply", learning: first.learning })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === first.id)?.status).toBe("ready"))
+  const restored = new WorkspaceRepository(repository.directory)
+  await restored.load()
+  expect(restored.chat(first.id).messages.at(-1)).toMatchObject({ durationMs: 5000 })
+  expect(restored.chat(second.id).messages.at(-1)).toMatchObject({ durationMs: 2500 })
+  expect(restored.chat(first.id).messages[0]).not.toHaveProperty("durationMs")
+})
+
+test("streams into the correct chat without persisting drafts and clears failed replies", async () => {
+  const { manager, repository, first, second } = await fixture()
+  await manager.send({ chatId: first.id, content: "Teach" })
+  await manager.send({ chatId: second.id, content: "Teach" })
+  children[0].emit("message", { type: "reply", text: "Partial lesson" })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === first.id)).toMatchObject({ reply: "Partial lesson", status: "running" }))
+  expect(manager.statuses.find((state) => state.chatId === second.id)).not.toHaveProperty("reply")
+  expect(repository.chat(first.id).messages.some((message) => message.role === "assistant")).toBe(false)
+  children[0].emit("message", { type: "reply", text: "" })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === first.id)).toMatchObject({ reply: "" }))
+  children[0].emit("message", { type: "reply", text: "Replacement" })
+  children[0].emit("message", { type: "error", error: "Interrupted" })
+  await vi.waitFor(() => expect(manager.statuses.find((state) => state.chatId === first.id)).toMatchObject({ status: "error" }))
+  expect(manager.statuses.find((state) => state.chatId === first.id)).not.toHaveProperty("reply")
+})
+
+test("persists response choices with their assistant message without carrying them into later replies", async () => {
+  const { manager, repository, first } = await fixture()
+  const responseQuestion = { prompt: "What would you like to do next?", options: ["Continue", "Quick practice"] }
+  await manager.send({ chatId: first.id, content: "My summary of the part." })
+  children[0].emit("message", {
+    type: "result", reply: "Your explanation meets the part's goals.",
+    learning: { ...first.learning, phase: "awaiting_choice", responseQuestion },
+  })
+  await vi.waitFor(() => expect(repository.chat(first.id).messages.at(-1)?.role).toBe("assistant"))
+  const reloaded = new WorkspaceRepository(repository.directory)
+  await reloaded.load()
+  expect(reloaded.chat(first.id).messages.at(-1)).toMatchObject({ responseQuestion })
+  expect(reloaded.publicChats.find((chat) => chat.id === first.id)?.messages.at(-1)).toMatchObject({ responseQuestion })
+  await manager.send({ chatId: first.id, content: "Quick practice" })
+  expect(children.at(-1)?.jobs.at(-1)?.chat.messages.at(-1)?.content).toBe("Quick practice")
+  children.at(-1)?.emit("message", { type: "result", reply: "Here is a practice question.", learning: first.learning })
+  await vi.waitFor(() => expect(repository.chat(first.id).messages.at(-1)?.content).toBe("Here is a practice question."))
+  expect(repository.chat(first.id).messages.at(-1)).not.toHaveProperty("responseQuestion")
 })
