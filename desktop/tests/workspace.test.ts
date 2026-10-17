@@ -211,7 +211,7 @@ test("rejects corrupt database and topic state without replacing their files", a
   expect(await readFile(path, "utf8")).toBe(corrupt)
 })
 
-test("stores topic state in the Tutor Me layout and derives it back from the files", async () => {
+test("retains legacy handoffs while structured topic progress starts fresh", async () => {
   const store = await repository()
   const topic = newTopic("Limits")
   topic.planConfirmed = true
@@ -233,12 +233,13 @@ test("stores topic state in the Tutor Me layout and derives it back from the fil
     `## Handoff\nCreated: ${topic.createdAt}\nPlan: confirmed\nPhase: awaiting_answer\nCurrent section: 1. Limits\nActive check: C1-01 — [question](topic.md#check-c1-01)\n  \n  Explain a limit.\nResume action: Evaluate C1-01.\n\n## Active check key\nThe value a function approaches.\n\n## Not a section\n\n## Working notes\nSource map: Lecture 1.pdf pages 1-4.`,
   )
   const restored = await new WorkspaceRepository(store.directory).load()
-  expect(restored.topics[0]).toEqual({ ...topic, learning: { ...topic.learning, outline: ["1. Limits", "1.1 One-sided limits"] } })
+  expect(restored.topics[0]).toEqual({ ...topic, learning: { ...topic.learning, outline: [] } })
 })
 
 test("migrates topic.json into the workpad handoff and material caches", async () => {
   const store = await repository()
   const topic = newTopic("Limits")
+  topic.planConfirmed = true
   await store.mutate((state) => state.topics.push(topic))
   const directory = join(store.directory, "topics", topic.id)
   const material = { id: randomUUID(), name: "Lecture 1.pdf", kind: "pdf", text: "Page one", pages: ["Page one"] }

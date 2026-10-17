@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { TopicStateSchema, TopicMutationSchema } from "./topic-state"
 
 export const IdSchema = z.string().uuid()
 export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity", "openrouter"])
@@ -105,6 +106,7 @@ export const LearningStateSchema = z
     }
   })
 export const TopicSchema = z.object({
+  state: TopicStateSchema.optional(),
   id: IdSchema,
   archived: z.boolean().default(false),
   title: z.string().max(150),
@@ -122,7 +124,7 @@ export const ProviderSessionSchema = z.object({
   toolVersion: z.number().int().positive(),
   status: z.enum(["ready", "pending"]),
 })
-export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true }).extend({
+export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
   runnerId: IdSchema,
   messages: z.array(MessageSchema),
   providerSession: ProviderSessionSchema.optional(),
@@ -229,6 +231,7 @@ export const WorkerJobSchema = z.object({
   topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
   workspaceTopics: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
     notes: LearningStateSchema.shape.notes,
+    state: TopicStateSchema.optional(),
   })).default([]),
   runner: RunnerSchema,
   apiKey: z.string().default(""),
@@ -257,6 +260,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
     topicUpdates: z.array(TopicUpdateSchema).default([]),
+    topicMutations: z.array(TopicMutationSchema).default([]),
     providerSession: ProviderSessionSchema.optional(),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),

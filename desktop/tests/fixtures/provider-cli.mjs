@@ -41,6 +41,34 @@ if (args[0] === "auth") {
       }) }] }
     } else action = { reply: "Here is your learning plan. Confirm it to begin.", calls: [] }
     const request = transcript.findLast((item) => item.role === "user")?.content
+    const taggedLine = input.split("\n").find((line) => line.startsWith("Tagged topics: "))
+    const tagged = taggedLine ? JSON.parse(taggedLine.slice("Tagged topics: ".length)) : []
+    const structured = tagged.find((topic) => topic.state?.content.some((part) => part.id === "tp-structured-limits"))
+    if (request === "Plan structured Limits curriculum." || (structured && request?.includes("I confirm this learning plan."))) {
+      const topic = structured ?? tagged[0]
+      const handoffLine = input.split("\n").find((line) => line.startsWith("Chat handoff: "))
+      if (!topic || !handoffLine) throw new Error("Missing structured topic context")
+      const handoff = JSON.parse(handoffLine.slice("Chat handoff: ".length))
+      if (!results.some((item) => item.tool === "save_learning_state" && !item.result.startsWith("Tool error:"))) {
+        let calls
+        if (request === "Plan structured Limits curriculum.") {
+          calls = [{ name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, content: [{ id: "tp-structured-limits", name: "Limits", references: [], goals: { id: "tpg-structured-limits", objective: "Distinguish a limit from a function value", understoodWhen: ["Explain why a missing function value does not prevent a limit"] }, mistakes: [] }] }) }]
+          handoff.phase = "awaiting_plan_confirmation"
+        } else {
+          calls = [
+            { name: "activatePart", arguments: JSON.stringify({ topicId: topic.id, topicPartId: "tp-structured-limits" }) },
+            { name: "recordQuestion", arguments: JSON.stringify({ topicId: topic.id, topicPartId: "tp-structured-limits", question: "Why can a limit exist where the function is undefined?" }) },
+          ]
+          handoff.phase = "awaiting_answer"
+          handoff.pendingQuestion = "Why can a limit exist where the function is undefined?"
+          handoff.privateAnswerKey = "A limit concerns nearby values rather than the function value at the point."
+        }
+        calls.push({ name: "save_learning_state", arguments: JSON.stringify(handoff) })
+        action = { reply: "", calls }
+      } else {
+        action = { reply: topic.planConfirmed ? "Why can a limit exist where the function is undefined?" : "Review the Limits curriculum.", calls: [] }
+      }
+    }
     if (request === "Across all topics, what are the past mistakes I have made?") {
       const directoryLine = input.split("\n").find((line) => line.startsWith("Workspace topic directory: "))
       const handoffLine = input.split("\n").find((line) => line.startsWith("Chat handoff: "))

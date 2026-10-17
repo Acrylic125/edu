@@ -15,6 +15,7 @@ import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions
 import { newTopic, WorkspaceRepository } from "../main/workspace"
 import { generateTopicTitle } from "./title"
 import { TurnTrace } from "./trace"
+import { applyTopicMutation } from "../main/state-service"
 
 export class RunnerManager {
   private codexProcesses = new Map<string, number>()
@@ -146,6 +147,7 @@ export class RunnerManager {
         client = new OpenAI({ apiKey: connection.apiKey, baseURL: "https://openrouter.ai/api/v1" })
       const title = await generateTopicTitle({ runner, ...connection }, input.title, client, () => {}, () => {})
       const topic = newTopic(title)
+      topic.titleGenerated = true
       await this.repository.mutate((workspace) => workspace.topics.unshift(topic))
       this.notify()
       return topic.id
@@ -247,7 +249,7 @@ export class RunnerManager {
         confirmTopicId: input.confirmTopicId,
         openedTopicId: input.openedTopicId,
         workspaceTopics: this.repository.stateSnapshot.topics.map((topic) => ({
-          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes,
+          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes, state: topic.state,
         })),
       })
       this.notify()
@@ -316,18 +318,20 @@ export class RunnerManager {
       trace?.record("harness.commit_started", {
         replyCharacters: event.reply.length,
         phase: event.learning.phase,
-        topicUpdates: event.topicUpdates.length,
+        topicMutations: event.topicMutations.length,
       })
       const context = this.contextTopics(chatId).map((topic) => topic.id)
-      const updates = event.topicUpdates.filter((update) =>
-        context.includes(update.topicId),
-      )
       await this.repository.mutate((workspace) => {
-        for (const update of updates) {
-          const topic = workspace.topics.find((item) => item.id === update.topicId)
-          if (topic && update.expected && JSON.stringify(topic.learning) !== JSON.stringify(update.expected))
-            throw new Error("Topic notes changed during this turn. Retry to preserve the latest learner evidence.")
+        const writable = new Set(context)
+        for (const mutation of event.topicMutations) {
+          if (mutation.type === "createTopic") {
+            writable.add(mutation.topicId)
+          } else if (!writable.has(mutation.topicId)) {
+            throw new Error("Only tagged or newly created topics can be written.")
+          }
+          applyTopicMutation(workspace, chatId, mutation)
         }
+        if (event.topicUpdates.length) throw new Error("Legacy topic writes are no longer supported. Retry with structured topic tools.")
         const chat = workspace.chats.find((item) => item.id === chatId)
         if (!chat) throw new Error("Chat not found.")
         chat.learning = event.learning
@@ -337,16 +341,13 @@ export class RunnerManager {
           role: "assistant",
           content: event.reply,
           createdAt: new Date().toISOString(),
-          topicIds: [],
+          topicIds: event.topicMutations.filter((mutation) => mutation.type === "createTopic").map((mutation) => mutation.topicId),
         })
-        for (const update of updates) {
-          const topic = workspace.topics.find((item) => item.id === update.topicId)
-          if (topic) topic.learning = update.learning
-        }
+
       })
       trace?.record("harness.committed", {
         chatId,
-        topicsUpdated: updates.length,
+        topicMutations: event.topicMutations.length,
       })
       await trace?.flush()
       this.runtime.set(id, {

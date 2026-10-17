@@ -79,28 +79,39 @@ original deck. Attach a PDF export when the tutor needs to inspect slide visuals
 
 ## Tutor memory
 
-EdU uses the bundled Tutor Me skill for learning records.
-Past Mistakes entries live beside their concept in `topics/<topic-id>/topic.md`,
-with stable IDs, current status, concise assessments, and links to the original
-attempts. Repeated evidence revises the same difficulty while preserving the
-question and actual learner answers. Assisted performance is distinguished from
-independent success; later evidence can resolve or reopen a mistake. Resolved
-entries remain in Past Mistakes with their original evidence. Tutor
-errors and contested answers belong in correction/deliberation records.
+EdU uses `topics/<topic-id>/topic.md` for conceptual summaries and
+`topic.state.json` for curriculum parts, references, goals, mistakes, and progress.
+Each writer chat has its own active/completed parts and exact question/answer
+steps. Read-only topic references do not register that chat as a tutor.
 
-For cross-topic reviews, the tutor receives a directory of all workspace topics
-and uses `read_topic_notes` to retrieve their notes in bounded pages, including
-archived topics. Historical attempts remain available after a difficulty is
-resolved. Retrieval excludes private handoffs and answer keys and does not grant
-write access to untagged topics. Topic notes can be edited locally; the next turn
-refreshes them.
+Tutor turns run through a compiled LangGraph `StateGraph` in
+`src/runners/tutor-graph.ts`: model → tools → validation → recovery or publication.
+OpenRouter, Claude, Antigravity, and Codex share that graph. Codex native tool
+callbacks enter the same sequential tool subgraph. Provider adapters translate
+protocol messages and source images; graph nodes control retries and whether a
+reply can be published. Diagnostics record node transitions as `graph.node`.
+Graph state lasts for one turn. SQLite and StateService remain the durable
+storage boundary, avoiding a second checkpoint store for topic writes.
 
-Existing-topic updates use bounded note revisions and changed handoff fields.
-Topic updates, the chat handoff, and the reply commit together before
-the reply appears. Concurrent changes to topic evidence reject a
-stale turn with a retry message. SQLite recovery restores committed files after
-an interrupted write. The skill's memory records remain prose; their meaning
-and evidence-based updates are assessed by the selected tutor model.
+The tutor uses StateService tools to locate its current part, offer active
+continuations from other threads plus the next untouched part, retrieve prior
+questions, and record confirmed mistakes after deliberation. When several
+continuations exist, it asks the learner to choose. Evaluation questions draw
+from attached practice assets and then internet sources when available; practice
+ends when no suitable source remains. The current harness has no web search.
+
+Cross-topic mistake retrieval includes archived topics when requested. It leaves
+those topics unchanged. Conceptual summaries and preserved legacy notes remain
+available through paginated `read_topic_notes`; private chat handoffs and checked
+answer keys stay private.
+
+Existing topics start structured progress fresh. Their notes and legacy workpads
+remain as historical evidence; they do not establish current progress. State
+writes, the private chat handoff, and the reply commit together before the reply
+appears. Mutations replay under the repository's serialized transaction, merging
+independent thread progress. Stale curriculum/summary replacements are rejected.
+SQLite recovery restores committed files after an interrupted write. The tutor
+model evaluates goal satisfaction and whether a mistake has been confirmed.
 
 ## Development
 
@@ -173,9 +184,8 @@ runner operations require Electron.
   Providers without native session support receive the full saved transcript.
   Its bundled code-mode host stays enabled because some models require it to
   call those study tools; disabling it silently hides the tools from those models.
-- Codex tutoring turns run from `workspace/chats/<chat-id>/`. Topic notes, private
-  handoffs, and source assets belong to their topic, independently of the chat
-  or runner. Codex's
+- Codex tutoring turns run from `workspace/chats/<chat-id>/`. Topic summaries, structured state, and source assets belong to their topic.
+  Private handoffs belong to each chat. Codex's
   private account home remains in `workspace/providers/codex/`.
 - Topic creation generates a title from the suggested subject before saving it,
   using the selected provider. Chat titles do not rename tagged topics.
@@ -185,17 +195,16 @@ runner operations require Electron.
   event log records changes in the same transaction as the current state.
   WAL mode, full synchronous commits, and serialized writes protect committed
   conversations. Replies become visible after the transaction commits.
-- Topics follow the Tutor Me layout and remain editable:
-  `topics/<topic-id>/topic.md` holds the title in its first Markdown header, the
-  topic directory (outline), and the notes; `agent.workpad.md` holds the private
-  `## Handoff` (plan, phase, current section, active check, resume action), the
-  `## Active check key`, and working notes; `assets/` holds the original
-  materials with extracted text in `assets/cache/prepared/<material-id>/manifest.json`.
-  Older `topic.json` files are migrated into this layout on load. Topics are
-  discovered from this folder and refreshed before snapshots and saves. Topic
-  updates also enter the SQLite transaction; a pending-files marker lets startup
-  recover their files after an interrupted write. Files are written through
-  verified temporary files and atomic rename. Native session bindings and private keys are omitted from public chats.
+- Topics contain `topic.md` (conceptual summary), `topic.state.json`
+  (versioned curriculum and per-thread progress), and `assets/` (original
+  materials and prepared manifests under `assets/cache/prepared/`). Legacy
+  `agent.workpad.md` and older notes remain historical evidence. Private current
+  keys and session logistics belong to the chat handoff in SQLite. Topics are
+  discovered from these folders and refreshed before snapshots and saves.
+  Structured topic mutations enter the SQLite transaction; a pending-files marker
+  lets startup recover their files after an interrupted write. Files use verified
+  temporary writes and atomic rename. Native session bindings and private keys
+  are omitted from public chats.
 - Existing `workspace.json` and per-chat `chat.json` data migrate to SQLite on
   load. After a successful commit and database read-back verification, migration
   sources (`workspace.json`, `workspace.legacy.json`, `chat.json`) and the obsolete

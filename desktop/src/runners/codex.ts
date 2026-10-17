@@ -5,6 +5,7 @@ import { type WorkerJob, type Diagnostic, ProviderSessionSchema } from "../share
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { createTutorSession } from "./tutor"
+import { createTutorToolGraph, runTutorGraph } from "./tutor-graph"
 
 const CallSchema = z.object({
   threadId: z.string(),
@@ -86,7 +87,7 @@ export async function runCodexTutorTurn(
     const previous = job.chat.providerSession
     const canResume =
       previous?.status === "ready" &&
-      previous.toolVersion === 8 &&
+      previous.toolVersion === 9 &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -125,34 +126,32 @@ export async function runCodexTutorTurn(
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 8,
+      toolVersion: 9,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })
+    const toolGraph = createTutorToolGraph(session, diagnostic)
     let toolCount = 0
     let sequence = Promise.resolve()
     client.onRequest = async (method, params) => {
       if (method !== "item/tool/call")
         throw new Error("Only tutoring tools are available.")
       const call = CallSchema.parse(params)
-      diagnostic("tool.call", { tool: call.tool, threadId: call.threadId })
       if (call.threadId !== threadId)
         throw new Error("Invalid tutoring thread.")
       if (++toolCount > 48)
         throw new Error("The runner reached its tool limit.")
-      const operation = sequence.then(() =>
-        session.execute(call.tool, call.arguments),
-      )
+      const operation = sequence.then(async () => {
+        const state = await toolGraph.invoke({ calls: [{ name: call.tool, arguments: JSON.stringify(call.arguments) }] })
+        const output = state.results[0]
+        if (!output) throw new Error("The tutoring tool graph returned no result.")
+        return output
+      })
       sequence = operation.then(
         () => {},
         () => {},
       )
       const output = await operation
-      diagnostic("tool.result", {
-        tool: call.tool,
-        success: output.success,
-        error: output.success ? null : output.text,
-      })
       const contentItems: z.infer<ReturnType<typeof z.json>>[] = [
         { type: "inputText", text: output.text },
       ]
@@ -186,65 +185,45 @@ export async function runCodexTutorTurn(
       if (!request || request.role !== "user") throw new Error("The current learner request is missing.")
       input = request.content
     }
-    for (let attempt = 0; attempt < 3; attempt++) {
-      reply = ""
-      const completion = client.waitFor(
-        "turn/completed",
-        TurnSchema.refine((event) => event.threadId === threadId),
-      )
-      void completion.promise.catch(() => {})
-      try {
-        if (attempt === 0) activity("Preparing your lesson with Codex")
-        else activity("Completing study notes with Codex")
-        diagnostic("turn.start", {
-          attempt: attempt + 1,
-          recovery: attempt > 0,
-        })
-        await client.request(
-          "turn/start",
-          {
+    const result = await runTutorGraph({
+      session,
+      maxAttempts: 3,
+      diagnostic,
+      exhausted: () => {
+        if (!session.saved)
+          return new Error(`Codex did not save a complete learning state after 3 attempts (${toolCount} tutoring tool calls). Open Diagnostics to inspect the turn trace.`)
+        return new Error("The runner returned no lesson. Retry this turn.")
+      },
+      async model(attempt) {
+        reply = ""
+        const completion = client.waitFor("turn/completed", TurnSchema.refine((event) => event.threadId === threadId))
+        void completion.promise.catch(() => {})
+        try {
+          if (attempt === 1) activity("Preparing your lesson with Codex")
+          else activity("Completing study notes with Codex")
+          diagnostic("turn.start", { attempt, recovery: attempt > 1 })
+          await client.request("turn/start", {
             threadId,
             input: [{ type: "text", text: input }],
-            effort:
-              job.runner.reasoningEffort ??
-              model.defaultReasoningEffort ??
-              null,
-          },
-          z.object({}).passthrough(),
-        )
-        const event = await completion.promise
-        await sequence
-        diagnostic("turn.completed", {
-          attempt: attempt + 1,
-          status: event.turn.status,
-          saved: session.saved,
-          replyCharacters: reply.length,
-          saveError: session.saveError ?? null,
-        })
-        if (event.turn.status !== "completed")
-          throw new Error(
-            event.turn.error?.message ??
-              "Codex was interrupted. Retry from your saved notes.",
-          )
-        if (session.saved && reply.trim()) return { ...session.finish(reply), providerSession }
-        if (!session.saved) {
-          input =
-            "Complete the current learner request without advancing the lesson. Repair each rejected save using its original tool and target first. Topic notes belong in save_topic_state or revise_topic_state; save_learning_state only saves this chat's private handoff and next action. Then save the chat handoff and provide the learner-facing reply. The previous reply has not been shown or saved."
-          if (session.saveError)
-            input += `\nCorrect this rejected save: ${session.saveError}`
-        } else {
-          input =
-            "The learning state is staged, but the learner-facing reply is missing. Provide the explanation, question, or plan for this same learner request without advancing the lesson."
+            effort: job.runner.reasoningEffort ?? model.defaultReasoningEffort ?? null,
+          }, z.object({}).passthrough())
+          const event = await completion.promise
+          await sequence
+          diagnostic("turn.completed", {
+            attempt, status: event.turn.status, saved: session.saved,
+            replyCharacters: reply.length, saveError: session.saveError ?? null,
+          })
+          if (event.turn.status !== "completed")
+            throw new Error(event.turn.error?.message ?? "Codex was interrupted. Retry from your saved notes.")
+          return { reply, calls: [], finishAfterTools: false }
+        } finally {
+          completion.dispose()
         }
-      } finally {
-        completion.dispose()
-      }
-    }
-    if (!session.saved && !session.saveError)
-      throw new Error(
-        `Codex did not save a complete learning state after 3 attempts (${toolCount} tutoring tool calls). Open Diagnostics to inspect the turn trace.`,
-      )
-    return { ...session.finish(reply), providerSession }
+      },
+      consumeTools: () => {},
+      recover(message) { input = message },
+    })
+    return { ...result, providerSession }
   } finally {
     client.close()
     processChanged(null)
