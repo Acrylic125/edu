@@ -62,7 +62,7 @@ describe("study Markdown", () => {
     const html = render("```mermaid\ngraph TD\n  A --> B\n```")
     expect(html).toContain('data-diagram="graph TD\n  A --&gt; B"')
     expect(html).not.toContain("<pre>")
-    expect(render("```ts\nconst x = 1\n```")).toContain('<pre><code class="language-ts">')
+    expect(render("```ts\nconst x = 1\n```")).toContain('<pre><code class="hljs language-ts">')
   })
 
   it("keeps Markdown lists, tables, and links working", () => {
@@ -152,7 +152,7 @@ describe("study Markdown", () => {
   it("preserves anchor markup when it is an intentional code example", () => {
     for (const text of ['`<a id="foundations"></a>`', '```html\n<a id="foundations"></a>\n```']) {
       const html = render(text)
-      expect(html).toContain('&lt;a id=&quot;foundations&quot;&gt;&lt;/a&gt;')
+      expect(html.replace(/<\/?span\b[^>]*>/g, "")).toContain('&lt;a id=&quot;foundations&quot;&gt;&lt;/a&gt;')
       expect(html).toContain("<code")
     }
   })

@@ -1,0 +1,15 @@
+---
+import DemoIcon from "./DemoIcon.astro";
+
+interface Props {
+  name: string;
+  index?: number;
+}
+
+const { name, index } = Astro.props;
+---
+
+<span data-demo-file={index} class:list={["demo-file-pill flex min-w-0 max-w-full items-center gap-2 rounded-full border border-border px-3 py-2 text-xs text-muted-foreground", { "demo-file": index !== undefined }]}>
+  <DemoIcon name="file" class="size-4 shrink-0" />
+  <span class="truncate">{name}</span>
+</span>

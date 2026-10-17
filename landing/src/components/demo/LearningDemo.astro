@@ -1,0 +1,167 @@
+---
+import DemoIcon from "./DemoIcon.astro";
+import ComposerToolbar from "./ComposerToolbar.astro";
+import FilePill from "./FilePill.astro";
+import LearningBooks from "./LearningBooks.astro";
+import "./demo.css";
+
+const steps = [
+  "Add in your topic slides, tutorials, labs",
+  "Create the topic",
+  "Confirm the plan",
+  "Simplify your lecture slides",
+  "Check your understanding",
+];
+const suggestions = [
+  { title: "Learn calculus", description: "Limits, derivatives and integrals", icon: "calculator", color: "bg-learning-yellow" },
+  { title: "Explore automata", description: "From finite states to languages", icon: "code", color: "bg-learning-sage" },
+  { title: "Prepare for an exam", description: "Turn your papers into practice", icon: "book", color: "bg-learning-blue" },
+] as const;
+const files = ["Differentiation Lecture Slides.ppt", "Differentiation Tutorial.pdf"];
+const plan = [
+  { title: "Constant Term Rule", sources: ["Slides.pdf, pp. 3–5", "Tutorial.pdf, p. 2"] },
+  { title: "Product Rule", sources: ["Slides.pdf, pp. 6–9"] },
+  { title: "Chain Rule", sources: ["Slides.pdf, pp. 10–14"] },
+];
+---
+
+<learning-demo data-learning-demo data-step="0" class="relative block h-[650svh]" aria-label="How EdU works">
+  <section class="demo-stage sticky top-0 mx-auto flex h-svh max-w-6xl flex-col gap-5 py-6 landscape:gap-5 landscape:py-[4svh] not-landscape:gap-4 not-landscape:py-[3svh]">
+    <div class="demo-title grid shrink-0 text-[clamp(1.65rem,3.1vw,2.65rem)] font-semibold leading-[1.13] tracking-[-0.04em] not-landscape:max-w-[20rem]">
+      {steps.map((step, index) => (
+        <h3 data-demo-caption={index} class="demo-caption [grid-area:1/1]" aria-hidden={index !== 0}>{step}</h3>
+      ))}
+    </div>
+
+    <div data-demo-screen class="demo-screen relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-border bg-background shadow-sm landscape:rounded-[1.75rem]" role="img" aria-label="Scroll-driven preview of EdU: attach course materials, create a differentiation topic, confirm a study plan, read simplified notes, and answer your tutor’s understanding check.">
+      <div aria-hidden="true" class="demo-surface flex min-h-0 flex-1 flex-col">
+        <div class="demo-toolbar flex h-11 shrink-0 items-center gap-3 border-b border-border/60 px-4 text-xs landscape:h-12 landscape:px-5">
+          <span class="font-semibold">EdU</span>
+          <span class="text-muted-foreground"><DemoIcon name="panel" class="size-3.5" /></span>
+          <span class="text-border">/</span>
+          <span class="demo-new-label text-muted-foreground">New topic</span>
+          <span class="demo-topic-label text-muted-foreground">Differentiation</span>
+          <span class="ml-auto text-muted-foreground"><DemoIcon name="message" class="size-3.5" /></span>
+        </div>
+
+        <div class="relative flex min-h-0 flex-1 gap-2 p-2 landscape:gap-3 landscape:p-3">
+          <div class="relative min-w-0 flex-1 overflow-hidden rounded-[1.1rem] bg-card landscape:rounded-[1.25rem]">
+            <div class="demo-home absolute inset-0 mx-auto flex w-full max-w-[850px] flex-col justify-center px-5 landscape:px-10">
+              <div class="demo-welcome mb-6 flex items-center justify-between gap-4">
+                <div class="min-w-0 max-w-lg">
+                  <p class="text-3xl font-semibold leading-[1.12] tracking-[-0.045em] landscape:text-[2.75rem]">What will you<br class="not-landscape:hidden" /> learn today?</p>
+                  <p class="mt-4 max-w-sm text-sm leading-6 text-muted-foreground">Drop in slides, tutorials and past year papers, or start with a question.</p>
+                </div>
+                <LearningBooks class="demo-books hidden w-[38%] max-w-[220px] shrink-0 landscape:block" />
+              </div>
+
+              <div class="demo-suggestions mb-5 grid gap-3 landscape:grid-cols-3 not-landscape:grid-cols-1">
+                {suggestions.map((suggestion) => (
+                  <div class:list={["relative flex items-center gap-4 rounded-[1.75rem] px-5 py-4 text-learning-ink landscape:min-h-44 landscape:flex-col landscape:items-start landscape:gap-5 landscape:py-5", suggestion.color]}>
+                    <span class="demo-suggestion-icon flex size-11 shrink-0 items-center justify-center rounded-full bg-learning-circle"><DemoIcon name={suggestion.icon} class="size-5" /></span>
+                    <div>
+                      <p class="text-sm font-semibold">{suggestion.title}</p>
+                      <p class="mt-1 text-xs leading-5 text-learning-subtle">{suggestion.description}</p>
+                    </div>
+                    <DemoIcon name="arrow" class="demo-suggestion-arrow ml-auto size-4 shrink-0 rotate-90 text-learning-subtle landscape:absolute landscape:right-5 landscape:top-8" />
+                  </div>
+                ))}
+              </div>
+
+              <div class="demo-topic-composer relative flex min-h-44 flex-col rounded-[1.75rem] border border-input bg-muted p-4 landscape:p-6">
+                <p class="demo-topic-placeholder absolute left-4 top-4 text-sm text-muted-foreground landscape:left-6 landscape:top-6">What would you like to learn?</p>
+                <div class="flex flex-wrap gap-2">
+                  {files.map((file, index) => (
+                    <FilePill name={file} index={index} />
+                  ))}
+                </div>
+                <p class="demo-prompt mt-3 w-fit origin-left text-sm">Tutor me on Differentiation.</p>
+                <div class="mt-auto pt-6">
+                  <ComposerToolbar newTopic />
+                </div>
+              </div>
+            </div>
+
+            <article class="demo-document absolute inset-0 overflow-hidden px-6 py-6 landscape:px-10 landscape:py-10">
+              <div class="demo-document-body relative">
+                <h4 class="text-3xl font-semibold leading-tight tracking-tight landscape:text-[2.5rem]">Differentiation</h4>
+                <div class="demo-materials mt-5 flex flex-wrap gap-2">
+                  {files.map((file) => <FilePill name={file} />)}
+                </div>
+                <div class="demo-plan mt-8 rounded-[1.5rem] bg-learning-sage/50 p-6">
+                  <p class="mb-3 text-base font-semibold">Topic directory</p>
+                  <ol class="space-y-1.5 text-sm leading-snug">
+                    {plan.map((item, index) => (
+                      <li class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span class="font-medium">{index + 1}. {item.title}</span>
+                        {item.sources.map((source) => <span class="rounded-md bg-learning-circle px-1.5 py-0.5 text-xs text-muted-foreground">{source}</span>)}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+                <div class="demo-confirm mt-5 inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-medium text-primary-foreground"><DemoIcon name="check" class="size-4" />Confirm plan &amp; begin</div>
+
+                <div class="demo-notes mt-9 text-[15px] leading-[1.7]">
+                  <h5 class="text-xl font-semibold tracking-tight">1. Constant Term Rule</h5>
+                  <p class="mt-3">The derivative of a constant is always zero, because its value does not change with respect to the variable.</p>
+                  <div class="my-4 rounded-lg border border-border bg-muted px-4 py-3">
+                    <p class="font-serif text-2xl">d/dx (c) = 0</p>
+                    <p class="mt-1 text-xs text-muted-foreground">where c is a constant</p>
+                  </div>
+                  <p>For example, if <span class="rounded bg-muted px-1 font-mono text-[13px]">f(x) = 5</span>, the value stays at 5 no matter what x is. No change means a slope of zero.</p>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <aside class="demo-chat flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[1.25rem] bg-sidebar landscape:relative not-landscape:absolute not-landscape:inset-y-2 not-landscape:right-2 not-landscape:w-[calc(100%-1rem)]">
+            <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-4 text-xs font-medium">
+              <DemoIcon name="sparkle" class="size-3.5" /> Tutor chat
+              <span class="ml-auto text-muted-foreground"><DemoIcon name="panel" class="size-3.5" /></span>
+            </div>
+            <div class="demo-conversation-window relative min-h-0 flex-1 overflow-hidden">
+              <div class="demo-chat-request absolute inset-x-4 top-5 flex flex-col items-end gap-4 text-xs leading-5">
+                <span class="rounded-lg border border-border px-2 py-1.5 text-[10px] text-muted-foreground">Lecture slides + Tutorial</span>
+                <p class="rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-secondary-foreground">Tutor me on Differentiation.</p>
+                <p class="self-start text-muted-foreground">Reading your materials…</p>
+              </div>
+              <div class="demo-conversation flex flex-col gap-5 px-4 pb-5 pt-5 text-xs leading-[1.85] landscape:px-5 landscape:text-[13px]">
+                <div class="demo-chat-intro">
+                  <p>We will walk through differentiation:</p>
+                  <ol class="mt-2 list-inside list-decimal space-y-1">{plan.map((item) => <li>{item.title}</li>)}</ol>
+                </div>
+                <p class="demo-chat-confirm self-end rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-secondary-foreground">Confirm plan</p>
+                <div class="demo-explanation">
+                  <p class="font-semibold">1. Constant Term Rule</p>
+                  <p class="mt-2">The Constant Term Rule states that the derivative of a constant is always zero, because its value does not change with respect to the variable.</p>
+                  <p class="mt-3">Think of a horizontal line: as you move along x, its height stays the same. So its slope is zero.</p>
+                  <p class="my-3 rounded-xl bg-learning-yellow px-3 py-2 font-serif text-xl text-learning-ink">d/dx (c) = 0</p>
+                  <p>For example, f(x) = 5 stays at 5 for every value of x. No change means a derivative of zero.</p>
+                </div>
+                <div class="demo-check rounded-xl bg-learning-sage p-3.5 text-learning-ink">
+                  <p class="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold"><DemoIcon name="check" class="size-3.5" /> Check your understanding</p>
+                  <p>In your own words, why does the constant term rule work?</p>
+                </div>
+              </div>
+            </div>
+            <div class="mx-3 mb-3 shrink-0 rounded-[1.1rem] border border-input bg-card p-3 shadow-sm">
+              <div class="relative min-h-12 text-xs leading-5">
+                <span class="demo-reply-placeholder text-muted-foreground">Message your tutor…</span>
+                <p class="demo-reply absolute inset-x-0 top-0">A constant does not change when x changes.</p>
+              </div>
+              <div class="mt-2">
+                <ComposerToolbar />
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+  </section>
+  <ol class="sr-only">{steps.map((step) => <li>{step}</li>)}</ol>
+</learning-demo>
+
+<script>
+  import "./demo";
+</script>

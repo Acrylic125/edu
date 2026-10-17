@@ -1,0 +1,59 @@
+---
+import LearningBooks from "../demo/LearningBooks.astro";
+import DemoIcon from "../demo/DemoIcon.astro";
+---
+
+<div class="hero-art relative -mx-2 mt-3 aspect-[360/224] w-[calc(100%+1rem)] shrink-0 sm:m-0 sm:w-[44%]" aria-hidden="true">
+  <svg class="absolute inset-0 size-full" viewBox="0 0 360 224" fill="none">
+    <path d="M15 132C-20 28 307 4 344 107s-218 129-242 76" stroke="var(--book-gold)" stroke-opacity=".45" stroke-width="1.5" stroke-linecap="round" />
+    <path d="m296 31 3 8 8 3-8 3-3 8-3-8-8-3 8-3Z" fill="var(--book-gold)" />
+  </svg>
+
+  <div class="hero-books absolute -top-[5%] left-1/2 w-[72%] -translate-x-1/2">
+    <LearningBooks class="w-full drop-shadow-lg" />
+  </div>
+
+  <div class="hero-notes absolute left-[1%] top-[12%] w-[40%] -rotate-12 rounded-2xl border border-border bg-card p-3 shadow-lg lg:p-4">
+    <div class="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground">
+      <DemoIcon name="file" class="size-3" /> Lecture notes
+    </div>
+    <p class="mt-3 whitespace-nowrap font-serif text-2xl tracking-tight sm:text-xl lg:text-3xl">f′(x) = 2x</p>
+    <div class="mt-3 h-1 w-full rounded-full bg-border"></div>
+    <div class="mt-1.5 h-1 w-3/4 rounded-full bg-border"></div>
+  </div>
+
+  <div class="hero-practice absolute bottom-[5%] right-0 w-[49%] rotate-[8deg] rounded-2xl border border-learning-subtle/15 bg-learning-yellow p-3 text-learning-ink shadow-lg lg:p-4">
+    <div class="flex items-center gap-1.5 text-[10px] font-medium">
+      <DemoIcon name="sparkle" class="size-3" /> Quick practice
+    </div>
+    <p class="mt-2 text-xs font-semibold leading-5 lg:text-sm">Why does the constant term disappear?</p>
+    <div class="mt-2.5 flex items-center gap-1.5 text-[10px] text-learning-subtle">
+      <span class="flex size-4 items-center justify-center rounded-full bg-learning-circle"><DemoIcon name="check" class="size-2.5" /></span>
+      You’ve got this.
+    </div>
+  </div>
+</div>
+
+<style>
+  .hero-art {
+    animation: hero-arrive 750ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: 100ms;
+  }
+
+  @keyframes hero-arrive {
+    from {
+      opacity: 0;
+      transform: translateY(18px) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-art {
+      animation: none;
+    }
+  }
+</style>

@@ -1,0 +1,179 @@
+download-section {
+  --download-progress: 1;
+  --download-scale: calc(4 - 3 * var(--download-progress));
+  --download-reveal: 1;
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 320svh;
+  margin-left: calc(50% - 50vw);
+}
+
+.download-stage {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.download-halo {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(ellipse at 50% 50%, #e9c76c0d, transparent 55%);
+  opacity: var(--download-progress);
+}
+
+.download-orbits {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.download-trail,
+.download-trail-glow {
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: min(1, calc(var(--trail-progress, 1) * 8));
+}
+
+.download-trail-glow {
+  stroke-width: 10;
+  filter: blur(7px);
+  opacity: calc(var(--trail-progress, 1) * 0.5);
+}
+
+.download-copy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.download-copy h2 {
+  font-size: clamp(2rem, 4.56vw, 7rem);
+  font-weight: 550;
+  line-height: 1.1;
+  letter-spacing: -0.055em;
+  transform: scale(var(--download-scale));
+}
+
+.download-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  margin-top: 18px;
+  margin-bottom: calc(-140px * (1 - var(--download-reveal)));
+  opacity: var(--download-reveal);
+  transform: translateY(calc((1 - var(--download-reveal)) * 22px));
+  visibility: hidden;
+}
+
+download-section[ready] .download-reveal,
+download-section:not(:defined) .download-reveal {
+  visibility: visible;
+}
+
+.download-free {
+  font-size: clamp(1.5rem, 2.5vw, 2.25rem);
+  letter-spacing: -0.04em;
+  color: var(--muted-foreground);
+}
+
+.download-button {
+  min-height: 3.25rem;
+  padding-inline: 1.75rem;
+  pointer-events: auto;
+}
+
+.download-integration {
+  position: absolute;
+  left: 54%;
+  top: 24%;
+  width: clamp(76px, 9vw, 124px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%) scale(var(--download-scale));
+}
+
+.download-icon-face {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: 26%;
+  background: linear-gradient(145deg, var(--card), var(--background));
+  box-shadow: 0 12px 32px -16px #b9954126, inset 0 1px 0 #ffffff30;
+}
+
+.download-icon-face img {
+  width: 52%;
+  height: 52%;
+  object-fit: contain;
+}
+
+.dark .download-codex {
+  filter: brightness(0) invert(1);
+}
+
+.download-integration > span {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+download-section:not(:defined) {
+  height: 100svh;
+}
+
+download-section:not(:defined) .download-integration[data-integration="0"] {
+  left: 25.5%;
+  top: 52%;
+}
+
+download-section:not(:defined) .download-integration:last-child {
+  left: 73.5%;
+  top: 69%;
+}
+
+@media (max-width: 600px) {
+  .download-copy h2 {
+    font-size: clamp(1.6rem, 6.84vw, 3.4rem);
+  }
+
+  .download-integration {
+    width: 64px;
+  }
+
+  .download-integration > span {
+    font-size: 10px;
+  }
+
+  .download-reveal {
+    gap: 24px;
+  }
+
+  .download-trail {
+    stroke-width: 1.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  download-section {
+    height: 100svh;
+  }
+}

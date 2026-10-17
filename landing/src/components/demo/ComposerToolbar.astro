@@ -1,0 +1,28 @@
+---
+import providerIcon from "../../../../desktop/src/renderer/assets/providers/codex.svg?raw";
+import DemoIcon from "./DemoIcon.astro";
+
+interface Props {
+  newTopic?: boolean;
+}
+
+const { newTopic = false } = Astro.props;
+---
+
+<div class="demo-composer-toolbar flex items-center justify-between gap-2 text-muted-foreground">
+  <div class="demo-composer-options flex min-w-0 items-center gap-1 text-[10px] landscape:text-xs">
+    <span class="demo-attach flex size-7 shrink-0 items-center justify-center rounded-full landscape:size-10"><DemoIcon name="paperclip" class="size-4" /></span>
+    <span class="demo-model-picker flex min-w-0 items-center gap-1.5">
+      <span class="size-3 shrink-0 [&>svg]:size-full [&>svg]:fill-current landscape:size-3.5" set:html={providerIcon} />
+      <span class="truncate">GPT-6-Luna</span>
+      <DemoIcon name="chevron" class="size-2.5 shrink-0" />
+    </span>
+    <span class="demo-effort-picker ml-1 flex shrink-0 items-center gap-1 border-l border-border pl-2">
+      Medium <DemoIcon name="chevron" class="size-2.5" />
+    </span>
+  </div>
+  <span class:list={["demo-submit relative flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground landscape:size-10", { "demo-send": newTopic }]}>
+    <DemoIcon name="arrow" class:list={["size-4", { "demo-send-arrow": newTopic }]} />
+    {newTopic && <DemoIcon name="loader" class="demo-send-loader absolute size-4 animate-spin motion-reduce:animate-none" />}
+  </span>
+</div>

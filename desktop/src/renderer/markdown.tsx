@@ -3,6 +3,7 @@ import Markdown, { defaultUrlTransform } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
+import rehypeHighlight from "rehype-highlight"
 import "katex/dist/katex.min.css"
 import { MermaidDiagram } from "./mermaid-diagram"
 import { MediaPreview } from "./media-preview"
@@ -35,7 +36,7 @@ export function StudyMarkdown({
             : defaultUrlTransform(url)
         }
         remarkPlugins={[remarkGfm, remarkMath, sectionAnchors]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeKatex, [rehypeHighlight, { plainText: ["mermaid"] }]]}
         components={{
           img: ({ src, alt, title }) => (
             <MediaPreview

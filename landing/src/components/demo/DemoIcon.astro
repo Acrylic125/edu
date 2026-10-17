@@ -1,0 +1,28 @@
+---
+const paths = {
+  arrow: "M12 19V5m-6 6 6-6 6 6",
+  book: "M12 7c-3-3-7-3-10-2v15c3-1 7-1 10 2m0-15c3-3 7-3 10-2v15c-3-1-7-1-10 2V7Z",
+  calculator: "M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm1 4h8M8 11h1m6 0h1m-8 4h1m6 0h1m-8 3h1m6 0h1",
+  check: "m5 12 4 4L19 6",
+  chevron: "m6 9 6 6 6-6",
+  code: "m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16",
+  file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Zm0 0v6h6M8 13h8m-8 4h5",
+  loader: "M12 3a9 9 0 1 0 9 9",
+  message: "M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z",
+  panel: "M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm4 0v18",
+  paperclip: "m21.4 11.6-9.2 9.2a6 6 0 0 1-8.5-8.5L13 3a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8L15 6.8",
+  plus: "M12 5v14M5 12h14",
+  sparkle: "m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z",
+};
+
+interface Props {
+  name: keyof typeof paths;
+  class?: string;
+}
+
+const { name, class: className = "size-4" } = Astro.props;
+---
+
+<svg class={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d={paths[name]} />
+</svg>

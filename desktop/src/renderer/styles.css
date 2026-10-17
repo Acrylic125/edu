@@ -151,6 +151,71 @@ button:disabled {
   background: var(--muted);
   padding: 0.1rem 0.25rem;
 }
+.markdown pre {
+  --syntax-comment: #6a6b60;
+  --syntax-keyword: #9b355c;
+  --syntax-string: #356341;
+  --syntax-number: #925318;
+  --syntax-title: #6b48a0;
+  --syntax-variable: #1e6587;
+}
+.dark .markdown pre {
+  --syntax-comment: #a3a496;
+  --syntax-keyword: #f19ab7;
+  --syntax-string: #a6c995;
+  --syntax-number: #e6b67d;
+  --syntax-title: #cbb0f0;
+  --syntax-variable: #91c9e5;
+}
+.markdown .hljs-comment,
+.markdown .hljs-quote {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.markdown .hljs-keyword,
+.markdown .hljs-selector-tag,
+.markdown .hljs-tag,
+.markdown .hljs-doctag {
+  color: var(--syntax-keyword);
+}
+.markdown .hljs-string,
+.markdown .hljs-regexp,
+.markdown .hljs-addition,
+.markdown .hljs-selector-attr,
+.markdown .hljs-selector-pseudo {
+  color: var(--syntax-string);
+}
+.markdown .hljs-number,
+.markdown .hljs-literal,
+.markdown .hljs-symbol,
+.markdown .hljs-bullet {
+  color: var(--syntax-number);
+}
+.markdown .hljs-title,
+.markdown .hljs-section,
+.markdown .hljs-selector-class,
+.markdown .hljs-selector-id {
+  color: var(--syntax-title);
+}
+.markdown .hljs-built_in,
+.markdown .hljs-type,
+.markdown .hljs-attr,
+.markdown .hljs-attribute,
+.markdown .hljs-variable,
+.markdown .hljs-template-variable,
+.markdown .hljs-meta,
+.markdown .hljs-name {
+  color: var(--syntax-variable);
+}
+.markdown .hljs-deletion {
+  color: var(--syntax-keyword);
+}
+.markdown .hljs-emphasis {
+  font-style: italic;
+}
+.markdown .hljs-strong {
+  font-weight: 600;
+}
 .markdown table {
   display: block;
   overflow-x: auto;
