@@ -48,8 +48,8 @@ test.each(["claude", "antigravity"] as const)("%s completes tutoring with source
   expect(result.reply).toContain("Confirm it")
   expect(result.learning.phase).toBe("awaiting_plan_confirmation")
   expect(result.learning.outline).toEqual(["Limits"])
-  expect(diagnostic).toHaveBeenCalledWith("tool.result", { tool: "save_learning_state", success: false })
-  expect(diagnostic).toHaveBeenCalledWith("tool.result", { tool: "save_learning_state", success: true })
+  expect(diagnostic).toHaveBeenCalledWith("tool.result", expect.objectContaining({ tool: "save_learning_state", success: false, error: expect.stringContaining("private handoff") }))
+  expect(diagnostic).toHaveBeenCalledWith("tool.result", { tool: "save_learning_state", success: true, error: null })
   expect(processChanged).toHaveBeenLastCalledWith(null)
 })
 
@@ -90,7 +90,7 @@ test("canceling a provider request terminates its native subprocess", async () =
   expect(() => process.kill(pid, 0)).toThrow()
 })
 
-test.each(["claude", "antigravity"] as const)("%s can persist bounded difficulty updates", async (provider) => {
+test.each(["claude", "antigravity"] as const)("%s can persist structured topic summaries", async (provider) => {
   const cli = await connection(provider)
   const chat = newChat(randomUUID())
   chat.messages.push({ id: randomUUID(), role: "user", content: "Explain slowly and record my limit difficulty.", createdAt: new Date().toISOString(), topicIds: [] })
@@ -104,7 +104,7 @@ test.each(["claude", "antigravity"] as const)("%s can persist bounded difficulty
   })
   const actions = [
     { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [
-      { name: "revise_topic_state", arguments: JSON.stringify({ topicId: topic.id, notes: { append: "D1: needs_explanation — Needs the approach/reach distinction explained." } }) },
+      { name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, summary: "A limit describes the approached value." }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
   ]
@@ -115,8 +115,7 @@ test.each(["claude", "antigravity"] as const)("%s can persist bounded difficulty
     return JSON.stringify({ type: "result", is_error: false, structured_output: action })
   })
   const result = await runCliTutorTurn(job, () => {}, () => {})
-  expect(result.topicUpdates[0].learning.notes).toContain("Original learner answer.")
-  expect(result.topicUpdates[0].learning.notes).toContain("D1: needs_explanation")
+  expect(result.topicMutations).toMatchObject([{ type: "updateTopic", topicId: topic.id, summary: "A limit describes the approached value." }])
   expect(command).toHaveBeenCalledTimes(1)
 })
 
@@ -146,7 +145,11 @@ test.each(["claude", "antigravity"] as const)("%s returns a reply and validated 
     if (provider === "antigravity") return JSON.stringify({ status: "SUCCESS", structured_output: action })
     return JSON.stringify({ is_error: false, structured_output: action })
   })
-  const result = await runCliTutorTurn(job, () => {}, () => {})
+  const nodes: string[] = []
+  const result = await runCliTutorTurn(job, () => {}, () => {}, (event, details) => {
+    if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
+  })
+  expect(nodes).toEqual(["model", "execute_tools", "validate", "publish"])
   expect(result.reply).toBe(reply)
   expect(result.learning).toEqual(chat.learning)
   expect(command).toHaveBeenCalledTimes(1)

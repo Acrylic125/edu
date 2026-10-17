@@ -212,11 +212,17 @@ test("bundled Codex initializes, reads an isolated account, and discovers models
 test("Codex uses Tutor Me tool validation and returns a saved plan only after turn completion", async () => {
   const { job, home } = await fixture()
   const processes: (number | null)[] = []
+  const nodes: string[] = []
   const result = await runCodexTutorTurn(
     job,
     () => {},
     (pid) => processes.push(pid),
+    (event, details) => {
+      if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
+    },
   )
+  expect(nodes).toContain("execute_tools")
+  expect(nodes.at(-1)).toBe("publish")
   expect(result.learning.outline).toEqual(["Limits", "Derivatives"])
   expect(result.learning.workpad).toBe("Waiting for plan confirmation.")
   expect(result.reply).toContain("review")
@@ -243,8 +249,17 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
     "read_skill",
     "read_material",
     "read_topic_notes",
-    "save_topic_state",
-    "revise_topic_state",
+    "activatePart",
+    "complete",
+    "documentMistake",
+    "recordQuestion",
+    "recordAnswer",
+    "updateTopic",
+    "createTopic",
+    "getMistakesForTopic",
+    "whereAmI",
+    "whatIsNext",
+    "getQuestions",
     "save_learning_state",
   ])
   expect(thread.sandbox).toBe("read-only")
@@ -533,7 +548,7 @@ test("resumes the native Codex thread after restart and sends only the new reque
 test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2"])("reconstructs committed history when the saved session is %s", async (reason) => {
   const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 8, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 9, status: "ready" }
   if (reason === "old-tools") job.chat.providerSession.toolVersion = 1
   if (reason === "old-tools-v2") job.chat.providerSession.toolVersion = 2
   if (reason === "pending") job.chat.providerSession.status = "pending"
@@ -550,7 +565,7 @@ test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2"])(
 test("does not replace a resumable conversation on a transient provider failure", async () => {
   const { job, home } = await fixture("resume-network")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 8, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 9, status: "ready" }
   await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })

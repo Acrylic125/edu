@@ -175,3 +175,30 @@ test("reopening restores the most recently viewed topic independently of chat se
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("structured curriculum confirmation records the asking thread and keeps questions out of the summary", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    const composer = page.getByRole("form", { name: "Chat composer" })
+    await page.getByRole("textbox", { name: "Message this chat" }).fill("Plan structured Limits curriculum.")
+    await composer.getByRole("button", { name: "Send message" }).click()
+    await expect(page.getByRole("button", { name: "Confirm plan & begin" })).toBeVisible()
+    await page.getByRole("button", { name: "Confirm plan & begin" }).click()
+    await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
+    const snapshot = await page.evaluate(() => window.prune?.snapshot())
+    const topic = snapshot?.topics.find((topic) => topic.id === calculus.id)
+    const threadId = snapshot?.chats[0].id
+    expect(topic?.state?.threadTutors).toEqual([{ id: threadId, progress: { "tp-structured-limits": { status: "active", steps: [{ question: "Why can a limit exist where the function is undefined?" }] } } }])
+    expect(topic?.learning.notes).toContain("Distinguish a limit from a function value")
+    expect(topic?.learning.notes).not.toContain("Why can a limit exist")
+    const reloaded = new WorkspaceRepository(join(directory, "workspace"))
+    await reloaded.load()
+    expect(reloaded.topic(calculus.id).state?.threadTutors).toEqual(topic?.state?.threadTutors)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})

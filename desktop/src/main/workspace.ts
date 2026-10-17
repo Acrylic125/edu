@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { constants } from "node:fs"
 import {
   copyFile,
   chmod,
@@ -28,6 +29,7 @@ import { topicDirectoryMarkdown, topicOutline } from "../shared/topic-directory"
 import { z } from "zod"
 import { ChatDatabase } from "./chat-database"
 import { parseTopicWorkpad, topicWorkpad } from "./topic-workpad"
+import { TopicStateSchema, freshTopicState } from "../shared/topic-state"
 
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true }).extend({
   version: z.literal(3),
@@ -199,7 +201,7 @@ export class WorkspaceRepository {
     for (const directory of directories) {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
         if (!entry.isFile()) continue
-        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.md|agent\.workpad\.md)\.(.+)\.tmp$/.exec(entry.name)
+        const match = /^(?:workspace\.json|settings\.json|chat\.json|topic\.json|topic\.state\.json|topic\.md|agent\.workpad\.md)\.(.+)\.tmp$/.exec(entry.name)
         if (match && IdSchema.safeParse(match[1]).success)
           await rm(join(directory, entry.name), { force: true })
       }
@@ -211,7 +213,8 @@ export class WorkspaceRepository {
     await mkdir(root, { recursive: true })
     const topics: Topic[] = []
     // Archive state belongs to the app, while topic documents remain editable by tutors.
-    const archivedIds = new Set(this.database.load()?.state.topics.filter((topic) => topic.archived).map((topic) => topic.id))
+    const savedTopics = this.database.load()?.state.topics ?? []
+    const archivedIds = new Set(savedTopics.filter((topic) => topic.archived).map((topic) => topic.id))
     for (const entry of await readdir(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
       const directory = join(root, entry.name)
@@ -239,6 +242,22 @@ export class WorkspaceRepository {
         }
       }
       topic.learning.outline = topicOutline(notes)
+      const structured = await readOptionalFile(join(directory, "topic.state.json"))
+      if (structured !== undefined) {
+        topic.state = TopicStateSchema.parse(JSON.parse(structured))
+        topic.createdAt = topic.state.createdAt
+        topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
+        // The JSON state owns curriculum and progress; the Markdown stays an editable summary.
+        const saved = savedTopics.find((item) => item.id === topic.id)
+        if (saved) {
+          // Approval is app metadata: a preserved legacy workpad may predate the committed confirmation.
+          topic.planConfirmed = saved.planConfirmed
+          topic.titleGenerated = saved.titleGenerated
+        }
+      } else {
+        topic.state = freshTopicState(topic.title, topic.createdAt)
+        await writeAtomic(join(directory, "topic.state.json"), JSON.stringify(topic.state, null, 2))
+      }
       topic.archived = archivedIds.has(topic.id) || topic.archived
       const parsed = TopicSchema.parse(topic)
       if (legacy !== undefined) {
@@ -341,15 +360,56 @@ export class WorkspaceRepository {
       if (header.success) topic.title = header.data
       topic.title = topic.title.replace(/\s+/g, " ").trim()
       topic.learning.notes = topicNotes(topic.title, topic.learning.notes)
-      topic.learning.outline = topicOutline(topic.learning.notes)
+      if (topic.state?.content.length) topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
+      else topic.learning.outline = topicOutline(topic.learning.notes)
+      topic.state ??= freshTopicState(topic.title, topic.createdAt)
+      topic.state.name = topic.title
       topic.materials.sort((left, right) => left.name.localeCompare(right.name))
     }
     WorkspaceSchema.parse(validated)
     const previous = this.state
+    await this.prepareReferencedAssets(validated, previous)
     this.database.save(validated)
     this.state = validated
     await this.syncFiles(validated, previous)
     this.database.filesSynced()
+  }
+
+  private async prepareReferencedAssets(state: Workspace, previous: Workspace) {
+    const sources = [
+      ...state.topics.map((topic) => ({ materials: topic.materials, directory: join(this.directory, "topics", topic.id, "assets") })),
+      ...state.chats.map((chat) => ({ materials: chat.materials, directory: join(this.directory, "chats", chat.id, "assets") })),
+    ]
+    for (const topic of state.topics) {
+      const before = previous.topics.find((item) => item.id === topic.id)
+      const references = topic.state?.content.flatMap((part) => part.references) ?? []
+      for (const material of topic.materials) {
+        if (before?.materials.some((item) => item.id === material.id)) continue
+        if (!references.some((reference) => reference.type !== "website" && reference.path === `assets/${material.name}`)) continue
+        const directory = join(this.directory, "topics", topic.id, "assets")
+        const destination = join(directory, material.name)
+        try {
+          if (!(await stat(destination)).isFile()) throw new Error(`Source asset is not a file: ${material.name}`)
+          continue
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+        }
+        await mkdir(directory, { recursive: true })
+        let copied = false
+        for (const source of sources) {
+          if (source.directory === directory || !source.materials.some((item) => item.id === material.id)) continue
+          try {
+            // Prepare independent topic assets before committing; recovery can then mirror state without the original owner.
+            await copyFile(join(source.directory, material.name), destination, constants.COPYFILE_EXCL)
+            copied = true
+            break
+          } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+          }
+        }
+        if (!copied) throw new Error(`Referenced source is unavailable: ${material.name}. Attach it again before creating the topic.`)
+      }
+    }
   }
 
   private async recoverFiles() {
@@ -373,15 +433,18 @@ export class WorkspaceRepository {
       const previous = previousState.topics.find((item) => item.id === topic.id)
       const directory = join(this.directory, "topics", topic.id)
       await mkdir(directory, { recursive: true })
+      await mkdir(join(directory, "assets"), { recursive: true })
       const notes = topic.learning.notes
       if (notes !== previous?.learning.notes)
         await writeAtomic(join(directory, "topic.md"), notes)
+      if (!previous || JSON.stringify(topic.state) !== JSON.stringify(previous.state))
+        await writeAtomic(join(directory, "topic.state.json"), JSON.stringify(topic.state ?? freshTopicState(topic.title, topic.createdAt), null, 2))
       for (const material of topic.materials) {
         if (!previous?.materials.some((item) => item.id === material.id))
           await writeMaterialManifest(directory, material)
       }
       const workpad = topicWorkpad(topic)
-      if (!previous || workpad !== topicWorkpad(previous))
+      if ((!previous && await readOptionalFile(join(directory, "agent.workpad.md")) === undefined) || (previous && workpad !== topicWorkpad(previous)))
         await writeAtomic(join(directory, "agent.workpad.md"), workpad)
     }
     for (const topic of previousState.topics) {
@@ -418,10 +481,12 @@ export class WorkspaceRepository {
 }
 
 export function newTopic(title: string) {
+  const createdAt = new Date().toISOString()
   return TopicSchema.parse({
     id: randomUUID(),
     title,
-    createdAt: new Date().toISOString(),
+    createdAt,
+    state: freshTopicState(title, createdAt),
     planConfirmed: false,
     materials: [],
     learning: LearningStateSchema.parse({
@@ -431,7 +496,7 @@ export function newTopic(title: string) {
       pendingQuestion: "",
       privateAnswerKey: "",
       nextAction: "Propose a learning plan and wait for confirmation.",
-      notes: `# ${title}\n\nYour proposed learning plan will appear here.`,
+      notes: `# ${title}\n\n`,
       workpad: "New topic; plan is not confirmed.",
     }),
   })

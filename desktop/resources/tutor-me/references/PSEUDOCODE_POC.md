@@ -34,11 +34,9 @@ When a discussion is already deep but has no learner-authored sketch, start from
 
 ## Persist and resume
 
-Keep a stable POC anchor in `topic.md` containing the bounded goal, contracts/assumptions, latest evaluated sketch, rationale, and links to the contributing Check/Test answers. Distinguish learner-authored portions from source examples, tutor-provided scaffolding, and unresolved placeholders. Preserve each actual answer separately in its question record; a consolidated sketch never replaces the original evidence. Pending operations remain unfilled rather than receiving answer-bearing tutor code.
+Store exact construction prompts and learner-authored sketches as structured question/answer steps through recordQuestion and recordAnswer. Preserve original attempts. The topic summary may explain the conceptual design and worked examples, but individual assessment history belongs in topic.state.json. Keep unrevealed criteria and temporary preparation in the private chat handoff.
 
-Use ordinary note saves for contributions and revisions. In the workpad's existing `Resume action` or `After resolution`, link the POC anchor and name the current gap or exact endpoint choice. Save the exact next construction question through the normal active-check mechanism. Keep unrevealed criteria in the workpad; no additional handoff fields or parallel record are needed.
-
-On a fresh thread, restore the active question or choice first, then read the linked sketch and necessary prior examples. Show relevant definitions and code with the resumed prompt so the learner can answer without the previous chat. If older notes have no POC, use their recorded examples as context and label any provided scaffold honestly. If neither saved context nor the current conversation supplies the necessary example, establish a small self-contained scenario from covered concepts and mark it tutor-authored; never invent earlier learner work. Missing context for an existing active question still follows the normal recovery rules.
+On a fresh thread, use whereAmI and whatIsNext under SKILL.md's continuation rules. Ask the learner to select among competing continuations before activating a part. Read relevant question history with getQuestions when recovering an explicitly requested sketch or deduplicating a new prompt. Show the necessary definitions and code in the response. Label new scaffolding honestly; never invent earlier learner work.
 
 ## Finish with gaps or an implementation choice
 
@@ -46,4 +44,4 @@ At the endpoint of the agreed software scope, inspect the accumulated sketch aga
 
 If a material gap remains, show the current relevant sketch with that gap and ask the learner to fill it in one bounded Check. Preserve earlier correct portions; a long conversation may need only a missing schema relationship, update step, or boundary path. Evaluate the answer and revisit any remaining material gap before declaring the POC complete.
 
-When the POC is complete, show the consolidated sketch and ask whether the learner wants to implement it. Save that choice as `awaiting_choice` with the POC link and proposed implementation scope. Begin implementation only when the learner chooses it, clarifying the language or target if necessary. Honour an explicit pause, skip, or choice to end without implementation.
+When the POC is complete, show the consolidated sketch and ask whether the learner wants to implement it. Save that choice as `awaiting_choice` in the private chat handoff with the proposed implementation scope. Begin implementation only when the learner chooses it, clarifying the language or target if necessary. Honour an explicit pause, skip, or choice to end without implementation.

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import OpenAI from "openai"
@@ -14,11 +15,11 @@ import {
   type WorkerJob,
   type LearningState,
   type Diagnostic,
+  WorkspaceSchema,
 } from "../shared/contracts"
-import {
-  topicDirectoryFormat,
-  validateTopicDirectory,
-} from "../shared/topic-directory"
+import { TopicMutationSchema, TopicToolNames, TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
+import { StateService } from "../main/state-service"
+import { runTutorGraph } from "./tutor-graph"
 
 export const skillFiles = [
   "references/FILE_STRUCTURE.md",
@@ -44,20 +45,38 @@ const ReadTopicNotesSchema = z.object({
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(20_000).default(20_000),
 })
-const SaveTopicSchema = z.object({
-  topicId: z.string().uuid(),
-  learning: LearningStateSchema,
-})
-const ReviseTopicSchema = z.object({
-  topicId: z.string().uuid(),
-  notes: z.object({
-    append: z.string().max(50_000).default(""),
-    replacements: z.array(z.object({
-      old: z.string().min(1).max(50_000),
-      new: z.string().max(50_000),
-    })).max(20).default([]),
-  }).optional(),
-  handoff: z.object(LearningStateSchema.shape).omit({ notes: true }).partial().optional(),
+const TopicReadSchema = z.object({ topicId: z.uuid(), threadId: z.string().optional() })
+const QuestionsSchema = z.object({ topicId: z.uuid(), topicPartId: TopicPartIdSchema })
+const MistakesSchema = z.object({ topics: z.array(z.uuid()).nullable() })
+const stateToolDescriptions = {
+  getMistakesForTopic: "Read structured mistakes for the supplied topics, or all topics including archived topics when topics=null. Call only to create evaluation questions for these topics or when explicitly asked. Read-only.",
+  whereAmI: "Read the current thread's active topic parts and question progress. Reading never registers this thread as a tutor.",
+  whatIsNext: "Read every active continuation across tutor threads and only the very next part untouched by any thread. Call only for a fresh thread, when explicitly asked, or after completing a part or step. Present multiple choices to the learner.",
+  getQuestions: "Read exact questions and learner answers across all tutor threads for a part. Call only when explicitly asked or to deduplicate evaluation questions.",
+  documentMistake: "Record context and issue after an incorrect answer has been deliberated and confirmed. Registers this thread as a writer. Distinguish tutor mistakes in the issue.",
+  complete: "Mark a part completed for this thread only when all its goals and understoodWhen criteria are satisfied by the learner's reasoning. The tutor must evaluate this. Registers this thread as a writer.",
+  activatePart: "Mark a part active when this thread visits it. Completed parts can be reactivated. Registers this thread as a writer.",
+  createTopic: "Create a topic folder, topic summary, topic.state.json and assets only when explicitly requested or when a prerequisite topic is necessary. Referenced supplied assets are copied into the new topic; use materialIds to select sources when filenames are ambiguous. Registers this thread as a writer. Returns topicId.",
+  updateTopic: "Set curriculum content, references and goals, or revise the topic summary. Keep summaries conceptual; questions, answers, mistakes and progress belong in structured state. Preserve IDs and existing evidence. Referenced supplied assets are copied into this topic; materialIds selects ambiguous source filenames. Registers this thread as a writer.",
+  recordQuestion: "Append the exact self-contained question to the current thread's active part before asking it. Resume pending questions unless the learner explicitly skips or terminates them; preserve skipped steps without an answer. Keep the checked key in the private chat handoff. Registers this thread as a writer.",
+  recordAnswer: "Save the learner's actual answer at the specified zero-based question stepIndex in this thread. Preserve the original answer; record retries as new follow-up questions. Registers this thread as a writer.",
+}
+const mutationTools: ChatCompletionTool[] = TopicMutationSchema.options.map((schema) => {
+  const name = schema.shape.type.value
+  if (name === "createTopic") {
+    return { type: "function", function: { name, description: stateToolDescriptions[name], parameters: z.toJSONSchema(z.object({ topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true }), materialIds: z.array(z.uuid()).optional(), threadId: z.string().optional() })) } }
+  }
+  if (name === "updateTopic") {
+    const update = TopicMutationSchema.options.find((option) => option.shape.type.value === "updateTopic")
+    if (!update || update.shape.type.value !== "updateTopic") throw new Error("Missing topic update schema.")
+    const { type: _type, ...shape } = update.shape
+    const parameters = z.toJSONSchema(z.object(shape))
+    delete parameters.properties?.expectedSummary
+    delete parameters.properties?.expectedContent
+    return { type: "function", function: { name, description: stateToolDescriptions[name], parameters } }
+  }
+  const { type: _type, ...shape } = schema.shape
+  return { type: "function", function: { name, description: stateToolDescriptions[name], parameters: z.toJSONSchema(z.object({ ...shape, threadId: z.string().optional() })) } }
 })
 
 const tools: ChatCompletionTool[] = [
@@ -83,28 +102,15 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "read_topic_notes",
       description:
-        "Read saved study notes, historical learner attempts, corrections, and Past Mistakes from any workspace topic, including archived topics. Read-only; no private handoffs or answer keys. offset and limit count characters; follow nextOffset until null for a complete review.",
+        "Read conceptual topic summaries and preserved legacy notes from any workspace topic, including archived topics. Use structured tools for new mistakes and question history. Read-only; no private handoffs or answer keys. offset and limit count characters; follow nextOffset until null for a complete review.",
       parameters: z.toJSONSchema(ReadTopicNotesSchema),
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "save_topic_state",
-      description:
-        "Stage complete study notes and a private handoff for one tagged topic. Call it for each tagged topic you planned, taught, or assessed this turn. Keep checked keys only in privateAnswerKey/workpad. Preserve prior questions and actual answers.",
-      parameters: z.toJSONSchema(SaveTopicSchema),
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "revise_topic_state",
-      description:
-        "Stage a bounded update to a tagged topic. Append new content before Materials; use unique exact-text replacements to insert into an existing concept or revise a Past Mistakes entry. Preserve exact question/answer records. Supply only changed handoff fields. Preserves all untouched notes and handoff fields. Preferred for existing topics.",
-      parameters: z.toJSONSchema(ReviseTopicSchema),
-    },
-  },
+  ...mutationTools,
+  { type: "function", function: { name: "getMistakesForTopic", description: stateToolDescriptions.getMistakesForTopic, parameters: z.toJSONSchema(MistakesSchema) } },
+  { type: "function", function: { name: "whereAmI", description: stateToolDescriptions.whereAmI, parameters: z.toJSONSchema(TopicReadSchema) } },
+  { type: "function", function: { name: "whatIsNext", description: stateToolDescriptions.whatIsNext, parameters: z.toJSONSchema(TopicReadSchema) } },
+  { type: "function", function: { name: "getQuestions", description: stateToolDescriptions.getQuestions, parameters: z.toJSONSchema(QuestionsSchema) } },
   {
     type: "function",
     function: {
@@ -141,24 +147,18 @@ export async function createTutorSession(
       sourceUrl: `edu-material://${material.id}/1`,
     }))
   const instructions = `${guide}\n\n${references.join("\n\n")}\n\nDesktop harness contract:
-Follow the bundled skill. Use read_skill for its additional references. This harness supplies extracted source pages, cached images, and verified persistence instead of Python scripts or shell commands. read_material maps source preloading/prefetch; revise_topic_state maps compact save and bounded apply operations; save_topic_state creates the initial topic document or stages a necessary full revision. Use the direct-save path: external search and delegation are unavailable. For Tests, inspect supplied assets first, then author and clearly label a question when no asset fits.
-This is one of the learner's independent chats. A chat can cover several topics, and a topic can be discussed in several chats. The learner tags topics as [@Title](edu-topic://id); tagged topics and topics opened while sending are listed below with their study notes and private handoffs. Without a topic in context, answer directly and suggest tagging a topic for structured study.
-Currently open topic: ${job.openedTopicId ?? "none"}. Use this topic's saved progress, pending question, outline, and nextAction for requests such as "What is next?" or "Continue". Explicit topic mentions or instructions take precedence. Do not infer the currently open topic from older chat messages.
-For cross-topic reviews, use the workspace topic directory and read_topic_notes to retrieve saved records without asking the learner to tag or open each topic. An all-topics request includes archived topics. Historical reviews do not advance lessons or change active checks. For past mistakes, inspect historical learner attempts and corrections, including resolved difficulties; distinguish learner mistakes from tutor/source errors and unassessed answers. Read every requested topic through all pages before claiming a complete review. Report missing records or incomplete coverage. Retrieved topics are read-only unless also tagged/opened; their private handoffs and keys are not supplied.
-A tagged topic with planConfirmed=false needs an approved plan before lessons: read its materials, propose or revise its outline with save_topic_state, keep it awaiting_plan_confirmation, and do not teach or question it. Only the Confirm plan action approves a plan; do not infer approval from a message. Plan approved on this turn: ${job.confirmTopicId ?? "none"}.
-planConfirmed=true records approval from an earlier Confirm plan action. Continue teaching that approved topic even when this turn has no confirmTopicId; reconcile a stale awaiting_plan_confirmation handoff with that persisted approval instead of asking for confirmation again.
-Explain lecture material before checking it. Resume a topic's saved question and checked key before moving it forward. Pending answers belong only in privateAnswerKey/workpad, never in notes or learner replies. Honour explicit answer requests as the skill describes.
-The harness writes each topic's agent.workpad.md Handoff from phase, currentSection, pendingQuestion (Active check), and nextAction (Resume action), and its Active check key section from privateAnswerKey. Put only the remaining working state in workpad. The topic title is the first # header of the notes, and outline is read from the topic directory.
-Call save_topic_state or revise_topic_state for each tagged topic you planned, taught, or assessed. Prefer bounded revisions for an existing topic; full notes replace the old notes, so retain useful explanations, questions, and learner evidence. Keep material links relative as assets/<filename>. Never mark uncovered sections learned.
-Record observed learner mistakes under a "Past Mistakes" heading beside their concept in topic notes, with stable IDs, evidence links, and resolution statuses from references/DIFFICULTY_MEMORY.md. Retain resolved entries and what originally went wrong. Requests for explanation alone are learning needs, not mistakes. Reconcile evidence within this response; preserve historical attempts and assisted/independent distinctions. Keep temporary remediation in the workpad. Load references/DIFFICULTY_MEMORY.md when first creating or changing an assessment.
-In chat, use clickable Markdown citations: Sourced from: [Lecture 6.pdf, pg. 6-7.](edu-material://<material-id>/6). Use the actual material id, filename, and first cited page. The app opens the original attached source. For diagrams, call read_material with includeVisuals=true, then embed the returned image as ![Diagram description](prune-source://<material-id>/<page>). The chat supports these images; report an unavailable image only if the visual read fails.
-In topic notes, replace the template's "## Topic directory" heading and bullet list with exactly one <topic-directory /> element in the same position. heading is the section heading text. items is single-quoted JSON following the directory rules: title is the source section number and title; anchor is the in-document anchor id, set only when that part's notes exist; sources are its compact source links; children are its subparts in source order. Write any apostrophe inside items as \\u0027. Example:
-${topicDirectoryFormat}
-Call save_learning_state with this chat's private handoff before the final reply, then deliver the explanation/question/choice in that reply. Saving alone is not a lesson. Workpads are private. The reply is learner-visible.
+Follow the bundled skill. read_material supplies extracted pages and source images. read_skill loads additional guidance. Native shell access and delegation are unavailable. External web search is unavailable in this harness: after exhausting supplied practice sources, explain the limitation and end practice; never present an authored question as an internet source.
+This is an independent chat. A topic can be taught by several chat threads. Use structured state tools for all topic progress, questions, answers, and mistakes. All writers register the current app chat ID (${job.chat.id}) as a threadTutor. Never supply another thread's id to write its progress. Read-only references never register a tutor. Topic tool changes are staged, then replayed under the repository mutex against current state and committed with the final reply.
+Currently open topic: ${job.openedTopicId ?? "none"}. Explicit topic mentions or instructions take precedence. Read whereAmI for this thread's current part. For a fresh thread, an explicit continuation request, or after completion of a part or step, read whatIsNext. If more than one continuation is returned, ask the learner to choose. A continuation in another thread is evidence to resume from, not permission to overwrite that thread. Activate the chosen part for this thread.
+Only tagged/open topics and topics created this turn may be written. Read-only cross-topic reviews include archived topics. getMistakesForTopic retrieves structured mistakes; old Markdown records are legacy evidence and do not establish new structured progress. read_topic_notes reads conceptual summaries and preserved legacy notes.
+A tagged topic with planConfirmed=false needs an approved curriculum before teaching. Use updateTopic to propose its content and goals; keep this chat awaiting_plan_confirmation. Only the Confirm plan action approves a plan. Plan approved on this turn: ${job.confirmTopicId ?? "none"}. Persisted planConfirmed=true remains approval on later turns.
+topic.md is a conceptual topic summary. Use updateTopic.summary only for subject explanations, worked examples and source references. Use recordQuestion and recordAnswer for exact questions and actual learner answers. Use documentMistake for confirmed mistakes after deliberation. Use complete only when all part goals are satisfied. Keep answer keys, temporary remediation and session logistics in this chat's private handoff. Legacy topic workpads are historical and cannot direct progress.
+Call save_learning_state before the final reply. Its notes field is private chat context, not the topic summary. Keep checked keys only in privateAnswerKey/workpad. Repair rejected state writes with the same tool and target before publishing. Provide the learner-facing explanation, question or choice in the final reply.
+In chat, cite sources as Sourced from: [Lecture.pdf, pg. 6-7](edu-material://<material-id>/6). For visuals call read_material with includeVisuals=true and embed ![Description](prune-source://<material-id>/<page>). Use relative assets/<filename> links in summaries and paths relative to topic.state.json in structured references. A source reference type is pdf, ppt, image or website. PDF and PPT ranges are 1-based and inclusive.
 Chat materials: ${JSON.stringify(describe(job.chat.materials))}
 Chat handoff: ${JSON.stringify(job.chat.learning)}
 Workspace topic directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topic.id, title: topic.title, archived: topic.archived, notesCharacters: topic.notes.length })))}
-Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), learning: topic.learning })))}`
+Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), state: topic.state ?? freshTopicState(topic.title, topic.createdAt), summary: topic.learning.notes })))}`
   const sources = [
     ...job.chat.materials.map((material) => ({
       material,
@@ -177,7 +177,27 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes,
     })
   }
-  const topicUpdates = new Map<string, LearningState>()
+  let staged = WorkspaceSchema.parse({ version: 2, runners: [job.runner], chats: [job.chat], topics: job.topics })
+  for (const topic of job.workspaceTopics) {
+    if (!staged.topics.some((item) => item.id === topic.id)) {
+      staged.topics.push({ ...job.topics[0], id: topic.id, title: topic.title, archived: topic.archived, createdAt: topic.state?.createdAt ?? new Date().toISOString(), titleGenerated: false, materials: [], planConfirmed: false, state: topic.state ?? freshTopicState(topic.title, new Date().toISOString()), learning: { ...job.chat.learning, notes: topic.notes } })
+    }
+  }
+  const topicMutations: z.infer<typeof TopicMutationSchema>[] = []
+  const writable = new Set(job.topics.map((topic) => topic.id))
+  let writes = Promise.resolve()
+  const stateService = new StateService({
+    get stateSnapshot() { return structuredClone(staged) },
+    mutate(update) {
+      const operation = writes.then(() => {
+        const candidate = structuredClone(staged)
+        update(candidate)
+        staged = WorkspaceSchema.parse(candidate)
+      })
+      writes = operation.catch(() => {})
+      return operation
+    },
+  }, job.chat.id)
   let saved: LearningState | undefined
   const saveErrors = new Map<string, string>()
   return {
@@ -191,17 +211,11 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       let result: string
       let success = true
       let saveKey: string | undefined
-      if (name === "save_topic_state" || name === "revise_topic_state") {
-        const target = SaveTopicSchema.pick({ topicId: true }).safeParse(input)
-        saveKey = "topic"
-        if (target.success) {
-          saveKey = undefined
-          if (job.topics.some((topic) => topic.id === target.data.topicId))
-            saveKey = `topic:${target.data.topicId}`
-        }
-      } else if (name === "save_learning_state") {
-        saveKey = name
-      }
+      const writer = TopicMutationSchema.options.some((schema) => schema.shape.type.value === name)
+      if (writer) {
+        const target = z.object({ topicId: z.uuid().optional() }).safeParse(input)
+        saveKey = `${name}:${target.success ? target.data.topicId ?? "new" : "invalid"}`
+      } else if (name === "save_learning_state") saveKey = name
       try {
         if (name === "read_skill") {
           const { path } = z.object({ path: z.enum(skillFiles) }).parse(input)
@@ -211,7 +225,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
           const { topicId, offset, limit } = ReadTopicNotesSchema.parse(input)
           const topic = workspaceTopics.get(topicId)
           if (!topic) throw new Error("Topic not found in this workspace.")
-          const notes = topicUpdates.get(topicId)?.notes ?? topic.notes
+          const notes = staged.topics.find((item) => item.id === topicId)?.learning.notes ?? topic.notes
           if (offset > notes.length) throw new Error("Offset is outside this topic's notes.")
           const end = Math.min(offset + limit, notes.length)
           let nextOffset: number | null = null
@@ -311,54 +325,40 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
               await pdf?.loadingTask.destroy()
             }
           }
-        } else if (name === "save_topic_state" || name === "revise_topic_state") {
-          let topicId: string
-          let learning: LearningState
-          if (name === "save_topic_state") {
-            const replacement = SaveTopicSchema.parse(input)
-            topicId = replacement.topicId
-            learning = replacement.learning
+        } else if (TopicToolNames.some((tool) => tool === name)) {
+          const identity = z.object({ threadId: z.string().optional() }).parse(input)
+          if (identity.threadId !== undefined && identity.threadId !== job.chat.id) throw new Error("Only the current thread's progress can be accessed through whereAmI or written.")
+          if (name === "getMistakesForTopic") {
+            result = JSON.stringify(await stateService.getMistakesForTopic(MistakesSchema.parse(input).topics))
+          } else if (name === "whereAmI") {
+            result = JSON.stringify(await stateService.whereAmI(TopicReadSchema.parse(input).topicId))
+          } else if (name === "whatIsNext") {
+            result = JSON.stringify(await stateService.whatIsNext(TopicReadSchema.parse(input).topicId))
+          } else if (name === "getQuestions") {
+            const { topicId, topicPartId } = QuestionsSchema.parse(input)
+            result = JSON.stringify(await stateService.getQuestions(topicId, topicPartId))
           } else {
-            const revision = ReviseTopicSchema.parse(input)
-            topicId = revision.topicId
-            const topic = job.topics.find((item) => item.id === topicId)
-            if (!topic) throw new Error("Only tagged topics can be saved.")
-            const current = topicUpdates.get(topicId) ?? topic.learning
-            let notes = current.notes
-            for (const edit of revision.notes?.replacements ?? []) {
-              const index = notes.indexOf(edit.old)
-              if (index < 0 || notes.indexOf(edit.old, index + 1) >= 0)
-                throw new Error("A notes replacement must match exactly once. Use the current topic text.")
-              notes = notes.slice(0, index) + edit.new + notes.slice(index + edit.old.length)
+            const argumentsObject = z.record(z.string(), z.json()).parse(input)
+            const mutation = TopicMutationSchema.parse({ ...argumentsObject, type: name, ...(name === "createTopic" ? { topicId: randomUUID() } : {}) })
+            if (mutation.type !== "createTopic") {
+              if (!writable.has(mutation.topicId)) throw new Error("Only tagged or newly created topics can be written.")
+              const topic = staged.topics.find((topic) => topic.id === mutation.topicId)
+              if (!topic?.planConfirmed && mutation.type !== "updateTopic") throw new Error("Wait for the learner to confirm the proposed plan.")
+              if (mutation.type === "updateTopic" && topic) {
+                if (mutation.summary !== undefined || mutation.content !== undefined || mutation.name !== undefined)
+                  mutation.expectedSummary = topic.learning.notes
+                if (mutation.content !== undefined) mutation.expectedContent = topic.state?.content ?? []
+              }
             }
-            if (revision.notes?.append) {
-              let index = notes.indexOf("\n## Materials")
-              if (index < 0) index = notes.length
-              notes = notes.slice(0, index) + `\n\n${revision.notes.append}\n` + notes.slice(index)
+            await stateService.write(mutation)
+            if (mutation.type === "createTopic" || mutation.type === "updateTopic") {
+              mutation.materialIds = staged.topics.find((topic) => topic.id === mutation.topicId)?.materials.map((material) => material.id)
             }
-            learning = LearningStateSchema.parse({ ...current, ...revision.handoff, notes })
+            topicMutations.push(mutation)
+            if (mutation.type === "createTopic") writable.add(mutation.topicId)
+            activity("Staging topic state")
+            result = JSON.stringify({ topicId: mutation.topicId, staged: true })
           }
-          const topic = job.topics.find((item) => item.id === topicId)
-          if (!topic) throw new Error("Only tagged topics can be saved.")
-          if (
-            !topic.planConfirmed &&
-            learning.phase !== "awaiting_plan_confirmation"
-          )
-            throw new Error(
-              "Wait for the learner to confirm the proposed plan.",
-            )
-          if (
-            !learning.notes.trim() ||
-            !learning.workpad.trim() ||
-            !learning.nextAction.trim()
-          )
-            throw new Error(
-              "Notes, a private handoff, and a concrete next action are required.",
-            )
-          validateTopicDirectory(learning.notes)
-          topicUpdates.set(topicId, learning)
-          activity(`Saving ${topic.title} notes`)
-          result = `Study notes for ${topic.title} staged. Save the chat handoff with save_learning_state before the final reply.`
         } else if (name === "save_learning_state") {
           saved = undefined
           const candidate = LearningStateSchema.parse(input)
@@ -375,7 +375,8 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
         }
         if (saveKey) {
           saveErrors.delete(saveKey)
-          if (name === "save_topic_state" || name === "revise_topic_state") saveErrors.delete("topic")
+          if (writer) saveErrors.delete(`${name}:invalid`)
+
         }
       } catch (error) {
         success = false
@@ -389,12 +390,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
     },
     get saveError() {
       if (saveErrors.size) {
-        return [...saveErrors.entries()].map(([key, error]) => {
-          if (key.startsWith("topic:")) {
-            return `Correct save_topic_state for topic ${key.slice(6)} (or revise_topic_state for that topic). save_learning_state cannot repair rejected topic notes. ${error}`
-          }
-          return `Correct ${key}: ${error}`
-        }).join("\n")
+        return [...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected topic write. ${error}`).join("\n")
       }
     },
     finish(reply: string) {
@@ -405,14 +401,14 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
         )
       if (!reply.trim())
         throw new Error("The runner returned no lesson. Retry this turn.")
-      const states = [saved, ...job.topics.map((topic) => topicUpdates.get(topic.id) ?? topic.learning)]
+      const states = [saved]
       for (const state of states) {
         const pendingKey = state.privateAnswerKey.trim()
         if (
           ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
           pendingKey.length > 20 &&
           states.some(
-            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey),
+            (other) => reply.includes(pendingKey) || other.notes.includes(pendingKey) || staged.topics.some((topic) => topic.learning.notes.includes(pendingKey) || JSON.stringify(topic.state).includes(pendingKey)),
           )
         )
           throw new Error(
@@ -422,11 +418,8 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       return {
         reply,
         learning: saved,
-        topicUpdates: [...topicUpdates].map(([topicId, learning]) => ({
-          topicId,
-          learning,
-          expected: job.topics.find((topic) => topic.id === topicId)?.learning,
-        })),
+        topicUpdates: [],
+        topicMutations,
       }
     },
   }
@@ -443,76 +436,49 @@ export async function runTutorTurn(
     { role: "system", content: session.instructions },
     ...job.chat.messages.map((message) => ({ role: message.role, content: message.content })),
   ]
-  for (let iteration = 0; iteration < 16; iteration++) {
-    activity("Preparing your lesson")
-    diagnostic("model.request", {
-      iteration: iteration + 1,
-      model: job.runner.model,
-    })
-    const completion = await client.chat.completions.create({
-      model: job.runner.model,
-      messages,
-      tools: session.tools,
-      max_completion_tokens: 12_000,
-      stream: false,
-    })
-    const response = completion.choices[0]?.message
-    if (!response)
-      throw new Error(
-        "The model returned no response. Try another runner or retry.",
-      )
-    if (completion.choices[0].finish_reason === "length")
-      throw new Error(
-        "The lesson exceeded the model response limit. Ask for a smaller section and retry.",
-      )
-    messages.push(response)
-    diagnostic("model.response", {
-      iteration: iteration + 1,
-      finishReason: completion.choices[0].finish_reason,
-      toolCalls: response.tool_calls?.length ?? 0,
-      replyCharacters: response.content?.length ?? 0,
-      saved: session.saved,
-    })
-    if (!response.tool_calls?.length) {
-      if (!session.saved) {
-        messages.push({
-          role: "user",
-          content:
-            `Save the complete learning state with save_learning_state, then provide the learner-facing reply.${session.saveError ? `\nCorrect rejected saves first: ${session.saveError}` : ""}`,
-        })
-        continue
-      }
-      return session.finish(response.content ?? "")
-    }
-    const sourceImages: ChatCompletionContentPart[] = []
-    for (const call of response.tool_calls) {
-      if (call.type !== "function")
-        throw new Error("The model requested an unsupported tool.")
-      diagnostic("tool.call", { tool: call.function.name })
-      let input: Parameters<typeof LearningStateSchema.parse>[0]
-      try {
-        input = JSON.parse(call.function.arguments)
-      } catch {
-        // Failed saves must invalidate publication even if an earlier handoff was valid.
-        input = null
-      }
-      const result = await session.execute(call.function.name, input)
-      diagnostic("tool.result", {
-        tool: call.function.name,
-        success: result.success,
-        error: result.success ? null : result.text,
+  return runTutorGraph({
+    session,
+    maxAttempts: 16,
+    diagnostic,
+    exhausted: () => new Error("The runner reached its tool limit. Retry with a narrower request."),
+    async model(attempt) {
+      activity("Preparing your lesson")
+      diagnostic("model.request", { iteration: attempt, model: job.runner.model })
+      const completion = await client.chat.completions.create({
+        model: job.runner.model,
+        messages,
+        tools: session.tools,
+        max_completion_tokens: 12_000,
+        stream: false,
       })
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: result.text,
+      const response = completion.choices[0]?.message
+      if (!response) throw new Error("The model returned no response. Try another runner or retry.")
+      if (completion.choices[0].finish_reason === "length")
+        throw new Error("The lesson exceeded the model response limit. Ask for a smaller section and retry.")
+      messages.push(response)
+      diagnostic("model.response", {
+        iteration: attempt,
+        finishReason: completion.choices[0].finish_reason,
+        toolCalls: response.tool_calls?.length ?? 0,
+        replyCharacters: response.content?.length ?? 0,
+        saved: session.saved,
       })
-      sourceImages.push(...result.images)
-    }
-    if (sourceImages.length)
-      messages.push({ role: "user", content: sourceImages })
-  }
-  throw new Error(
-    "The runner reached its tool limit. Retry with a narrower request.",
-  )
+      const calls = (response.tool_calls ?? []).map((call) => {
+        if (call.type !== "function") throw new Error("The model requested an unsupported tool.")
+        return { id: call.id, name: call.function.name, arguments: call.function.arguments }
+      })
+      return { reply: response.content ?? "", calls, finishAfterTools: false }
+    },
+    consumeTools(calls, results) {
+      const sourceImages: ChatCompletionContentPart[] = []
+      for (const [index, call] of calls.entries()) {
+        const result = results[index]
+        if (!call.id || !result) throw new Error("A tutoring tool result is missing its call ID.")
+        messages.push({ role: "tool", tool_call_id: call.id, content: result.text })
+        sourceImages.push(...result.images)
+      }
+      if (sourceImages.length) messages.push({ role: "user", content: sourceImages })
+    },
+    recover(message) { messages.push({ role: "user", content: message }) },
+  })
 }

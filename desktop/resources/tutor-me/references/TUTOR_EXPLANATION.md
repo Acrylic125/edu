@@ -15,7 +15,7 @@ Use only the elements relevant to the section; this is a teaching standard, not 
 
 After the coherent explanation, optionally ask a Check using the Feynman default in [TUTOR_QUESTIONS_AND_DELIBERATE.md](TUTOR_QUESTIONS_AND_DELIBERATE.md): invite the learner to explain what they understand about the section in their own words. Use another format when it addresses a specific gap or requested practice. Do not make the learner discover the entire concept through a sequence of questions or wait for a wrong answer before explaining it. When a slide or passage contains a worked example, actually explain that worked example; asking for its output alone does not cover it. When it contains an explicit unsolved exercise, explain the preceding concepts and let the learner attempt the exercise before revealing the solution, unless they request a walkthrough. An explicit quiz/practice-only request can change the default.
 
-Persist the useful conceptual explanation and worked steps under the corresponding topic heading, alongside any Check records. A section consisting only of questions and answers is not a complete set of learning notes. Include newly taught notes in the normal save; this does not require rewriting earlier sections or rereading the source.
+Persist the useful conceptual explanation and worked steps under the corresponding topic heading, as conceptual summaries. A section consisting only of questions and answers is not a complete set of learning notes. Include newly taught notes in the normal save; this does not require rewriting earlier sections or rereading the source.
 
 ## Display every reference in chat
 
@@ -57,4 +57,4 @@ When the learner is confused, identify the difficult transition and re-explain i
 
 Distinguish unclear teaching from a prerequisite gap using the learner's actual response. If the cause is uncertain, say only what the evidence supports and choose one small clarification. Offer a brief prerequisite review when needed, then return to the source section.
 
-Read [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment. A short probe can help after clarification, but it is not mandatory after every explanation. Consolidate the useful explanation and the learner's specific difficulty into the topic's notes. Keep temporary remediation steps in the workpad. Apply explicit teaching feedback at its stated scope.
+Read [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment. A short probe can help after clarification, but it is not mandatory after every explanation. Consolidate the useful conceptual clarification into the topic summary. Record confirmed learner-specific mistakes through documentMistake after deliberation. Keep temporary remediation steps in the private chat handoff. Apply explicit teaching feedback at its stated scope.
