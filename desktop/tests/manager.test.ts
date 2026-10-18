@@ -423,7 +423,7 @@ test("generates a topic title from the suggestion before persisting it", async (
   expect(repository.stateSnapshot.topics).toHaveLength(2)
   expect(generation).toHaveBeenCalledWith(
     expect.objectContaining({ runner: expect.objectContaining({ id: second.runnerId }) }),
-    suggestion, undefined, expect.any(Function), expect.any(Function),
+    suggestion, expect.any(Function), expect.any(Function),
   )
   finish("Introduction to Calculus")
   const id = await creation
@@ -486,11 +486,12 @@ test("retrieves past learner mistakes from untagged topics without exposing thei
   const input = children[0].jobs[0]
   expect(input.topics.map((item) => item.id)).toEqual([topic.id])
   const session = await createTutorSession({ ...input, skillDirectory: resolve("resources/tutor-me") }, () => {})
-  const result = await session.execute("read_topic_notes", { topicId: other.id })
+  const referenceHandle = `topic_${input.chat.topicHandles.indexOf(other.id) + 1}`
+  const result = await session.execute("read_topic_notes", { topicId: referenceHandle })
   expect(result.success).toBe(true)
   expect(result.text).toContain(JSON.stringify(evidence))
   expect(result.text).not.toContain("PRIVATE_UNANSWERED_PHYSICS_KEY")
-  expect(session.instructions).toContain(other.id)
+  expect(session.instructions).toContain(referenceHandle)
   expect(session.instructions).not.toContain(evidence)
   expect((await session.execute("save_topic_state", { topicId: other.id, learning: other.learning })).success).toBe(false)
 })
@@ -505,6 +506,7 @@ test("a topic created by tutor tools stays writable in the originating chat on f
   })
   await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
   expect(repository.chat(first.id).messages.at(-1)?.topicIds).toEqual([topicId])
+  expect(repository.chat(first.id).topicHandles).toContain(topicId)
   await manager.send({ chatId: first.id, content: "Add linear equations to its curriculum." })
   expect(children[0].jobs[1].topics.map((topic) => topic.id)).toContain(topicId)
   children[0].emit("message", {
@@ -513,6 +515,39 @@ test("a topic created by tutor tools stays writable in the originating chat on f
   })
   await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
   expect(repository.topic(topicId).state?.content[0].name).toBe("Linear equations")
+})
+
+test("topic handles survive reloads and directory reordering as new reference topics appear", async () => {
+  const { manager, repository, first, topic, other } = await fixture()
+  await manager.send({ chatId: first.id, content: topicMention(topic.id, topic.title) })
+  const original = children[0].jobs[0].chat.topicHandles
+  expect(new Set(original)).toEqual(new Set([topic.id, other.id]))
+  children[0].emit("message", { type: "result", reply: "Ready", learning: first.learning })
+  await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
+  const reloaded = new WorkspaceRepository(repository.directory)
+  await reloaded.load()
+  expect(reloaded.chat(first.id).topicHandles).toEqual(original)
+  const extra = newTopic("Geometry")
+  await repository.mutate((state) => { state.topics.reverse(); state.topics.unshift(extra) })
+  await manager.send({ chatId: first.id, content: "Use Geometry as a reference" })
+  expect(children[0].jobs[1].chat.topicHandles).toEqual([...original, extra.id])
+  const session = await createTutorSession({ ...children[0].jobs[1], skillDirectory: resolve("resources/tutor-me") }, () => {})
+  const reference = await session.execute("read_topic_notes", { topicId: `topic_${original.indexOf(other.id) + 1}` })
+  expect(JSON.parse(reference.text)).toMatchObject({ title: other.title })
+})
+
+test("worker topic directories use the same snapshot as persisted handles during concurrent topic creation", async () => {
+  const { manager, repository, first } = await fixture()
+  const concurrent = newTopic("Concurrent reference")
+  const mutate = repository.mutate.bind(repository)
+  vi.spyOn(repository, "mutate").mockImplementationOnce(async (update) => {
+    await mutate(update)
+    await mutate((state) => { state.topics.unshift(concurrent) })
+  })
+  await manager.send({ chatId: first.id, content: "Create a prerequisite topic" })
+  const job = children[0].jobs[0]
+  expect(job.workspaceTopics.every((topic) => job.chat.topicHandles.includes(topic.id))).toBe(true)
+  expect(repository.chat(first.id).topicHandles).toEqual(job.chat.topicHandles)
 })
 
 test.each(["chat", "topic"] as const)("topics created from %s sources retain readable local references in a new chat", async (owner) => {

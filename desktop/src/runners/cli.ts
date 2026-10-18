@@ -22,11 +22,11 @@ export async function runCliTutorTurn(job: WorkerJob, activity: (message: string
   const directory = await mkdtemp(join(job.cli.directory, "turn-"))
   const connection = { ...job.cli, directory }
   try {
-    await prepareCliWorkspace(connection)
+    await prepareCliWorkspace(connection, true)
     const session = await createTutorSession(job, activity, telemetry)
-    const transcript: z.infer<ReturnType<typeof z.json>>[] = job.chat.messages.map((message) => ({ role: message.role, content: messageText(message) }))
+    const transcript: z.infer<ReturnType<typeof z.json>>[] = job.chat.messages.map((message) => ({ role: message.role, content: session.modelText(messageText(message)) }))
     const instructions = `${session.instructions}
-Return JSON with reply and calls. Use calls to request EdU tools; each call has name and arguments (a JSON-encoded string). The harness executes calls and returns their results. Native CLI tools are disabled. Return an empty reply when reading guidance or materials; use their results in the next request. When ready to answer, return the learner-facing reply together with any state updates and save_learning_state as the last call. The harness validates and commits these saves before displaying the reply. Correct rejected saves before finishing. A reply with no calls is also allowed after a successful save.
+Return JSON with reply and calls. Use calls to request EdU tools; each call has name and arguments (a JSON-encoded string). The harness executes calls and returns their results. Use native web search and URL reading for online research; native file and shell tools are disabled. Return an empty reply when reading guidance or materials; use their results in the next request. When ready to answer, return the learner-facing reply together with any state updates and save_learning_state as the last call. The harness validates and commits these saves before displaying the reply. Correct rejected saves before finishing. A reply with no calls is also allowed after a successful save.
 Available EdU tools: ${JSON.stringify(session.tools)}`
     let action = ActionSchema.parse({ reply: "", calls: [] })
     return await runAgentGraph({
@@ -37,7 +37,7 @@ Available EdU tools: ${JSON.stringify(session.tools)}`
       async run(iteration) {
         activity(`Preparing your lesson with ${connection.provider === "claude" ? "Claude" : "Antigravity"}`)
         diagnostic("cli.request", { provider: connection.provider, iteration })
-        const output = await runCliCommand(connection, cliPromptArguments(connection, JSON.stringify(z.toJSONSchema(ActionSchema)), job.runner.model, job.runner.reasoningEffort), `${instructions}\nConversation and tool results:\n${JSON.stringify(transcript)}`, processChanged)
+        const output = await runCliCommand(connection, cliPromptArguments(connection, JSON.stringify(z.toJSONSchema(ActionSchema)), job.runner.model, job.runner.reasoningEffort, true), `${instructions}\nConversation and tool results:\n${JSON.stringify(transcript)}`, processChanged)
         action = ActionSchema.parse(parseCliResponse(connection.provider, output))
         transcript.push(action)
         if (action.calls.length) return "tools"
@@ -60,7 +60,7 @@ Available EdU tools: ${JSON.stringify(session.tools)}`
           if (!result.success) savesSucceeded = false
           // CLI structured output is text-only; fail explicitly rather than silently ignoring a visual source.
           if (result.images.length)
-            throw new Error("This provider adapter supports text and extracted PDF text. Use ChatGPT or OpenRouter for image-based sources.")
+            throw new Error("This provider adapter supports text and extracted PDF text. Use ChatGPT for image-based sources.")
           transcript.push({ tool: call.name, result: result.text })
         }
         if (

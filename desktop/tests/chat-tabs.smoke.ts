@@ -15,7 +15,7 @@ test("chat tabs virtualize, close, reopen, cycle recent views, and restore after
     state.runners.push({
       id: runnerId,
       name: "Tutor",
-      provider: "openrouter",
+      provider: "codex",
       model: "default",
     })
     state.chats.push(

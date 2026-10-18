@@ -1,11 +1,12 @@
 import { messageText } from "../shared/message-text"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ComponentProps } from "react"
 import {
   ArrowUp,
   Archive,
   ArchiveRestore,
   AtSign,
   Check,
+  ChevronRight,
   FolderOpen,
   FileText,
   LoaderCircle,
@@ -44,6 +45,7 @@ import { DesktopSettings, ProviderConnectionSetup } from "./settings/settings"
 import appIcon from "./assets/app-icon.png"
 import { useWorkspace, desktop, desktopErrorMessage } from "./store"
 import { useChatTabs } from "./chat-tabs"
+import { useChatScroll } from "./chat-scroll"
 import { useTopicViews } from "./topic-views"
 import { WorkspaceLoading, WorkspaceLoadingSidebar } from "./workspace-loading"
 import { StudyMarkdown } from "./markdown"
@@ -52,11 +54,25 @@ import { TopicDirectory } from "./topic-directory"
 import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@edu/ui/context-menu"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@edu/ui/collapsible"
 import { z } from "zod"
 import { providerDefaultModels, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
 import { topicSourceMaterials } from "../shared/material-links"
+
+function ConfirmPlanButton(props: Pick<ComponentProps<"button">, "disabled" | "onClick">) {
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
+      {...props}
+    >
+      <Check className="size-4" />
+      Confirm plan & begin
+    </button>
+  )
+}
 
 export function App() {
   const { snapshot, loaded, providerSetupComplete, error, setError } = useWorkspace()
@@ -84,10 +100,11 @@ export function App() {
   const draftValues = useRef(drafts)
   draftValues.current = drafts
   const [draggingOver, setDraggingOver] = useState<string>()
-  const thread = useRef<HTMLDivElement>(null)
+  const thread = useChatScroll(chatId)
   const topic = snapshot.topics.find((item) => item.id === topicId)
   const chat = snapshot.chats.find((item) => item.id === chatId)
   const taggedTopicIds = new Set(chat?.messages.flatMap((message) => message.topicIds) ?? [])
+  const draftPlans = snapshot.topics.filter((candidate) => taggedTopicIds.has(candidate.id) && !candidate.planConfirmed && candidate.learning.outline.length > 0)
   const chatMaterials = [
     ...(chat?.materials ?? []),
     ...snapshot.topics.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
@@ -124,12 +141,6 @@ export function App() {
     (provider) => provider.id === chatModel.provider && provider.connected,
   )
 
-  useEffect(() => {
-    thread.current?.scrollTo({
-      top: thread.current.scrollHeight,
-      behavior: "instant",
-    })
-  }, [chatId, chat?.messages.length, runtime?.reply])
 
   useEffect(() => {
     if (view !== "learn" || !loaded) return
@@ -296,6 +307,24 @@ export function App() {
     } finally {
       responding.current.delete(messageId)
       setSubmitting(undefined)
+    }
+  }
+
+  async function confirmPlan(target: Snapshot["topics"][number]) {
+    if (target.planConfirmed || !target.learning.outline.length || chatRunnerBusy || busy || !chatModelConnected || responding.current.has(target.id)) return
+    responding.current.add(target.id)
+    try {
+      await perform(async () => {
+        const id = await ensureChat()
+        await desktop().send({
+          chatId: id,
+          content: `${topicMention(target.id, target.title)} I confirm this learning plan. Begin at the suggested starting point.`,
+          confirmTopicId: target.id,
+          openedTopicId: target.id,
+        })
+      })
+    } finally {
+      responding.current.delete(target.id)
     }
   }
 
@@ -657,7 +686,7 @@ export function App() {
             onPrompt={(prompt) => replaceDraft(chatKey, prompt)}
           />
         ) : (
-          <ChatConversation ref={thread} className="px-4">
+          <ChatConversation key={chatId} ref={thread} className="px-4">
             {chat.messages.map((message) => (
               <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={window.prune?.copyText} durationMs={message.durationMs}>
                 {message.role === "user" && message.materialIds?.length ? (
@@ -693,6 +722,12 @@ export function App() {
                   materials={chatMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
+                {message.role === "assistant" && message.id === chat.messages.at(-1)?.id && draftPlans.map((plan) => (
+                  <div key={plan.id} className="mt-4" role="group" aria-label={`Confirm learning plan for ${plan.title}`}>
+                    <p className="mb-3 text-sm text-muted-foreground">Review the plan for {plan.title}. You can ask for changes in chat.</p>
+                    <ConfirmPlanButton disabled={busy || chatRunnerBusy || !chatModelConnected} onClick={() => { void confirmPlan(plan) }} />
+                  </div>
+                ))}
                 {message.role === "assistant" && message.responseQuestion && (
                   <fieldset
                     className="mt-4 flex min-w-0 flex-col gap-2"
@@ -858,28 +893,14 @@ export function App() {
             actions={
               !topic.planConfirmed &&
               topic.learning.outline.length > 0 && (
-                <div className="mt-9">
+                <div className="mt-9" role="group" aria-label="Topic plan confirmation">
                   <p className="mb-3 text-sm text-muted-foreground">
                     Review the scope and order. You can ask for changes in chat.
                   </p>
-                  <button
-                    className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
+                  <ConfirmPlanButton
                     disabled={busy || chatRunnerBusy || !chatModelConnected}
-                    onClick={() => {
-                      void perform(async () => {
-                        const id = await ensureChat()
-                        await desktop().send({
-                          chatId: id,
-                          content: `${topicMention(topic.id, topic.title)} I confirm this learning plan. Begin at the suggested starting point.`,
-                          confirmTopicId: topic.id,
-                          openedTopicId: topic.id,
-                        })
-                      })
-                    }}
-                  >
-                    <Check className="size-4" />
-                    Confirm plan & begin
-                  </button>
+                    onClick={() => { void confirmPlan(topic) }}
+                  />
                 </div>
               )
             }
@@ -1093,11 +1114,17 @@ function DesktopSidebar({
         {activeTopics.map(topicItem)}
       </TopicNavigation>
       {archivedTopics.length > 0 && (
-        <div className="mt-6 border-t border-sidebar-border pt-5">
-          <TopicNavigation label="Archived chats" empty={false}>
-            {archivedTopics.map(topicItem)}
-          </TopicNavigation>
-        </div>
+        <Collapsible defaultOpen className="mt-6">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Archived chats
+            <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-data-panel-open:rotate-90 motion-reduce:transition-none" />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <nav className="space-y-1.5" aria-label="Archived chats">
+              {archivedTopics.map(topicItem)}
+            </nav>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </WorkspaceSidebar>
   )

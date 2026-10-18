@@ -481,7 +481,7 @@ export function newTopic(title: string) {
       currentSection: "",
       pendingQuestion: "",
       privateAnswerKey: "",
-      nextAction: "Propose a learning plan and wait for confirmation.",
+      nextAction: "Research existing walkthroughs, propose a source-linked learning plan, and wait for confirmation.",
       notes: `# ${title}\n\n`,
       workpad: "New topic; plan is not confirmed.",
     }),

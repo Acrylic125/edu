@@ -446,3 +446,26 @@ test("restores legacy default selections as concrete provider models from SQLite
     "gpt-6-luna", "claude-haiku-5-5", "gemini-3.8-flash-high", "gpt-6-astra",
   ])
 })
+
+test("restores retired provider runners from SQLite while preserving chat history", async () => {
+  const store = await repository()
+  const runner = store.stateSnapshot.runners[0]
+  const chat = newChat(runner.id)
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Continue my lesson", topicIds: [], createdAt: new Date().toISOString() })
+  await store.mutate((state) => state.chats.push(chat))
+  const database = new DatabaseSync(join(store.directory, "state.sqlite"))
+  try {
+    database.prepare("UPDATE metadata SET payload = json_set(payload, '$.runners[0].provider', 'openrouter', '$.runners[0].model', 'openrouter/auto') WHERE key = 'settings'").run()
+  } finally {
+    database.close()
+  }
+  const restored = new WorkspaceRepository(store.directory)
+  await restored.load()
+  expect(restored.stateSnapshot.runners[0]).toMatchObject({ id: runner.id, provider: "codex", model: "gpt-6-luna" })
+  expect(restored.chat(chat.id).messages).toEqual(chat.messages)
+  await restored.mutate((state) => { state.runners[0].name = "Migrated tutor" })
+  const reopened = new WorkspaceRepository(store.directory)
+  await reopened.load()
+  expect(reopened.stateSnapshot.runners[0]).toMatchObject({ id: runner.id, provider: "codex", name: "Migrated tutor" })
+  expect(reopened.chat(chat.id).messages).toEqual(chat.messages)
+})

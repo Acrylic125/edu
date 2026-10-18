@@ -2,12 +2,11 @@ import { z } from "zod"
 import { TopicStateSchema, TopicMutationSchema, TopicPartSchema } from "./topic-state"
 
 export const IdSchema = z.string().uuid()
-export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity", "openrouter"])
+export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity"])
 export const providerDefaultModels = {
   codex: "gpt-6-luna",
   claude: "claude-haiku-5-5",
   antigravity: "gemini-3.8-flash-high",
-  openrouter: "openrouter/auto",
 } satisfies Record<z.infer<typeof ProviderIdSchema>, string>
 
 export const ProviderSettingsSchema = z.object({
@@ -58,7 +57,7 @@ export const CliConnectionSchema = z.object({
 })
 export const RunnerInputSchema = z.object({
   name: z.string().trim().min(1).max(60),
-  provider: ProviderIdSchema.default("openrouter"),
+  provider: ProviderIdSchema.default("codex"),
   reasoningEffort: ReasoningEffortSchema.optional(),
   model: z.string().trim().min(1).max(150).default("default"),
 }).overwrite((runner) => {
@@ -146,14 +145,24 @@ export const ProviderSessionSchema = z.object({
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
   runnerId: IdSchema,
   messages: z.array(MessageSchema),
+  topicHandles: z.array(IdSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
 })
 export const WorkspaceSchema = z.object({
   version: z.literal(2),
-  runners: z.array(RunnerSchema),
+  // Preserve saved conversations when retiring the direct API provider.
+  runners: z.array(z.union([
+    z.object({ ...RunnerSchema.shape, provider: z.literal("openrouter").optional() }).transform((runner) => ({
+      ...runner, provider: "codex" as const, model: providerDefaultModels.codex, reasoningEffort: undefined,
+    })),
+    RunnerSchema,
+  ])),
   topics: z.array(TopicSchema),
   chats: z.array(ChatSchema),
-  providerSettings: z.array(ProviderSettingsSchema).default([]),
+  providerSettings: z.array(z.union([
+    ProviderSettingsSchema,
+    ProviderSettingsSchema.extend({ id: z.literal("openrouter") }),
+  ])).default([]).transform((settings) => settings.filter((item): item is z.infer<typeof ProviderSettingsSchema> => item.id !== "openrouter")),
 })
 // Version 1 stored one conversation per topic; it is migrated into independent chats on load.
 export const LegacyWorkspaceSchema = WorkspaceSchema.omit({ chats: true }).extend({
@@ -201,6 +210,7 @@ export const PublicTopicSchema = TopicSchema.omit({
   materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
 })
 export const PublicChatSchema = ChatSchema.omit({
+  topicHandles: true,
   providerSession: true,
   learning: true,
   materials: true,
@@ -277,7 +287,6 @@ export const WorkerJobSchema = z.object({
   apiKey: z.string().default(""),
   codex: CodexConnectionSchema.optional(),
   cli: CliConnectionSchema.optional(),
-  titleModel: ProviderModelSchema.optional(),
   skillDirectory: z.string(),
   assetDirectory: z.string(),
   confirmTopicId: IdSchema.optional(),

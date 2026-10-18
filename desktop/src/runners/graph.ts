@@ -34,7 +34,7 @@ export async function runAgentGraph<Result>(options: {
       options.diagnostic?.("graph.node", { node: "agent", iteration: iteration + 1 })
       let next
       if (options.telemetry && options.runner) {
-        const kind = options.runner.provider === "openrouter" ? "LLM" : "AGENT"
+        const kind = "AGENT"
         next = await options.telemetry.span(`runner.${options.runner.provider}`, kind,
           () => options.run(iteration + 1), { "llm.model_name": options.runner.model, "edu.attempt": iteration + 1 })
       } else next = await options.run(iteration + 1)

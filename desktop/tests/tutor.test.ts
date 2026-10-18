@@ -5,13 +5,13 @@ import { copyFile, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:f
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { extractText, getDocumentProxy } from "unpdf"
+import { createCanvas } from "@napi-rs/canvas"
 import OpenAI from "openai"
 import type { ChatCompletionMessage } from "openai/resources/chat/completions"
 import { afterEach, expect, test } from "vitest"
 import { newChat, newTopic } from "../src/main/workspace"
 import { topicMention } from "../src/shared/topic-mentions"
 import { createTutorSession, runTutorTurn } from "../src/runners/tutor"
-import { generateTopicTitle } from "../src/runners/title"
 import { LearningStateSchema, ProviderModelSchema } from "../src/shared/contracts"
 import type { LearningState, WorkerJob } from "../src/shared/contracts"
 
@@ -98,7 +98,7 @@ function job() {
   const runner = {
     id: randomUUID(),
     name: "Tutor",
-    provider: "openrouter" as const,
+    provider: "codex" as const,
     model: "test",
   }
   const topic = newTopic("Limits")
@@ -121,6 +121,57 @@ function job() {
     assetDirectory: resolve("tests"),
   } satisfies WorkerJob
 }
+
+test("draft curricula require sources and remain blocked from teaching until confirmed", async () => {
+  const input = job()
+  const topicId = "topic_1"
+  const session = await createTutorSession(input, () => {})
+  const part = { id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Explain approaching a value"] }, mistakes: [] }
+  const rejected = await session.execute("updateTopic", { topicId, content: [part] })
+  expect(rejected.success).toBe(false)
+  expect(rejected.text).toContain("source")
+  expect((await session.execute("createTopic", { topic: { version: "11-10-2026", name: "Limits", content: [part] } })).success).toBe(false)
+  const sourced = { ...part, references: [{ type: "website", url: "https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function" }] }
+  expect((await session.execute("updateTopic", { topicId, content: [sourced] })).success).toBe(true)
+  const teaching = await session.execute("activatePart", { topicId, topicPartId: part.id })
+  expect(teaching.success).toBe(false)
+  expect(teaching.text).toContain("confirm")
+})
+
+
+test("attached screenshots reach ChatGPT as pixels on the first request without a material tool call", async () => {
+  const input = job()
+  const directory = await mkdtemp(join(tmpdir(), "edu-message-image-"))
+  directories.push(directory)
+  input.assetDirectory = directory
+  const material = { id: randomUUID(), name: "screenshot.png", kind: "image" as const, text: "Image source. Use read_material to inspect the image visually.", pages: [] }
+  await writeFile(join(directory, material.name), createCanvas(80, 40).toBuffer("image/png"))
+  input.chat.materials.push(material)
+  input.chat.messages[0].materialIds = [material.id]
+  const { client, requests } = await provider([save(input.chat.learning), reply("The screenshot appears to show a diagram.")])
+  await runTutorTurn(input, client, () => {})
+  const request = z.object({ messages: z.array(z.object({ role: z.string(), content: z.union([z.string(), z.array(z.object({ type: z.string(), text: z.string().optional(), image_url: z.object({ url: z.string() }).optional() }))]) })) }).parse(JSON.parse(requests[0]))
+  const user = request.messages.find((message) => message.role === "user")
+  if (!user || typeof user.content === "string") throw new Error("Screenshot pixels were omitted from the user message")
+  expect(user.content.some((part) => part.image_url?.url.startsWith("data:image/png;base64,"))).toBe(true)
+  expect(user.content.some((part) => part.text?.includes(`prune-source://${material.id}/1`))).toBe(true)
+})
+
+test("historical images outside the active topic context do not block later ChatGPT turns", async () => {
+  const input = job()
+  input.chat.messages[0].materialIds = [randomUUID()]
+  input.chat.messages.push({ id: randomUUID(), role: "user", content: "Continue with the current topic.", topicIds: [], createdAt: new Date().toISOString() })
+  const { client } = await provider([save(input.chat.learning), reply("Here is the current topic plan.")])
+  const result = await runTutorTurn(input, client, () => {})
+  expect(result.reply).toBe("Here is the current topic plan.")
+})
+
+test("an unavailable current screenshot is reported instead of silently omitted", async () => {
+  const input = job()
+  input.chat.messages[0].materialIds = [randomUUID()]
+  const { client } = await provider([])
+  await expect(runTutorTurn(input, client, () => {})).rejects.toThrow("attached image is not available")
+})
 function call(name: string, input: object): ChatCompletionMessage {
   return {
     role: "assistant",
@@ -142,6 +193,16 @@ function reply(content: string): ChatCompletionMessage {
   return { role: "assistant", content, refusal: null }
 }
 
+test("tutor sessions expose the shared visualization contract alongside existing source and assessment guidance", async () => {
+  const session = await createTutorSession(job(), () => {})
+  expect(session.instructions).toContain("<visualization settings='")
+  expect(session.instructions).toContain('"type":"surface"')
+  expect(session.instructions).toContain("matrices, transformations, trends")
+  expect(session.instructions).toContain("saved conceptual topic summaries")
+  expect(session.instructions).toContain("Distinguish illustrative data")
+  expect(session.instructions).toContain("Keep answer keys private")
+})
+
 test("the tutor receives the currently open topic and saved next action alongside older chat topics", async () => {
   const input = job()
   const topic = newTopic("Automata")
@@ -151,7 +212,7 @@ test("the tutor receives the currently open topic and saved next action alongsid
     openedTopicId: topic.id,
     topics: [...input.topics, { ...topic, assetDirectory: resolve("tests") }],
   }, () => {})
-  expect(session.instructions).toContain(`Currently open topic: ${topic.id}`)
+  expect(session.instructions).toContain("Currently open topic: topic_2")
   expect(session.instructions).not.toContain(topic.learning.nextAction)
   expect(session.instructions).toContain("Explicit topic mentions or instructions take precedence")
   const withoutOpenTopic = await createTutorSession(input, () => {})
@@ -192,7 +253,7 @@ test("initial topic status includes other-thread continuations without registeri
   expect(line).not.toContain("Historical answer must not be repeated")
   const status = z.array(z.object({ topicId: z.string(), whereAmI: z.array(z.json()), topicProgress: z.array(z.json()), whatIsNext: z.array(z.json()) }))
     .parse(JSON.parse(line!.slice("Initial topic status: ".length)))
-  expect(status).toEqual([{ topicId: topic.id, whereAmI: [], topicProgress: [{ topicPartId: "tp-limits", name: "Limits", threads: [{ threadId: "another-chat", status: "active" }] }], whatIsNext: [{ label: "Continue from What is a limit?", threadId: "another-chat", topicPartId: "tp-limits", name: "Limits", status: "active" }] }])
+  expect(status).toEqual([{ topicId: "topic_1", whereAmI: [], topicProgress: [{ topicPartId: "tp-limits", name: "Limits", threads: [{ threadId: "another-chat", status: "active" }] }], whatIsNext: [{ label: "Continue from What is a limit?", threadId: "another-chat", topicPartId: "tp-limits", name: "Limits", status: "active" }] }])
   await session.execute("save_learning_state", { ...input.chat.learning, workpad: "Waiting for a continuation choice." })
   expect(session.finish("Choose a continuation").topicMutations).toEqual([])
 })
@@ -218,14 +279,14 @@ test("requires a valid saved handoff before returning a learner reply", async ()
   expect(result.learning).toEqual(state)
   expect(result.topicUpdates).toEqual([])
   expect(requests).toHaveLength(3)
-  expect(requests[0]).toContain(input.topics[0].id)
+  expect(requests[0]).toContain("topic_1")
   expect(requests[1]).toContain("Save the complete learning state")
 })
 
 test("prevents an unconfirmed structured topic from advancing to teaching", async () => {
   const input = job()
   const session = await createTutorSession(input, () => {})
-  const result = await session.execute("activatePart", { topicId: input.topics[0].id, topicPartId: "tp-limits" })
+  const result = await session.execute("activatePart", { topicId: "topic_1", topicPartId: "tp-limits" })
   expect(result.success).toBe(false)
   expect(result.text).toContain("Wait for the learner to confirm")
 })
@@ -233,7 +294,7 @@ test("prevents an unconfirmed structured topic from advancing to teaching", asyn
 test("conceptual summary updates use structured tools without writing legacy topic handoffs", async () => {
   const input = job()
   const { client } = await provider([
-    call("updateTopic", { topicId: input.topics[0].id, summary: "A limit describes an approached value." }),
+    call("updateTopic", { topicId: "topic_1", summary: "A limit describes an approached value." }),
     save(input.chat.learning), reply("Here is the conceptual summary."),
   ])
   const result = await runTutorTurn(input, client, () => {})
@@ -246,7 +307,7 @@ test("updateTopic accepts attached lecture code as a structured text reference",
   input.chat.materials.push(material)
   const session = await createTutorSession(input, () => {})
   const result = await session.execute("updateTopic", {
-    topicId: input.topics[0].id,
+    topicId: "topic_1",
     materialIds: [material.id],
     content: [{
       id: "tp-4a", name: "4A. Code walkthrough",
@@ -266,7 +327,7 @@ test("updateTopic accepts attached lecture code as a structured text reference",
 test("rejected structured topic writes block publication until the same operation is repaired", async () => {
   const input = job()
   const session = await createTutorSession(input, () => {})
-  const topicId = input.topics[0].id
+  const topicId = "topic_1"
   await session.execute("updateTopic", { topicId, content: [{ id: "broken" }] })
   await session.execute("save_learning_state", input.chat.learning)
   expect(session.saved).toBe(false)
@@ -275,6 +336,30 @@ test("rejected structured topic writes block publication until the same operatio
   expect(() => session.finish("Saved.")).toThrow()
   await session.execute("updateTopic", { topicId, summary: "Conceptual summary." })
   expect(session.saved).toBe(true)
+})
+
+test("a corrected question target repairs a rejected nonexistent topic ID", async () => {
+  const input = job()
+  input.topics[0].planConfirmed = true
+  const topicId = "topic_1"
+  const session = await createTutorSession(input, () => {})
+  await session.execute("updateTopic", { topicId, content: [{
+    id: "tp-limits", name: "Limits", references: [],
+    goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Distinguish limit from function value"] },
+    mistakes: [],
+  }] })
+  await session.execute("activatePart", { topicId, topicPartId: "tp-limits" })
+  const question = { topicId: randomUUID(), topicPartId: "tp-limits", question: "Can a limit exist where the function is undefined?" }
+  const rejected = await session.execute("recordQuestion", question)
+  expect(rejected.success).toBe(false)
+  expect(rejected.text).toContain("Allowed write targets: topic_1")
+  await session.execute("save_learning_state", input.chat.learning)
+  expect(session.saved).toBe(false)
+  expect(() => session.finish("Premature reply")).toThrow()
+  expect((await session.execute("recordQuestion", { ...question, topicId })).success).toBe(true)
+  expect(session.saved).toBe(true)
+  expect(session.finish(question.question).topicMutations.filter((mutation) => mutation.type === "recordQuestion"))
+    .toEqual([{ type: "recordQuestion", topicId: input.topics[0].id, topicPartId: "tp-limits", question: question.question }])
 })
 
 test("only tagged topics can be updated", async () => {
@@ -287,7 +372,7 @@ test("only tagged topics can be updated", async () => {
   ])
   const result = await runTutorTurn(input, client, () => {})
   expect(result.topicUpdates).toEqual([])
-  expect(requests[1]).toContain("Topic not found")
+  expect(requests[1]).toContain("Allowed read targets: topic_1")
 })
 
 test("a rejected replacement save cannot publish an older staged state", async () => {
@@ -421,29 +506,12 @@ test("renders PDF diagrams with the bundled canvas and supplies the image to the
   expect(image.subarray(1, 4).toString()).toBe("PNG")
 })
 
-test("OpenRouter title requests use the inexpensive model and bound the request", async () => {
-  const mock = await provider([reply('"Introduction to Limits"')])
-  const original = job()
-  const input = {
-    ...original,
-    titleModel: ProviderModelSchema.parse({ id: "cheap-title-model", name: "Cheap title model" }),
-  }
-  expect(await generateTopicTitle(input, input.chat.messages.find((message) => message.role === "user")?.content ?? "", mock.client, () => {}, () => {})).toBe("Introduction to Limits")
-  expect(JSON.parse(mock.requests[0])).toMatchObject({
-    model: "cheap-title-model",
-    max_tokens: 80,
-    messages: [{ role: "system" }, { role: "user", content: "@Limits Teach me limits" }],
-  })
-  expect(input.runner.model).toBe("test")
-  await expect(generateTopicTitle(original, original.chat.messages.find((message) => message.role === "user")?.content ?? "", mock.client, () => {}, () => {})).rejects.toThrow("No priced title model")
-  expect(mock.requests).toHaveLength(1)
-})
 
 test("structured mistakes preserve exact original answers across follow-up attempts", async () => {
   const input = job()
   input.topics[0].planConfirmed = true
   const session = await createTutorSession(input, () => {})
-  const topicId = input.topics[0].id
+  const topicId = "topic_1"
   const content = [{ id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Distinguish approaching from reaching"] }, mistakes: [] }]
   await session.execute("updateTopic", { topicId, content })
   await session.execute("activatePart", { topicId, topicPartId: "tp-limits" })
@@ -466,7 +534,7 @@ test("unknown structured parts cannot silently publish a prior staged state", as
   input.topics[0].planConfirmed = true
   const session = await createTutorSession(input, () => {})
   await session.execute("save_learning_state", input.chat.learning)
-  await session.execute("activatePart", { topicId: input.topics[0].id, topicPartId: "tp-missing" })
+  await session.execute("activatePart", { topicId: "topic_1", topicPartId: "tp-missing" })
   expect(session.saved).toBe(false)
   expect(() => session.finish("Saved.")).toThrow("Topic part not found")
 })
@@ -478,13 +546,13 @@ test("the tutor exposes cross-thread coverage separately from mastery and retain
   const session = await createTutorSession(input, () => {})
   expect(session.instructions).toContain("For a topic status question")
   const content = [{ id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Justify reasoning"] }, mistakes: [] }]
-  await session.execute("updateTopic", { topicId: topic.id, content })
-  await session.execute("activatePart", { topicId: topic.id, topicPartId: "tp-limits" })
-  expect((await session.execute("complete", { topicId: topic.id, topicPartId: "tp-limits", masteryVerified: false })).success).toBe(true)
-  const progress = await session.execute("getTopicProgress", { topicId: topic.id })
+  await session.execute("updateTopic", { topicId: "topic_1", content })
+  await session.execute("activatePart", { topicId: "topic_1", topicPartId: "tp-limits" })
+  expect((await session.execute("complete", { topicId: "topic_1", topicPartId: "tp-limits", masteryVerified: false })).success).toBe(true)
+  const progress = await session.execute("getTopicProgress", { topicId: "topic_1" })
   expect(progress.success).toBe(true)
   expect(JSON.parse(progress.text)).toMatchObject([{ part: { id: "tp-limits" }, threads: [{ threadId: input.chat.id, progress: { status: "covered" } }] }])
-  expect(JSON.parse((await session.execute("whatIsNext", { topicId: topic.id })).text)).toEqual([])
+  expect(JSON.parse((await session.execute("whatIsNext", { topicId: "topic_1" })).text)).toEqual([])
   await session.execute("save_learning_state", input.chat.learning)
   const result = session.finish("Walkthrough finished; mastery unverified.")
   expect(result.topicMutations).toContainEqual({ type: "complete", topicId: topic.id, topicPartId: "tp-limits", masteryVerified: false })
@@ -504,10 +572,10 @@ test("rejects invented directory source paths before publishing topic notes", as
   topic.materials.push({ id: randomUUID(), name: "Lecture 11 - Datapath.pdf", kind: "pdf", text: "Datapath", pages: ["Datapath"] })
   const session = await createTutorSession(input, () => {})
   const notes = '# Limits\n\n<topic-directory heading="Topic directory" items=\'[{"title":"1. Limits","sources":[{"label":"Lecture 11.pdf, pg. 1","href":"assets/invented.pdf#page=1"}]}]\' />'
-  const rejected = await session.execute("updateTopic", { topicId: topic.id, summary: notes })
+  const rejected = await session.execute("updateTopic", { topicId: "topic_1", summary: notes })
   expect(rejected.success).toBe(false)
   expect(rejected.text).toContain("invented.pdf")
-  const repaired = await session.execute("updateTopic", { topicId: topic.id, summary: notes.replace("invented.pdf", "Lecture 11 - Datapath.pdf") })
+  const repaired = await session.execute("updateTopic", { topicId: "topic_1", summary: notes.replace("invented.pdf", "Lecture 11 - Datapath.pdf") })
   expect(repaired.success).toBe(true)
 })
 
@@ -556,21 +624,21 @@ test("pages workspace topic history completely and rejects invalid retrieval req
   const notes = "Historical learner attempt. ".repeat(900) + "Resolved mistake at the end."
   const session = await createTutorSession({ ...input, workspaceTopics: [{ id: topic.id, title: topic.title, archived: true, notes }] }, () => {})
   const PageSchema = z.object({ notes: z.string(), nextOffset: z.number().nullable(), totalCharacters: z.number() })
-  const first = await session.execute("read_topic_notes", { topicId: topic.id })
+  const first = await session.execute("read_topic_notes", { topicId: "topic_2" })
   expect(first.success).toBe(true)
   const page = PageSchema.parse(JSON.parse(first.text))
   expect(page.notes).toHaveLength(20_000)
   expect(page.nextOffset).toBe(20_000)
   expect(page.totalCharacters).toBe(notes.length)
-  const next = await session.execute("read_topic_notes", { topicId: topic.id, offset: page.nextOffset })
+  const next = await session.execute("read_topic_notes", { topicId: "topic_2", offset: page.nextOffset })
   const tail = PageSchema.parse(JSON.parse(next.text))
   expect(tail.nextOffset).toBe(null)
   expect(page.notes + tail.notes).toBe(notes)
   for (const request of [
     { topicId: randomUUID() },
-    { topicId: topic.id, offset: notes.length + 1 },
-    { topicId: topic.id, offset: -1 },
-    { topicId: topic.id, limit: 20_001 },
+    { topicId: "topic_2", offset: notes.length + 1 },
+    { topicId: "topic_2", offset: -1 },
+    { topicId: "topic_2", limit: 20_001 },
   ]) {
     expect((await session.execute("read_topic_notes", request)).success).toBe(false)
   }
@@ -589,7 +657,7 @@ test("structured tools scope writers to the current thread, keep references read
   const input = job()
   input.topics[0].planConfirmed = true
   const session = await createTutorSession(input, () => {})
-  const topicId = input.topics[0].id
+  const topicId = "topic_1"
   const content = [{ id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Distinguish limit from function value"] }, mistakes: [] }]
   expect((await session.execute("updateTopic", { topicId, content })).success).toBe(true)
   expect((await session.execute("activatePart", { topicId, topicPartId: "tp-limits", threadId: "someone-else" })).success).toBe(false)
@@ -608,15 +676,16 @@ test("fresh progress ignores legacy pending topic handoffs and new-topic writes 
   input.topics[0].learning.pendingQuestion = "Legacy pending question"
   input.topics[0].learning.privateAnswerKey = "Legacy secret answer"
   const session = await createTutorSession(input, () => {})
-  const location = await session.execute("whereAmI", { topicId: input.topics[0].id, threadId: input.chat.id })
+  const location = await session.execute("whereAmI", { topicId: "topic_1", threadId: input.chat.id })
   expect(JSON.parse(location.text)).toEqual([])
   expect(session.instructions).not.toContain("Legacy pending question")
   expect(session.instructions).not.toContain("Legacy secret answer")
   const created = await session.execute("createTopic", { topic: { version: "11-10-2026", name: "Prerequisite", content: [] }, threadId: input.chat.id })
   expect(created.success).toBe(true)
-  const { topicId } = z.object({ topicId: z.uuid() }).parse(JSON.parse(created.text))
+  const { topicId } = z.object({ topicId: z.literal("topic_2") }).parse(JSON.parse(created.text))
   await session.execute("save_learning_state", input.chat.learning)
-  expect(session.finish("Created the requested prerequisite.").topicMutations[0]).toMatchObject({ type: "createTopic", topicId })
+  expect(topicId).toBe("topic_2")
+  expect(session.finish("Created the requested prerequisite.").topicMutations[0]).toMatchObject({ type: "createTopic", topicId: expect.any(String) })
 })
 
 test("summary citations resolve a source shared by the chat and topic", async () => {
@@ -626,7 +695,7 @@ test("summary citations resolve a source shared by the chat and topic", async ()
   input.topics[0].materials.push(material)
   const session = await createTutorSession(input, () => {})
   const summary = `# Limits\n\n<topic-directory heading="Topic directory" items='[{"title":"Limits","sources":[{"label":"Lecture 11.pdf, pg. 1","href":"assets/Lecture 11.pdf#page=1"}]}]' />\n\n## Limits\n\nA limit is an approached value.`
-  const result = await session.execute("updateTopic", { topicId: input.topics[0].id, summary })
+  const result = await session.execute("updateTopic", { topicId: "topic_1", summary })
   expect(result.success).toBe(true)
   await session.execute("save_learning_state", input.chat.learning)
   expect(session.finish("Updated the explanation.").topicMutations).toMatchObject([{ type: "updateTopic", summary }])
@@ -648,6 +717,41 @@ test("streams partial replies and reconstructs fragmented tool calls before comp
   expect(result.reply).toBe("Review this plan before we begin.")
   expect(result.learning.workpad).toBe("Plan saved.")
 })
+
+test.each(["awaiting_answer", "awaiting_clarification", "contested"] as const)(
+  "streams explanations during %s without exposing a fragmented private key",
+  async (phase) => {
+    const input = job()
+    const state = {
+      ...input.chat.learning,
+      phase,
+      pendingQuestion: "Evaluate the integral.",
+      privateAnswerKey: "The checked integral is minus nine halves.",
+      workpad: "Waiting for the learner's answer.",
+    }
+    const explanation = "Here is a sketch of the function."
+    const { client } = await provider([save(state), reply(explanation)])
+    const updates: string[] = []
+    const result = await runTutorTurn(input, client, () => {}, undefined, undefined, (text) => updates.push(text))
+    expect(updates).toContain("Here is ")
+    expect(updates.at(-1)).toBe(explanation)
+    expect(result.reply).toBe(explanation)
+
+    const session = await createTutorSession(input, () => {})
+    expect(session.previewReply(explanation)).toBe("")
+    expect((await session.execute("save_learning_state", state)).success).toBe(true)
+    for (let length = 1; length <= state.privateAnswerKey.length; length++) {
+      const partial = `${explanation} ${state.privateAnswerKey.slice(0, length)}`
+      expect(session.previewReply(partial)).toBe(`${explanation} `)
+    }
+    expect(session.previewReply(`${explanation} ${state.privateAnswerKey} More text.`)).toBe(`${explanation} `)
+    expect(() => session.finish(`${explanation} ${state.privateAnswerKey}`)).toThrow("private assessment key")
+    expect(session.previewReply(`${explanation} The curve crosses the axis.`)).toBe(`${explanation} The curve crosses the axis.`)
+
+    await session.execute("save_learning_state", { ...state, workpad: "" })
+    expect(session.previewReply(explanation)).toBe("")
+  },
+)
 
 test("accepts optional response choices and rejects ambiguous or incomplete options", async () => {
   const input = job()

@@ -13,8 +13,8 @@ test("topic and chat composers keep runners internal when multiple runners are s
     state.runners.push({
       id: randomUUID(),
       name: "Another tutor",
-      provider: "openrouter",
-      model: "openrouter/auto",
+      provider: "codex",
+      model: "gpt-6-luna",
     })
     state.chats.push(newChat(state.runners[0].id, "Existing chat"))
   })

@@ -9,7 +9,7 @@ import { createTutorGraph, createTutorToolGraph } from "../src/runners/tutor-gra
 async function session() {
   const chat = newChat(randomUUID())
   const job = WorkerJobSchema.parse({
-    chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider: "openrouter", model: "fixture" },
+    chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider: "codex", model: "fixture" },
     skillDirectory: resolve("resources/tutor-me"), assetDirectory: resolve("tests"),
   })
   return { chat, tutor: await createTutorSession(job, () => {}) }

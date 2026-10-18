@@ -172,7 +172,8 @@ test("reopening restores the most recently viewed topic independently of chat se
     let navigation = page.getByRole("navigation", { name: "Your topics" })
     await navigation.getByRole("button", { name: "Automata", exact: true }).click()
     await navigation.getByRole("button", { name: "Calculus", exact: true }).click()
-    await page.keyboard.press("Control+Tab")
+    await expect(navigation.getByRole("button", { name: "Calculus", exact: true })).toHaveAttribute("aria-current", "page")
+    await navigation.getByRole("button", { name: "Calculus", exact: true }).press("Control+Tab")
     await expect(navigation.getByRole("button", { name: "Automata", exact: true })).toHaveAttribute("aria-current", "page")
     await page.keyboard.press("Control+Tab")
     await expect(navigation.getByRole("button", { name: "Calculus", exact: true })).toHaveAttribute("aria-current", "page")
@@ -210,8 +211,9 @@ test("structured curriculum confirmation records the asking thread and keeps que
     const composer = page.getByRole("form", { name: "Chat composer" })
     await page.getByRole("textbox", { name: "Message this chat" }).fill("Plan structured Limits curriculum.")
     await composer.getByRole("button", { name: "Send message" }).click()
-    await expect(page.getByRole("button", { name: "Confirm plan & begin" })).toBeVisible()
-    await page.getByRole("button", { name: "Confirm plan & begin" }).click()
+    const documentConfirmation = page.getByRole("group", { name: "Topic plan confirmation", exact: true })
+    await expect(documentConfirmation.getByRole("button", { name: "Confirm plan & begin" })).toBeVisible()
+    await documentConfirmation.getByRole("button", { name: "Confirm plan & begin" }).click()
     await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
     const snapshot = await page.evaluate(() => window.prune?.snapshot())
     const topic = snapshot?.topics.find((topic) => topic.id === calculus.id)
@@ -226,6 +228,58 @@ test("structured curriculum confirmation records the asking thread and keeps que
     const reloaded = new WorkspaceRepository(join(directory, "workspace"))
     await reloaded.load()
     expect(reloaded.topic(calculus.id).state?.threadTutors).toEqual(topic?.state?.threadTutors)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("chat offers the same plan confirmation action while preserving the document button", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    const composer = page.getByRole("textbox", { name: "Message this chat" })
+    await composer.fill("Plan structured Limits curriculum.")
+    await page.getByRole("form", { name: "Chat composer" }).getByRole("button", { name: "Send message" }).click()
+    const chatConfirmation = page.locator('[data-message-role="assistant"]').last().getByRole("button", { name: "Confirm plan & begin", exact: true })
+    await expect(chatConfirmation).toBeVisible()
+    await expect(page.getByRole("group", { name: "Topic plan confirmation", exact: true }).getByRole("button", { name: "Confirm plan & begin", exact: true })).toBeVisible()
+    await composer.fill("Keep this draft while I confirm")
+    await chatConfirmation.click()
+    await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
+    await expect(composer).toHaveText("Keep this draft while I confirm")
+    await expect(page.getByRole("button", { name: "Confirm plan & begin", exact: true })).toHaveCount(0)
+    const snapshot = await page.evaluate(() => window.prune!.snapshot())
+    expect(snapshot.topics.find((topic) => topic.id === calculus.id)?.planConfirmed).toBe(true)
+    expect(snapshot.chats.flatMap((chat) => chat.messages).filter((message) => message.role === "user" && message.content.includes("I confirm this learning plan."))).toHaveLength(1)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("a revised plan retains its chat confirmation when the latest messages have no topic tags", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  await repository.mutate((state) => {
+    const topic = state.topics.find((topic) => topic.id === calculus.id)!
+    topic.learning.outline = ["Limits"]
+    topic.state!.content = [{ id: "tp-limits", name: "Limits", references: [{ type: "website", url: "https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function" }], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Explain approaching a value"] }, mistakes: [] }]
+    const message = { id: randomUUID(), role: "assistant" as const, createdAt: new Date().toISOString(), topicIds: [topic.id], content: "Here is the proposed plan." }
+    state.chats[0].messages = [message,
+      { ...message, id: randomUUID(), role: "user", content: "Make the plan shorter.", topicIds: [] },
+      { ...message, id: randomUUID(), content: "Here is the revised plan.", topicIds: [] },
+    ]
+  })
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("button", { name: "All chats", exact: true }).click()
+    await page.getByRole("dialog", { name: "All chats" }).getByRole("button", { name: "Existing chat", exact: true }).click()
+    await expect(page.locator('[data-message-role="assistant"]').last().getByRole("button", { name: "Confirm plan & begin", exact: true })).toBeVisible()
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

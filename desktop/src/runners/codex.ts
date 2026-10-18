@@ -46,6 +46,13 @@ export async function runCodexTutorTurn(
   const cwd = dirname(job.assetDirectory)
   await mkdir(cwd, { recursive: true, mode: 0o700 })
   const session = await createTutorSession(job, activity, telemetry)
+  const instructions = `${session.instructions}
+Codex code-mode image handling: read_material returns a string containing the source text and inline image data URLs. Emit those URLs with image() to inspect the pixels; text() alone only prints encoded bytes. Use this pattern for a visual read:
+const source = await tools.read_material({id: materialId, firstPage: 1, lastPage: 1, includeVisuals: true});
+const imagePattern = /data:image\\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+/g;
+for (const url of source.match(imagePattern) ?? []) image(url);
+text(source.replace(imagePattern, "[image displayed]"));
+Screenshots attached to the current learner message are also supplied directly as image inputs. Inspect them before concluding they are unreadable.`
   const client = new CodexAppServer(job.codex, cwd, diagnostic)
   diagnostic("codex.runtime", { cwd, codeModeHost: true })
   processChanged(client.child.pid ?? null)
@@ -75,7 +82,7 @@ export async function runCodexTutorTurn(
       approvalPolicy: "never",
       sandbox: "read-only",
       ephemeral: false,
-      baseInstructions: session.instructions,
+      baseInstructions: instructions,
       dynamicTools: session.tools.map((tool) => {
         if (tool.type !== "function")
           throw new Error("Unsupported tutoring tool.")
@@ -90,7 +97,7 @@ export async function runCodexTutorTurn(
     const previous = job.chat.providerSession
     const canResume =
       previous?.status === "ready" &&
-      previous.toolVersion === 12 &&
+      previous.toolVersion === 14 &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -106,7 +113,7 @@ export async function runCodexTutorTurn(
             cwd,
             approvalPolicy: "never",
             sandbox: "read-only",
-            baseInstructions: session.instructions,
+            baseInstructions: instructions,
             excludeTurns: true,
           },
           responseSchema,
@@ -129,7 +136,7 @@ export async function runCodexTutorTurn(
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 12,
+      toolVersion: 14,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })
@@ -206,11 +213,19 @@ export async function runCodexTutorTurn(
         }
       },
     )
-    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.chat.messages.map((message) => ({ role: message.role, content: messageText(message) })))}`
+    let input = `Continue this tutoring conversation from the saved handoff. The last entry is the current learner request.\n${JSON.stringify(job.chat.messages.map((message) => ({ role: message.role, content: session.modelText(messageText(message)) })))}`
     if (resumed) {
       const request = job.chat.messages.at(-1)
       if (!request || request.role !== "user") throw new Error("The current learner request is missing.")
-      input = request.content
+      input = session.modelText(request.content)
+    }
+    const imageInput: z.infer<ReturnType<typeof z.json>>[] = []
+    const request = job.chat.messages.at(-1)
+    if (request) {
+      for (const part of await session.readMessageImages(request)) {
+        if (part.type === "text") imageInput.push({ type: "text", text: part.text })
+        if (part.type === "image_url") imageInput.push({ type: "image", url: part.image_url.url, detail: "high" })
+      }
     }
     return await runAgentGraph({
       limit: 3,
@@ -238,7 +253,7 @@ export async function runCodexTutorTurn(
             "turn/start",
             {
               threadId,
-              input: [{ type: "text", text: input }],
+              input: [{ type: "text", text: input }, ...imageInput],
               effort:
                 job.runner.reasoningEffort ??
                 model.defaultReasoningEffort ??

@@ -109,10 +109,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(page.getByRole("button", { name: "Favorites", exact: true })).toHaveCount(0)
     await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible()
     await expect(page.getByRole("option")).toHaveCount(0)
-    await page.getByRole("button", { name: "OpenRouter", exact: true }).click()
-    await expect(page.getByRole("heading", { name: "Set up OpenRouter", exact: true })).toBeVisible()
-    await expect(page.getByRole("button", { name: "OpenRouter", exact: true })).toBeEnabled()
-    await expect(page.getByRole("button", { name: "OpenRouter", exact: true }).locator("svg")).toHaveCSS("filter", "grayscale(1)")
+    await expect(page.getByRole("button", { name: "OpenRouter", exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: "Claude", exact: true }).click()
     await expect(page.getByRole("heading", { name: "Set up Claude", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "Open provider settings", exact: true }).click()
@@ -136,18 +133,12 @@ test("native sandboxed app manages runners and restores topics across restarts",
         ...snapshot,
         providers: snapshot.providers.map((provider) => ({
           ...provider,
-          connected: provider.id === "codex" || provider.id === "openrouter",
+          connected: provider.id === "codex",
         })),
       })
     }, pickerSnapshot)
     await modelTrigger.click()
     await expect(page.getByRole("heading", { name: "Setup", exact: true })).toHaveCount(0)
-    await page.getByRole("button", { name: "OpenRouter", exact: true }).click()
-    await page.getByRole("combobox", { name: "Search models" }).fill("openrouter/auto")
-    await page.getByRole("option", { name: "Auto", exact: true }).click()
-    await expect(modelTrigger).toHaveText(/Auto/)
-    await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
-    await modelTrigger.click()
     await page.getByRole("button", { name: "My ChatGPT", exact: true }).click()
     await page
       .getByRole("combobox", { name: "Search models" })
