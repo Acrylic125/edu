@@ -310,15 +310,16 @@ export function WorkspaceSidebar({
           </Button>
         </div>
         <ScrollArea
-          className="min-h-0 flex-1"
-          viewportProps={{ className: "px-3 pb-5" }}
+          className="min-h-0 flex-1 md:rounded-b-[1.75rem]"
         >
-          {children}
+          <div className="flex-1 px-3 pb-5">{children}</div>
+          <div className="sticky bottom-0 z-10 shrink-0 bg-sidebar/30 backdrop-blur-xl">
+            {actions ? <div className="px-3 pb-3">{actions}</div> : null}
+            <div className="flex h-20 items-center gap-2 px-4">
+              {footer}
+            </div>
+          </div>
         </ScrollArea>
-        {actions ? <div className="px-3 pb-3">{actions}</div> : null}
-        <div className="mx-3 flex h-20 shrink-0 items-center gap-2 border-t border-sidebar-border px-1">
-          {footer}
-        </div>
       </aside>
     </>
   )

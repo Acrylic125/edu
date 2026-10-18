@@ -12,6 +12,11 @@ const actions = [
   { label: "Use Skill", href: links.skill, primary: false },
 ];
 const favicon = await getImage({ src: appIcon, width: 64, height: 64, format: "png" });
+const title = "EdU — Your personal AI tutor";
+const description = "EdU is your personal AI tutor. Learn from your slides, practise what you know, and keep revision notes as you go.";
+const imageAlt = "EdU — Your personal AI tutor, with a stack of blue, green, and yellow books.";
+const canonicalUrl = new URL("/", Astro.site);
+const imageUrl = new URL("/social-preview.png", Astro.site);
 ---
 
 <!doctype html>
@@ -19,13 +24,27 @@ const favicon = await getImage({ src: appIcon, width: 64, height: 64, format: "p
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="EdU is your personal AI tutor. Learn from your slides, practise what you know, and keep revision notes as you go." />
+    <meta name="description" content={description} />
     <meta name="theme-color" content="#f4f4f1" />
-    <meta property="og:title" content="EdU — Your personal AI tutor" />
-    <meta property="og:description" content="Turn your slides, notes, and questions into lessons, practice, and revision notes." />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:site_name" content="EdU" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={imageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={imageUrl} />
+    <meta name="twitter:image:alt" content={imageAlt} />
     <link rel="icon" type="image/png" href={favicon.src} />
-    <title>EdU — Your personal AI tutor</title>
+    <title>{title}</title>
     <script is:inline>
       const appearance = window.matchMedia("(prefers-color-scheme: dark)");
       function updateAppearance() {

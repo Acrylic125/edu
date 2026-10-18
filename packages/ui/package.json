@@ -10,6 +10,7 @@
     "./scroll-area": "./primitives/scroll-area.tsx",
     "./button": "./primitives/button.tsx",
     "./context-menu": "./primitives/context-menu.tsx",
+    "./collapsible": "./primitives/collapsible.tsx",
     "./learning-books": "./learning/learning-books.tsx",
     "./theme": "./theme/index.ts",
     "./theme-provider": "./theme/provider.tsx",
