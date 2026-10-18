@@ -29,7 +29,7 @@ test.each(["claude", "antigravity"] as const)("%s generates a validated title fr
   const cli = await connection(provider)
   const runner = WorkerJobSchema.shape.runner.parse({ id: randomUUID(), name: "Tutor", provider, model: "default" })
   const processChanged = vi.fn()
-  const title = await generateTopicTitle({ cli, runner }, "Teach me limits", undefined, processChanged, () => {})
+  const title = await generateTopicTitle({ cli, runner }, "Teach me limits", processChanged, () => {})
   expect(title).toBe("Introduction to Limits")
   expect(processChanged).toHaveBeenLastCalledWith(null)
 })
@@ -72,6 +72,19 @@ test("CLI launch disables native tools and does not bypass permissions", async (
   expect(cliPromptArguments(antigravity, "{}")).not.toContain("--dangerously-skip-permissions")
 })
 
+test("tutoring CLI launches expose only native web research tools", async () => {
+  const claude = await connection("claude")
+  const args = cliPromptArguments(claude, "{}", "default", undefined, true)
+  expect(args[args.indexOf("--tools") + 1]).toBe("WebSearch,WebFetch")
+  expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch")
+  expect(args).toContain("--safe-mode")
+  const antigravity = await connection("antigravity")
+  await prepareCliWorkspace(antigravity, true)
+  const agent = await readFile(join(antigravity.directory, ".agents/agents/edu-tutor.md"), "utf8")
+  expect(agent).toContain("tools: [finish, search_web, read_url_content]")
+  expect(agent).toContain("commandExecutionPolicy: off")
+})
+
 test("CLI errors and malformed results cannot masquerade as successful tutoring", () => {
   expect(() => parseCliResponse("claude", '{"is_error":true}')).toThrow("could not complete")
   expect(() => parseCliResponse("antigravity", '{"status":"WAITING"}')).toThrow("could not complete")
@@ -104,7 +117,7 @@ test.each(["claude", "antigravity"] as const)("%s can persist structured topic s
   })
   const actions = [
     { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [
-      { name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, summary: "A limit describes the approached value." }) },
+      { name: "updateTopic", arguments: JSON.stringify({ topicId: "topic_1", summary: "A limit describes the approached value." }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
   ]
@@ -124,7 +137,7 @@ test("Antigravity title generation allows the full CLI startup deadline", async 
   const cli = await connection("antigravity")
   const runner = WorkerJobSchema.shape.runner.parse({ id: randomUUID(), name: "Tutor", provider: "antigravity", model: "default" })
   const command = vi.spyOn(cliTools, "runCliCommand").mockResolvedValue(JSON.stringify({ status: "SUCCESS", structured_output: { title: "Introduction to Limits" } }))
-  await expect(generateTopicTitle({ cli, runner }, "Teach me limits", undefined, () => {}, () => {})).resolves.toBe("Introduction to Limits")
+  await expect(generateTopicTitle({ cli, runner }, "Teach me limits", () => {}, () => {})).resolves.toBe("Introduction to Limits")
   expect(command.mock.calls[0][4]).toBe(120_000)
 })
 
@@ -216,7 +229,7 @@ test.each(["claude", "antigravity"] as const)("%s consumes cross-topic retrieval
   })
   const actions = [
     { reply: "Premature review", calls: [
-      { name: "read_topic_notes", arguments: JSON.stringify({ topicId: topic.id }) },
+      { name: "read_topic_notes", arguments: JSON.stringify({ topicId: "topic_1" }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
     { reply: evidence, calls: [] },

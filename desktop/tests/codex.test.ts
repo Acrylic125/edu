@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import {
   access,
   mkdtemp,
+  mkdir,
   readFile,
   realpath,
   rm,
@@ -22,6 +23,7 @@ import { newChat } from "../src/main/workspace"
 import { WorkerJobSchema, WorkspaceSchema } from "../src/shared/contracts"
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base"
 import { TurnTelemetry } from "../src/runners/telemetry"
+import { createCanvas } from "@napi-rs/canvas"
 
 const directories: string[] = []
 const clients: CodexAppServer[] = []
@@ -39,6 +41,34 @@ async function directory() {
   directories.push(value)
   return value
 }
+
+test("Codex enables live web research while keeping shell access disabled", async () => {
+  const { job, home } = await fixture()
+  if (!job.codex) throw new Error("Missing Codex fixture")
+  const client = new CodexAppServer(job.codex, home)
+  clients.push(client)
+  await client.initialize()
+  expect(client.child.spawnargs).toContain('web_search="live"')
+  expect(client.child.spawnargs).toContain("shell_tool")
+  expect(client.child.spawnargs).toContain("unified_exec")
+})
+
+test.each([false, true])("Codex receives attached screenshot pixels directly when resumed=%s", async (resumed) => {
+  const { job, home } = await fixture()
+  if (!job.codex) throw new Error("Missing Codex fixture")
+  if (resumed) job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
+  await mkdir(job.assetDirectory, { recursive: true })
+  const material = { id: randomUUID(), name: "screenshot.png", kind: "image" as const, text: "Image source. Use read_material to inspect the image visually.", pages: [] }
+  await writeFile(join(job.assetDirectory, material.name), createCanvas(80, 40).toBuffer("image/png"))
+  job.chat.materials.push(material)
+  job.chat.messages[0].materialIds = [material.id]
+  await runCodexTutorTurn(job, () => {}, () => {})
+  const requests = (await readFile(join(home, "requests.jsonl"), "utf8")).trim().split("\n")
+    .map((line) => z.object({ method: z.string().optional(), params: z.json().optional() }).parse(JSON.parse(line)))
+  const turn = z.object({ input: z.array(z.object({ type: z.string(), text: z.string().optional(), url: z.string().optional() })) }).parse(requests.find((request) => request.method === "turn/start")?.params)
+  expect(turn.input.some((item) => item.type === "image" && item.url?.startsWith("data:image/png;base64,"))).toBe(true)
+  expect(turn.input.some((item) => item.text?.includes(`prune-source://${material.id}/1`))).toBe(true)
+})
 
 async function fixture(mode = "completed") {
   const home = await directory()
@@ -417,7 +447,7 @@ test("Codex RPC correlates out-of-order responses and rejects malformed wire dat
   )
 })
 
-test("existing runners retain OpenRouter when provider metadata is introduced", () => {
+test("existing runners default to ChatGPT when provider metadata is introduced", () => {
   const id = randomUUID()
   const workspace = WorkspaceSchema.parse({
     version: 2,
@@ -425,7 +455,7 @@ test("existing runners retain OpenRouter when provider metadata is introduced", 
     topics: [],
     chats: [],
   })
-  expect(workspace.runners[0].provider).toBe("openrouter")
+  expect(workspace.runners[0]).toMatchObject({ provider: "codex", model: "gpt-6-luna" })
 })
 
 test("Codex sign-in updates the provider account and logout clears it", async () => {
@@ -594,7 +624,7 @@ test("canceling while Codex creates a login prevents opening the browser", async
 test("topic titles use Luna with minimal reasoning independently of the tutor model", async () => {
   const { job, home } = await fixture("title")
   const processes: (number | null)[] = []
-  const title = await generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, (pid) => processes.push(pid), () => {})
+  const title = await generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", (pid) => processes.push(pid), () => {})
   expect(title).toBe("Introduction to Calculus")
   expect(job.runner.model).toBe("test-model")
   expect(job.runner.reasoningEffort).toBe("high")
@@ -612,13 +642,13 @@ test("topic titles use Luna with minimal reasoning independently of the tutor mo
 test.each(["title-failed", "title-empty"])("rejects invalid title results and closes the Codex process: %s", async (mode) => {
   const { job } = await fixture(mode)
   const processes: (number | null)[] = []
-  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, (pid) => processes.push(pid), () => {})).rejects.toThrow()
+  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", (pid) => processes.push(pid), () => {})).rejects.toThrow()
   expect(processes.at(-1)).toBeNull()
 })
 
 test("does not use an expensive tutor model when no budget Codex model is available", async () => {
   const { job, home } = await fixture()
-  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", undefined, () => {}, () => {})).rejects.toThrow("No budget title model")
+  await expect(generateTopicTitle(job, job.chat.messages.find((message) => message.role === "user")?.content ?? "", () => {}, () => {})).rejects.toThrow("No budget title model")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })
 
@@ -643,14 +673,16 @@ test("resumes the native Codex thread after restart and sends only the new reque
   expect(requests.filter((request) => request.method === "turn/start").at(-1)?.params).toMatchObject({ input: [{ type: "text", text: "Continue the same conversation" }] })
 })
 
-test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "old-handoff-tools", "old-response-tools"])("reconstructs committed history when the saved session is %s", async (reason) => {
+test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "old-handoff-tools", "old-response-tools", "old-web-tools", "old-topic-uuid-tools"])("reconstructs committed history when the saved session is %s", async (reason) => {
   const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 12, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
   if (reason === "old-tools") job.chat.providerSession.toolVersion = 1
   if (reason === "old-tools-v2") job.chat.providerSession.toolVersion = 2
   if (reason === "old-handoff-tools") job.chat.providerSession.toolVersion = 10
   if (reason === "old-response-tools") job.chat.providerSession.toolVersion = 11
+  if (reason === "old-web-tools") job.chat.providerSession.toolVersion = 12
+  if (reason === "old-topic-uuid-tools") job.chat.providerSession.toolVersion = 13
   if (reason === "pending") job.chat.providerSession.status = "pending"
   if (reason === "other-account") job.chat.providerSession.home = "/different/account"
   const first = { id: randomUUID(), role: "user" as const, content: "An early request that must survive", createdAt: new Date().toISOString(), topicIds: [] }
@@ -665,13 +697,22 @@ test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "
 test("does not replace a resumable conversation on a transient provider failure", async () => {
   const { job, home } = await fixture("resume-network")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 12, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
   await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })
 
-test("Codex streams final answer deltas while keeping commentary and other threads hidden", async () => {
-  const { job } = await fixture()
+test.each([false, true])("Codex streams final answer deltas while keeping commentary and other threads hidden with pending assessment=%s", async (pendingAssessment) => {
+  const { job, home } = await fixture()
+  if (pendingAssessment) {
+    await writeFile(join(home, "state.json"), JSON.stringify({
+      ...job.chat.learning,
+      phase: "awaiting_answer",
+      pendingQuestion: "Evaluate the integral.",
+      privateAnswerKey: "The checked integral is minus nine halves.",
+      workpad: "Waiting for the learner's answer.",
+    }))
+  }
   const updates: string[] = []
   const result = await runCodexTutorTurn(job, () => {}, () => {}, undefined, undefined, (text: string) => updates.push(text))
   expect(updates).toContain("Here is your")
