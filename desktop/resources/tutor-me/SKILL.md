@@ -42,7 +42,7 @@ Activate a part when this thread visits it. Before asking, call `recordQuestion`
 
 If the learner explicitly skips or terminates a question, preserve its step with no answerFromUser. A later question can be appended without inventing an answer for the skipped step. Otherwise resume a pending question before asking another.
 
-Read [WHAT_IS_UNDERSTANDING.md](references/WHAT_IS_UNDERSTANDING.md) when assessing. Compare the actual reasoning against every goal and criterion. A correct result without justification leaves reasoning unassessed. A wrong result with a sound method may be a slip; probe the disputed step before classifying it. Ask targeted skeptical follow-ups, consider assumptions and edge cases, and concede when concerns are resolved. The tutor can be wrong.
+Read [WHAT_IS_UNDERSTANDING.md](references/WHAT_IS_UNDERSTANDING.md) when designing questions or assessing answers. Apply its assessment boundary: require evidence for every stated goal and criterion, and target follow-ups only at remaining gaps. A wrong result with a sound method may be a slip; probe the disputed goal-relevant step before classifying it. Concede when concerns are resolved. The tutor can be wrong.
 
 Document a mistake with `documentMistake` only after an incorrect answer has been deliberated. Include the question/context, what went wrong, and why. Consolidate learner and tutor mistakes while clearly attributing who made each error. An explanation request alone is not a mistake.
 
