@@ -40,16 +40,18 @@ export async function resolveCliExecutable(provider: z.infer<typeof CliConnectio
   throw new Error(`Install ${provider === "claude" ? "Claude Code" : "Antigravity CLI"}, then click Connect. For a custom installation, set its binary path in provider settings.`)
 }
 
-export async function prepareCliWorkspace(connection: z.infer<typeof CliConnectionSchema>) {
+export async function prepareCliWorkspace(connection: z.infer<typeof CliConnectionSchema>, webResearch = false) {
   await mkdir(connection.directory, { recursive: true, mode: 0o700 })
   if (connection.provider === "antigravity") {
     const agents = join(connection.directory, ".agents", "agents")
     await mkdir(agents, { recursive: true, mode: 0o700 })
-    // agy needs finish to emit schema output; exclude all file, shell, and other native tools.
+    // agy needs finish to emit schema output; tutoring also needs its read-only web tools.
+    let nativeTools = "finish"
+    if (webResearch) nativeTools += ", search_web, read_url_content"
     await writeFile(join(agents, "edu-tutor.md"), `---
 name: edu-tutor
 description: EdU tutoring response adapter
-tools: [finish]
+tools: [${nativeTools}]
 mainAgent: true
 subagent: false
 commandExecutionPolicy: off
@@ -57,7 +59,7 @@ mcpServers: []
 skills: []
 plugins: []
 ---
-Return the requested structured response. EdU performs all source reads and saves; do not use native tools except finish to return the requested structured response.
+Return the requested structured response with finish. EdU performs attachment reads and state saves. Use the available web tools to research source material when requested.
 `, { mode: 0o600 })
   }
 }
@@ -131,11 +133,14 @@ export function runCliCommand(
   })
 }
 
-export function cliPromptArguments(connection: z.infer<typeof CliConnectionSchema>, schema: string, model = "default", effort?: string) {
+export function cliPromptArguments(connection: z.infer<typeof CliConnectionSchema>, schema: string, model = "default", effort?: string, webResearch = false) {
   const args = ["-p", "--output-format", "json", "--json-schema", schema]
-  if (connection.provider === "claude")
-    args.push("--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--safe-mode", "--no-session-persistence")
-  else args.push("--agent", "edu-tutor", "--sandbox", "--print-timeout", "2m")
+  if (connection.provider === "claude") {
+    let nativeTools = ""
+    if (webResearch) nativeTools = "WebSearch,WebFetch"
+    args.push("--tools", nativeTools, "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--safe-mode", "--no-session-persistence")
+    if (webResearch) args.push("--allowedTools", nativeTools)
+  } else args.push("--agent", "edu-tutor", "--sandbox", "--print-timeout", "2m")
   args.push("--model", model === "default" ? providerDefaultModels[connection.provider] : model)
   if (effort) args.push("--effort", effort)
   return args

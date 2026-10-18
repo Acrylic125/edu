@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto"
 import { afterEach, expect, test, vi } from "vitest"
 import { ProviderRegistry } from "../src/providers/registry"
 import { CodexProvider } from "../src/providers/codex"
-import { ModelAccount } from "../src/main/account"
 
 vi.mock("electron", () => ({ shell: {}, safeStorage: {} }))
 afterEach(() => {
@@ -16,44 +15,6 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.useRealTimers()
 })
-
-function model(id: string, prompt = "0", completion = "0", request = "0") {
-  return {
-    id, name: id, supported_parameters: [],
-    architecture: { input_modalities: ["text"], output_modalities: ["text"] },
-    pricing: { prompt, completion, request },
-  }
-}
-
-test("chooses the least expensive text model from live prices, including models without tools", async () => {
-  vi.spyOn(cli, "resolveCliExecutable").mockRejectedValue(new Error("Not installed"))
-  vi.spyOn(CodexProvider.prototype, "refresh").mockResolvedValue()
-  vi.spyOn(ModelAccount.prototype, "key").mockResolvedValue("test-key")
-  let catalog = [
-    model("openrouter/auto", "-1", "-1"),
-    { ...model("image-only"), architecture: { input_modalities: ["text"], output_modalities: ["image"] } },
-    { ...model("missing-prices"), pricing: undefined },
-    model("expensive", "0.001", "0.002"),
-    model("cheap", "0.000001", "0.000002"),
-    model("request-fee", "0", "0", "0.01"),
-  ]
-  const fetcher = vi.fn(async (url: Parameters<typeof fetch>[0]) => {
-    if (url === "https://openrouter.ai/api/v1/key") return Response.json({ data: { is_free_tier: false } })
-    return Response.json({ data: catalog })
-  })
-  vi.stubGlobal("fetch", fetcher)
-  const registry = new ProviderRegistry("/tmp/prune-provider-test", "unused", () => {})
-  const runner = { id: randomUUID(), name: "Tutor", provider: "openrouter" as const, model: "expensive" }
-  await registry.refresh()
-  expect((await registry.connection(runner)).titleModel?.id).toBe("cheap")
-  expect(registry.statuses.find((provider) => provider.id === "openrouter")?.error).toBeUndefined()
-  expect(registry.statuses.find((provider) => provider.id === "openrouter")?.models.map((model) => model.id)).toEqual(["openrouter/auto"])
-  catalog = [...catalog, model("free")]
-  await registry.refresh()
-  expect((await registry.connection(runner)).titleModel?.id).toBe("free")
-  expect(runner.model).toBe("expensive")
-})
-
 
 test("Claude Connect signs in when the installed CLI is signed out", async () => {
   const directory = await mkdtemp(join(tmpdir(), "edu-cli-login-"))
@@ -85,7 +46,6 @@ test("checks all providers immediately and every five minutes, with no login or 
     registry.codex.state.connected = true
     registry.codex.state.checkedAt = new Date().toISOString()
   })
-  vi.spyOn(registry.openrouter, "load").mockResolvedValue()
   const fetcher = vi.fn().mockImplementation(async () => Response.json({ data: [] }))
   vi.stubGlobal("fetch", fetcher)
   const resolver = vi.spyOn(cli, "resolveCliExecutable").mockResolvedValue("/fixture-cli")
@@ -101,7 +61,7 @@ test("checks all providers immediately and every five minutes, with no login or 
     const initial = poll.mock.results.at(-1)
     if (initial?.type === "return") await initial.value
     expect(codex).toHaveBeenCalledTimes(1)
-    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(fetcher).not.toHaveBeenCalled()
     expect(resolver).toHaveBeenCalledTimes(2)
     expect(registry.statuses.every((provider) => provider.installed && provider.checkedAt)).toBe(true)
     expect(registry.statuses.find((provider) => provider.id === "antigravity")?.connected).toBe(true)
@@ -111,7 +71,7 @@ test("checks all providers immediately and every five minutes, with no login or 
     const periodic = poll.mock.results.at(-1)
     if (periodic?.type === "return") await periodic.value
     expect(codex).toHaveBeenCalledTimes(2)
-    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).not.toHaveBeenCalled()
     expect(resolver).toHaveBeenCalledTimes(4)
     expect(command.mock.calls.filter(([, args]) => args.includes("/usage"))).toHaveLength(2)
     expect(command.mock.calls.some(([, args]) => args.includes("login") || args.includes("--json-schema"))).toBe(false)
@@ -171,61 +131,6 @@ test("CLI checks discover installation separately from connection and notice rem
   }
 })
 
-test("OpenRouter checks invalidate a revoked account key and recover after reconnecting", async () => {
-  const registry = new ProviderRegistry("/tmp/edu-provider-key-check", "unused", () => {})
-  vi.spyOn(registry.openrouter, "load").mockImplementation(async () => { registry.openrouter.connected = true })
-  vi.spyOn(registry.openrouter, "key").mockResolvedValue("test-key")
-  const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
-  vi.stubGlobal("fetch", fetcher)
-  try {
-    await registry.refresh("openrouter")
-    expect(registry.statuses.find((provider) => provider.id === "openrouter")?.connected).toBe(false)
-    expect(registry.statuses.find((provider) => provider.id === "openrouter")?.error).toContain("sign-in has expired")
-    fetcher.mockImplementation(async (url: Parameters<typeof fetch>[0]) => {
-      if (url === "https://openrouter.ai/api/v1/key") return Response.json({ data: { is_free_tier: false } })
-      return Response.json({ data: [] })
-    })
-    await registry.refresh("openrouter")
-    expect(registry.statuses.find((provider) => provider.id === "openrouter")?.connected).toBe(true)
-    expect(registry.statuses.find((provider) => provider.id === "openrouter")?.error).toBeUndefined()
-  } finally {
-    registry.close()
-  }
-})
-
-
-test("a pending account check cannot undo an explicit disconnect", async () => {
-  const registry = new ProviderRegistry("/tmp/edu-disconnect-race", "unused", () => {})
-  let hasKey = true
-  vi.spyOn(registry.openrouter, "load").mockImplementation(async () => { registry.openrouter.connected = hasKey })
-  vi.spyOn(registry.openrouter, "key").mockResolvedValue("test-key")
-  const disconnect = vi.spyOn(registry.openrouter, "disconnect").mockImplementation(async () => {
-    hasKey = false
-    registry.openrouter.connected = false
-  })
-  let finish = () => {}
-  const account = new Promise<Response>((resolve) => { finish = () => resolve(Response.json({ data: { is_free_tier: false } })) })
-  const fetcher = vi.fn(async (url: Parameters<typeof fetch>[0]) => {
-    if (url === "https://openrouter.ai/api/v1/key") return account
-    return Response.json({ data: [] })
-  })
-  vi.stubGlobal("fetch", fetcher)
-  try {
-    const checking = registry.refresh("openrouter")
-    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1))
-    const disconnecting = registry.disconnect("openrouter")
-    expect(disconnect).not.toHaveBeenCalled()
-    finish()
-    await Promise.all([checking, disconnecting])
-    expect(registry.openrouter.connected).toBe(false)
-    await registry.refresh("openrouter")
-    expect(registry.openrouter.connected).toBe(false)
-    expect(fetcher.mock.calls.filter(([url]) => url === "https://openrouter.ai/api/v1/key")).toHaveLength(1)
-  } finally {
-    registry.close()
-  }
-})
-
 
 test("Antigravity discovers tab-separated models from the CLI catalog", async () => {
   const directory = await mkdtemp(join(tmpdir(), "edu-agy-models-"))
@@ -270,7 +175,6 @@ test.each([
   ["codex", "gpt-6-luna"],
   ["claude", "claude-haiku-5-5"],
   ["antigravity", "gemini-3.8-flash-high"],
-  ["openrouter", "openrouter/auto"],
 ])("%s uses its concrete model when a runner omits the model", (provider, model) => {
   expect(RunnerInputSchema.parse({ name: "Tutor", provider }).model).toBe(model)
   expect(RunnerInputSchema.parse({ name: "Tutor", provider, model: "chosen-model", reasoningEffort: "high" }))

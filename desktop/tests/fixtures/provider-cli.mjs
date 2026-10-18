@@ -23,7 +23,9 @@ if (args[0] === "auth") {
   if (args.includes("--agent")) {
     const prompt = args.find((arg) => arg.startsWith("-p="))
     if (!prompt || input) throw new Error("Antigravity requires an attached print prompt and empty stdin")
-    if (!readFileSync(".agents/agents/edu-tutor.md", "utf8").includes("tools: [finish]")) throw new Error("Antigravity requires finish for structured output")
+    const nativeTools = readFileSync(".agents/agents/edu-tutor.md", "utf8").match(/^tools: \[([^\]]+)\]/m)?.[1].split(",").map((tool) => tool.trim()) ?? []
+    if (!nativeTools.includes("finish")) throw new Error("Antigravity requires finish for structured output")
+    if (nativeTools.some((tool) => !["finish", "search_web", "read_url_content"].includes(tool))) throw new Error("Unexpected Antigravity tool")
     input = prompt.slice(3)
   }
   let action = { ready: true }
@@ -53,7 +55,7 @@ if (args[0] === "auth") {
       if (!results.some((item) => item.tool === "save_learning_state" && !item.result.startsWith("Tool error:"))) {
         let calls
         if (request === "Plan structured Limits curriculum.") {
-          calls = [{ name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, content: [{ id: "tp-structured-limits", name: "Limits", references: [], goals: { id: "tpg-structured-limits", objective: "Distinguish a limit from a function value", understoodWhen: ["Explain why a missing function value does not prevent a limit"] }, mistakes: [] }] }) }]
+          calls = [{ name: "updateTopic", arguments: JSON.stringify({ topicId: topic.id, content: [{ id: "tp-structured-limits", name: "Limits", references: [{ type: "website", url: "https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function" }], goals: { id: "tpg-structured-limits", objective: "Distinguish a limit from a function value", understoodWhen: ["Explain why a missing function value does not prevent a limit"] }, mistakes: [] }] }) }]
           handoff.phase = "awaiting_plan_confirmation"
         } else {
           calls = [

@@ -117,7 +117,6 @@ else {
         repository.stateSnapshot.providerSettings,
       )
       providers = registry
-      await registry.openrouter.load()
       const skillDirectory = app.isPackaged
         ? join(process.resourcesPath, "resources", "tutor-me")
         : join(app.getAppPath(), "resources", "tutor-me")
@@ -137,7 +136,7 @@ else {
           topics: repository.publicTopics,
           chats: repository.publicChats,
           runtime: runnerManager.statuses,
-          connected: registry.openrouter.connected,
+          connected: registry.statuses.some((provider) => provider.connected),
           providers: registry.statuses,
         })
       }
@@ -174,7 +173,7 @@ else {
       }
       ipcMain.handle(Channel.connect, async (event, raw) => {
         trusted(event)
-        const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        const provider = ProviderIdSchema.default("codex").parse(raw)
         if (registry.statuses.some((item) => item.id === provider && item.connecting)) return
         if (provider === "claude" || provider === "antigravity") {
           const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === provider)
@@ -199,7 +198,7 @@ else {
       })
       ipcMain.handle(Channel.disconnect, async (event, raw) => {
         trusted(event)
-        const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        const provider = ProviderIdSchema.default("codex").parse(raw)
         for (const runner of repository.stateSnapshot.runners) {
           if (runner.provider === provider) runnerManager.stop(runner.id)
         }
@@ -221,8 +220,6 @@ else {
         const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === settings.id)
         settings.enabled = previous?.enabled ?? false
         if (settings.binaryPath !== (previous?.binaryPath ?? "")) settings.enabled = false
-        if (settings.id === "openrouter" && settings.binaryPath)
-          throw new Error("OpenRouter does not use a local binary.")
         if (settings.binaryPath) {
           if (!isAbsolute(settings.binaryPath))
             throw new Error("Enter an absolute binary path.")
@@ -230,8 +227,7 @@ else {
             throw new Error("Choose an executable file for the binary path.")
           await access(settings.binaryPath, constants.X_OK)
         }
-        const changesBinary = settings.id !== "openrouter" &&
-          settings.binaryPath !== (previous?.binaryPath ?? "")
+        const changesBinary = settings.binaryPath !== (previous?.binaryPath ?? "")
         if (changesBinary) {
           if (registry.statuses.some((provider) => provider.id === settings.id && (provider.connecting || provider.loading)))
             throw new Error("Wait for the provider to finish connecting before changing its binary.")

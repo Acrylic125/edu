@@ -7,10 +7,10 @@ export function ProviderSetupInstructions({ provider, onRefresh, disabled = fals
   disabled?: boolean
 }) {
   const cliProvider = provider.id === "claude" || provider.id === "antigravity"
-  const installed = provider.id === "openrouter" || provider.installed
+  const installed = provider.installed
   let installUrl = "https://code.claude.com/docs/en/setup"
   if (provider.id === "antigravity") installUrl = "https://antigravity.google/docs/cli/install"
-  let connectHelp = "Click Connect and sign in with your OpenRouter account."
+  let connectHelp = "Click Connect and complete sign-in if prompted."
   if (provider.id === "codex") connectHelp = "Click Connect and sign in with your ChatGPT account."
   else if (cliProvider) connectHelp = "Click Connect and complete sign-in if prompted."
 

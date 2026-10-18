@@ -11,7 +11,6 @@ Open **Settings → Providers → Add provider** and choose an account:
 
 - **Codex:** click **Connect** and finish sign-in in your browser.
   Your account needs Codex access. The app bundles the Codex app-server runtime.
-- **OpenRouter:** click **Connect** and sign in in your browser.
   Your account needs model credits.
 
 - **Claude:** click the gray Claude icon in the model picker, install Claude Code
@@ -26,7 +25,7 @@ can still be configured through **Settings → Providers → Binary path**.
 
 Claude and Antigravity use their CLI's existing credential store. Disconnect
 only disables their use in EdU; it does not log the shared CLI out. These adapters
-support text and extracted PDF text; use ChatGPT or OpenRouter for visual sources.
+support text and extracted PDF text; use ChatGPT for visual sources.
 CLI models use their configured default; Claude also exposes Sonnet, Opus, and
 Haiku aliases, and Antigravity loads its catalog from `agy models`.
 
@@ -45,7 +44,7 @@ Use **Settings → Appearance** to select System, Light, or Dark.
 Lessons require an internet connection.
 The app supplies the runtime, agent loop, Tutor Me skill, references, source
 readers, PDF renderer, and persistence. Users do not install Node, Python, or
-a skill. ChatGPT and OpenRouter include their runtime; Claude and Antigravity
+a skill. ChatGPT includes its runtime; Claude and Antigravity
 require the provider CLI described above.
 
 Create a topic by describing your goal or attaching PDF, PowerPoint (`.pptx`), image, text, or code
@@ -58,8 +57,7 @@ It explains the material, asks Checks and Tests, and maintains revision notes.
 Use the provider/model picker beside the paperclip to choose your provider and model.
 Codex models and reasoning options come from the bundled runtime’s model catalog;
 new selections use GPT 6 Luna for Codex, Haiku 5.5 for Claude Code, and Gemini 3.8 Flash
-(High) for Antigravity. The picker always shows the selected model. OpenRouter’s **Auto** routes model
-requests, and its catalog lists models that support tool calling. Visual sources
+(High) for Antigravity. The picker always shows the selected model. Visual sources
 require a model with vision support.
 
 Tutors start automatically when you send a message. A topic retains its provider;
@@ -87,9 +85,16 @@ part headings, Topic terminology, and Materials. Teaching fills gaps and clarifi
 confusing phrasing in place. Each writer chat has its own active/completed parts and exact question/answer
 steps. Read-only topic references do not register that chat as a tutor.
 
+Tutor tools identify topics using short `topic_N` handles saved with each chat.
+Handles stay stable across turns and restarts, including when the topic directory
+changes. A thread can read several topics for reference and write its tagged/open
+topics and topics created during the turn. The shared tool boundary validates
+access and resolves handles to UUIDs for storage. Invalid-target errors list the
+allowed handles; retrying the same tool with a valid target repairs the failure.
+
 Tutor turns run through a compiled LangGraph `StateGraph` in
 `src/runners/graph.ts`: runner → tools → validation → recovery or completion.
-OpenRouter, Claude, Antigravity, and Codex share that graph. Codex native tool
+Claude, Antigravity, and Codex share that graph. Codex native tool
 callbacks execute serially inside the native agent runner. Provider adapters translate
 protocol messages and source images; graph nodes control retries and whether a
 reply can be published. Diagnostics record node transitions as `graph.node`.
@@ -101,7 +106,26 @@ continuations from other threads plus the next untouched part, retrieve prior
 questions, and record confirmed mistakes after deliberation. When several
 continuations exist, it asks the learner to choose. Evaluation questions draw
 from attached practice assets and then internet sources when available; practice
-ends when no suitable source remains. The current harness has no web search.
+ends when no suitable source remains. New curricula start with web research of
+existing textbook, article, course-note, or tutorial walkthroughs. The tutor
+presents the source links and proposed sequence and waits for **Confirm plan &
+begin** before teaching. The same action appears beneath the latest chat reply
+and in the topic document. Every draft curriculum part requires source references. If
+lookup fails or finds no suitable walkthrough, it asks for source material or a
+narrower subject instead of inventing a curriculum.
+
+Codex uses live web search; Claude and Antigravity expose their native web search
+and URL-reading tools. Provider account access and web permissions still
+apply; unavailable lookup must be reported to the learner. Antigravity headless
+URL reads require the user's CLI `read_url` permissions.
+
+Pasted screenshots are sent directly as image inputs to Codex,
+including when Codex resumes a chat. The tutor reads recognizable text, notation,
+and diagrams even without extracted text, states uncertainty, and asks only
+about details that affect the explanation. Codex's code-mode guidance also emits
+images returned by `read_material` through the image helper rather than printing
+their encoded bytes as text. Older images outside the active topic context do
+not block subsequent turns; missing current attachments are reported.
 
 Cross-topic mistake retrieval includes archived topics when requested. It leaves
 those topics unchanged. Conceptual summaries and preserved legacy notes remain
@@ -156,7 +180,7 @@ LangGraph coordinates the tutoring turn through `agent`, `tools`, `validate`,
 `recover`, and `finish` nodes. Codex, Claude Code, and Antigravity remain the
 underlying agent runners; LangGraph does not replace them with a chat model.
 Codex retains its native tool loop and resumable threads. CLI adapters retain
-their structured EdU tool protocol. OpenRouter retains direct model requests.
+their structured EdU tool protocol.
 The graph enforces each adapter's existing request limit, while the manager
 retains process supervision, the turn deadline, and the final SQLite commit.
 
@@ -173,17 +197,15 @@ See [Phoenix Exporter](../phoenix/README.md) for manual upload and local Docker 
 - The renderer is sandboxed with context isolation and no Node integration.
   A narrow preload bridge exposes validated domain operations; the main process
   checks IPC senders. API credentials never enter the renderer.
-- OpenRouter browser sign-in uses PKCE S256, a random state and callback path, and a temporary
-  loopback listener. Keys are encrypted through Electron safeStorage. An insecure
-  Linux `basic_text` fallback is rejected. Disconnect stops runners and deletes
-  the local credential; revoking the provider key is done in OpenRouter.
 - Codex manages ChatGPT sign-in, token refresh, cancellation, and logout through
   its app-server protocol. Its account home is private to EdU and uses the OS
   credential store. EdU does not import another CLI’s credentials or inherited
   model API keys. Disconnect stops that provider’s runners before logging out.
-- Claude launches with built-in tools, MCP servers, hooks, and session persistence
-  disabled. Antigravity selects an EdU main agent with an empty tools list and
-  terminal sandboxing. Their schema-constrained responses request the same source
+- Claude exposes only WebSearch and WebFetch during tutoring; MCP servers, hooks,
+  and session persistence remain disabled. Antigravity selects an EdU main agent
+  with finish, search_web, and read_url_content and terminal sandboxing. Title
+  generation keeps native web tools disabled for both CLIs.
+  Their schema-constrained responses request the same attachment
   and save operations as the other providers; EdU validates and executes them.
   Native subprocesses are tracked for stop/timeout cleanup. CLI output is bounded,
   provider API keys are removed from the inherited environment, and invalid saves
@@ -275,7 +297,6 @@ authorization remains an interactive action.
 
 Implementation references: [Electron utility processes](https://www.electronjs.org/docs/latest/api/utility-process),
 [Electron security](https://www.electronjs.org/docs/latest/tutorial/security),
-[OpenRouter PKCE](https://openrouter.ai/docs/guides/overview/auth/oauth),
 [Codex app-server](https://developers.openai.com/codex/app-server), and
 [T3 Code’s Codex provider](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/provider/CodexProvider.ts)
 and [provider/model picker](https://github.com/pingdotgg/t3code/blob/main/apps/web/src/components/chat/ProviderModelPicker.tsx).

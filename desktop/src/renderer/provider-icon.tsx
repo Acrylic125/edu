@@ -1,4 +1,3 @@
-import { Route } from "lucide-react"
 import { z } from "zod"
 import { ProviderIdSchema } from "../shared/contracts"
 import codexIcon from "./assets/providers/codex.svg"
@@ -15,7 +14,6 @@ export function ProviderIcon({ provider, className }: {
   provider: z.infer<typeof ProviderIdSchema>
   className: string
 }) {
-  if (provider === "openrouter") return <Route aria-hidden="true" className={className} />
   return <img src={providerIcons[provider]} alt="" className={`${className} ${provider === "codex" ? "dark:brightness-0 dark:invert" : ""}`} />
 }
 
