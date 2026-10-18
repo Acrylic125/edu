@@ -1,6 +1,8 @@
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
+import { visualizationInstructions, parseVisualizationSettings } from "../src/shared/visualization"
+import { prepareVisualizationMarkdown } from "../src/renderer/visualization/markdown"
 import { StudyMarkdown } from "../src/renderer/markdown"
 
 const material = {
@@ -14,11 +16,41 @@ vi.mock("../src/renderer/mermaid-diagram", () => ({
     createElement("div", { "data-diagram": definition }),
 }))
 
+vi.mock("../src/renderer/visualization/plotly-visualization", () => ({
+  PlotlyVisualization: ({ source, pending }: { source: string; pending: boolean }) =>
+    createElement("figure", { "aria-label": pending ? "Preparing visualization" : "Plot", "data-source": source }),
+}))
+
 function render(text: string) {
   return renderToStaticMarkup(createElement(StudyMarkdown, { text }))
 }
 
 describe("study Markdown", () => {
+  it("renders visualization blocks without changing payload strings or surrounding Markdown", () => {
+    const source = String.raw`<visualization settings='{"type":"Plotly.js","data":[{"type":"scatter","x":[0],"y":[1],"text":["\\(x\\) Sourced from: Lecture 6.pdf, pg. 2 <x> />"]}]}' />`
+    const html = renderToStaticMarkup(createElement(StudyMarkdown, { text: `Before **plot**\n\n${source}\n\nAfter`, materials: [material] }))
+    expect(html).toContain('<figure aria-label="Plot"')
+    expect(html).toContain('Before <strong>plot</strong>')
+    expect(html).toContain('<p>After</p>')
+    expect(html).not.toContain('<pre>')
+    expect(html).not.toContain('edu-material://')
+    expect(html).toContain('Sourced from: Lecture 6.pdf, pg. 2 &lt;x&gt; /&gt;')
+    expect(render("<visualization settings='{\n")).toContain('aria-label="Preparing visualization"')
+    expect(render(`\`\`\`html\n${source}\n\`\`\``)).not.toContain('<figure')
+    expect(render('<script>alert(1)</script>')).not.toContain('<script>')
+  })
+
+  it("renders both canonical agent examples with valid settings", () => {
+    const examples = prepareVisualizationMarkdown(visualizationInstructions).blocks
+    expect(examples).toHaveLength(2)
+    for (const block of examples) {
+      const match = /settings='([\s\S]*)' \/>/.exec(block.source)
+      expect(match).not.toBeNull()
+      expect(parseVisualizationSettings(match![1]).success).toBe(true)
+      expect(render(block.source)).toContain('<figure aria-label="Plot"')
+    }
+  })
+
   it.each([
     String.raw`The limit is \(\lim_{x\to1} f(x)=2\).`,
     String.raw`The limit is $\lim_{x\to1} f(x)=2$.`,

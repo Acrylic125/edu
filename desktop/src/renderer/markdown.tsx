@@ -1,10 +1,12 @@
-import { isValidElement } from "react"
-import Markdown, { defaultUrlTransform } from "react-markdown"
+import { createContext, useContext, isValidElement, type ComponentPropsWithoutRef } from "react"
+import Markdown, { defaultUrlTransform, type ExtraProps } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import rehypeHighlight from "rehype-highlight"
 import "katex/dist/katex.min.css"
+import { prepareVisualizationMarkdown, visualizationMarkdown } from "./visualization/markdown"
+import { PlotlyVisualization } from "./visualization/plotly-visualization"
 import { MermaidDiagram } from "./mermaid-diagram"
 import { MediaPreview } from "./media-preview"
 import { normalizeMathDelimiters } from "./normalize-math"
@@ -12,6 +14,18 @@ import { linkSourceCitations } from "./source-citations"
 import { resolveMaterialLink } from "../shared/material-links"
 import { sectionAnchors } from "./section-anchors"
 import type { Snapshot } from "../shared/contracts"
+
+const VisualizationBlocks = createContext<ReturnType<typeof prepareVisualizationMarkdown>["blocks"]>([])
+
+function VisualizationMarkdownDiv({ node, children }: ComponentPropsWithoutRef<"div"> & ExtraProps) {
+  const blocks = useContext(VisualizationBlocks)
+  const index = node?.properties["data-visualization-index"]
+  if (typeof index === "number" && blocks[index]) {
+    const block = blocks[index]
+    return <PlotlyVisualization source={block.source} pending={block.pending} />
+  }
+  return <div>{children}</div>
+}
 
 export function StudyMarkdown({
   text,
@@ -26,8 +40,10 @@ export function StudyMarkdown({
   materials?: Snapshot["topics"][number]["materials"]
   onOpenMaterial?: (id: string) => void
 }) {
+  const prepared = prepareVisualizationMarkdown(text)
   return (
     <div className="markdown">
+      <VisualizationBlocks.Provider value={prepared.blocks}>
       <Markdown
         skipHtml
         urlTransform={(url) =>
@@ -35,9 +51,10 @@ export function StudyMarkdown({
             ? url
             : defaultUrlTransform(url)
         }
-        remarkPlugins={[remarkGfm, remarkMath, sectionAnchors]}
+        remarkPlugins={[remarkGfm, remarkMath, sectionAnchors, visualizationMarkdown(prepared)]}
         rehypePlugins={[rehypeKatex, [rehypeHighlight, { plainText: ["mermaid"] }]]}
         components={{
+          div: VisualizationMarkdownDiv,
           img: ({ src, alt, title }) => (
             <MediaPreview
               label={alt || "Image preview"}
@@ -132,8 +149,9 @@ export function StudyMarkdown({
           },
         }}
       >
-        {normalizeMathDelimiters(linkSourceCitations(text, materials))}
+        {normalizeMathDelimiters(linkSourceCitations(prepared.text, materials))}
       </Markdown>
+      </VisualizationBlocks.Provider>
     </div>
   )
 }
