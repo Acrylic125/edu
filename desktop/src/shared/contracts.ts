@@ -3,6 +3,13 @@ import { TopicStateSchema, TopicMutationSchema, TopicPartSchema } from "./topic-
 
 export const IdSchema = z.string().uuid()
 export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity", "openrouter"])
+export const providerDefaultModels = {
+  codex: "gpt-6-luna",
+  claude: "claude-haiku-5-5",
+  antigravity: "gemini-3.8-flash-high",
+  openrouter: "openrouter/auto",
+} satisfies Record<z.infer<typeof ProviderIdSchema>, string>
+
 export const ProviderSettingsSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string().trim().min(1).max(60),
@@ -53,9 +60,12 @@ export const RunnerInputSchema = z.object({
   name: z.string().trim().min(1).max(60),
   provider: ProviderIdSchema.default("openrouter"),
   reasoningEffort: ReasoningEffortSchema.optional(),
-  model: z.string().trim().min(1).max(150).default("openrouter/auto"),
+  model: z.string().trim().min(1).max(150).default("default"),
+}).overwrite((runner) => {
+  if (runner.model !== "default") return runner
+  return { ...runner, model: providerDefaultModels[runner.provider] }
 })
-export const RunnerSchema = RunnerInputSchema.extend({ id: IdSchema })
+export const RunnerSchema = RunnerInputSchema.safeExtend({ id: IdSchema })
 export const ResponseQuestionSchema = z.object({
   prompt: z.string().trim().min(1).max(20_000),
   options: z.array(z.string().trim().min(1).max(1000)).min(2).max(6)
@@ -68,6 +78,7 @@ export const MessageSchema = z.object({
   createdAt: z.string().datetime(),
   durationMs: z.number().nonnegative().optional(),
   responseQuestion: ResponseQuestionSchema.optional(),
+  materialIds: z.array(IdSchema).optional(),
   topicIds: z.array(IdSchema).default([]),
 })
 export const MaterialSchema = z.object({
@@ -212,6 +223,7 @@ export const CreateChatSchema = z.object({ runnerId: IdSchema })
 export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
+  materialIds: z.array(IdSchema).optional(),
   content: z.string().trim().min(1).max(30_000),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
@@ -224,6 +236,17 @@ export const MaterialDraftSchema = MaterialSchema.pick({ id: true, name: true })
 export const MaterialDraftIdsSchema = z.array(IdSchema).max(12)
 export const DroppedMaterialsSchema = z.object({
   paths: z.array(z.string().min(1)).min(1).max(12),
+  draftIds: MaterialDraftIdsSchema.default([]),
+})
+export const PastedImageSchema = z.object({
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  data: z.instanceof(Uint8Array).refine(
+    (data) => data.byteLength > 0 && data.byteLength <= 8 * 1024 * 1024,
+    "Use images smaller than 8 MB.",
+  ),
+})
+export const PastedMaterialsSchema = z.object({
+  images: z.array(PastedImageSchema).min(1).max(12),
   draftIds: MaterialDraftIdsSchema.default([]),
 })
 export const ImportMaterialsSchema = z.object({
@@ -304,6 +327,8 @@ export const Channel = {
   importMaterials: "prune:import-materials",
   selectMaterials: "prune:select-materials",
   dropMaterials: "prune:drop-materials",
+  pasteMaterials: "prune:paste-materials",
+  discardMaterials: "prune:discard-materials",
   exportNotes: "prune:export-notes",
   openDiagnostics: "prune:open-diagnostics",
   openWorkspace: "prune:open-workspace",
@@ -341,6 +366,8 @@ export type DesktopBridge = {
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
   selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
+  pasteMaterials: (images: z.infer<typeof PastedImageSchema>[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
+  discardMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
   importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>, draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
   exportNotes: (topicId: string) => Promise<void>
   openDiagnostics: (chatId: string) => Promise<void>

@@ -52,9 +52,7 @@ export async function runCodexTutorTurn(
   try {
     await client.initialize()
     const models = await readCodexModels(client)
-    let model = models.find((entry) => entry.id === job.runner.model)
-    if (job.runner.model === "default")
-      model = models.find((entry) => entry.isDefault) ?? models[0]
+    const model = models.find((entry) => entry.id === job.runner.model)
     if (!model)
       throw new Error(
         "This Codex model is unavailable. Choose a model from the provider catalog.",

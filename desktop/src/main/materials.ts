@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { constants } from "node:fs"
-import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises"
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { basename, extname, join } from "node:path"
 import { dialog } from "electron"
 import { extractText, getDocumentProxy } from "unpdf"
 import { OfficeGenerator, OfficeParser } from "officeparser"
 import { z } from "zod"
-import { MaterialOwnerSchema, MaterialSchema } from "../shared/contracts"
+import { MaterialOwnerSchema, MaterialSchema, PastedImageSchema } from "../shared/contracts"
 import { WorkspaceRepository } from "./workspace"
 
 async function selectMaterialFiles() {
@@ -42,8 +43,8 @@ async function selectMaterialFiles() {
 }
 
 export class MaterialDrafts {
-  // Keep native paths in the main process; the renderer imports picker or dropped files by draft ID.
-  private sources = new Map<string, string>()
+  // Clipboard images have no native path, so keep their bytes until the draft is imported.
+  private sources = new Map<string, { name: string; source: string | Uint8Array }>()
 
   async select(draftIds: string[]) {
     return this.add(draftIds, await selectMaterialFiles())
@@ -53,7 +54,7 @@ export class MaterialDrafts {
     const drafts = draftIds.map((id) => {
       const source = this.sources.get(id)
       if (!source) throw new Error("Select the learning materials again.")
-      return { id, name: basename(source) }
+      return { id, name: source.name }
     })
     if (drafts.length + sources.length > 12)
       throw new Error("Add up to 12 materials at a time.")
@@ -71,8 +72,29 @@ export class MaterialDrafts {
     }
     for (const source of sources) {
       const id = randomUUID()
-      this.sources.set(id, source)
+      this.sources.set(id, { name: basename(source), source })
       drafts.push({ id, name: basename(source) })
+    }
+    return drafts
+  }
+
+  discard(draftIds: string[]) {
+    for (const id of draftIds) this.sources.delete(id)
+  }
+
+  async paste(draftIds: string[], images: z.infer<typeof PastedImageSchema>[]) {
+    const drafts = await this.add(draftIds, [])
+    const validated = PastedImageSchema.array().min(1).max(12).parse(images)
+    if (drafts.length + validated.length > 12)
+      throw new Error("Add up to 12 materials at a time.")
+    for (const image of validated) {
+      const id = randomUUID()
+      let extension = "png"
+      if (image.mimeType === "image/jpeg") extension = "jpg"
+      if (image.mimeType === "image/webp") extension = "webp"
+      const name = `pasted-image-${id}.${extension}`
+      this.sources.set(id, { name, source: image.data })
+      drafts.push({ id, name })
     }
     return drafts
   }
@@ -83,8 +105,24 @@ export class MaterialDrafts {
       if (!source) throw new Error("Select the learning materials again.")
       return source
     })
-    await importMaterials(repository, owner, sources)
-    for (const id of draftIds) this.sources.delete(id)
+    let temporaryDirectory: string | undefined
+    try {
+      const paths: string[] = []
+      for (const { name, source } of sources) {
+        if (typeof source === "string") {
+          paths.push(source)
+          continue
+        }
+        temporaryDirectory ??= await mkdtemp(join(tmpdir(), "edu-pasted-materials-"))
+        const path = join(temporaryDirectory, name)
+        await writeFile(path, source)
+        paths.push(path)
+      }
+      await importMaterials(repository, owner, paths)
+      for (const id of draftIds) this.sources.delete(id)
+    } finally {
+      if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true })
+    }
   }
 }
 

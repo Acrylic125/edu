@@ -4,7 +4,7 @@ import { z } from "zod"
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "../providers/cli"
-import type { WorkerJob, Diagnostic } from "../shared/contracts"
+import { providerDefaultModels, type WorkerJob, type Diagnostic } from "../shared/contracts"
 import { stripTopicMentions } from "../shared/topic-mentions"
 
 const TitleSchema = z.object({
@@ -24,8 +24,7 @@ export async function generateTopicTitle(
   if (!input.trim()) throw new Error("A suggested topic is needed to generate a title.")
   if (job.cli) {
     await prepareCliWorkspace(job.cli)
-    let model = "default"
-    if (job.cli.provider === "claude") model = "haiku"
+    const model = providerDefaultModels[job.cli.provider]
     let timeout = 30_000
     // Antigravity can spend the short title deadline initializing its session.
     if (job.cli.provider === "antigravity") timeout = 120_000

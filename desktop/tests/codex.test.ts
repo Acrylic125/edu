@@ -13,6 +13,8 @@ import { z } from "zod"
 import { afterEach, expect, test, vi } from "vitest"
 import { CodexAppServer } from "../src/providers/codex-rpc"
 import { CodexProvider, readCodexModels } from "../src/providers/codex"
+import { ProviderRegistry } from "../src/providers/registry"
+import { shell } from "electron"
 import { runCodexTutorTurn } from "../src/runners/codex"
 import { generateTopicTitle } from "../src/runners/title"
 import { createTutorSession } from "../src/runners/tutor"
@@ -23,6 +25,7 @@ import { TurnTelemetry } from "../src/runners/telemetry"
 
 const directories: string[] = []
 const clients: CodexAppServer[] = []
+vi.mock("electron", () => ({ shell: { openExternal: vi.fn().mockResolvedValue(undefined) }, safeStorage: {} }))
 afterEach(async () => {
   for (const client of clients.splice(0)) client.close()
   await Promise.all(
@@ -451,6 +454,79 @@ test("Codex sign-in updates the provider account and logout clears it", async ()
     expect(provider.state.account).toBeUndefined()
   } finally {
     provider.close()
+  }
+})
+
+test.each(["connect", "refresh"] as const)("Codex %s recreates a closed provider with the same configuration", async (operation) => {
+  const { job, home } = await fixture()
+  if (!job.codex) throw new Error("Missing fixture connection")
+  const registry = new ProviderRegistry(home, "unused", () => {}, [{
+    id: "codex", displayName: "ChatGPT", binaryPath: job.codex.executable, enabled: true,
+  }])
+  const previous = registry.codex
+  try {
+    await registry.connect("codex")
+    expect(previous.state.connecting).toBe(true)
+    previous.close()
+    vi.mocked(shell.openExternal).mockClear()
+    await registry[operation]("codex")
+    expect(registry.codex).not.toBe(previous)
+    expect(registry.codex.connection).toEqual(previous.connection)
+    if (operation === "connect") {
+      expect(registry.codex.state.connecting).toBe(true)
+      expect(shell.openExternal).toHaveBeenCalledTimes(1)
+      expect(shell.openExternal).toHaveBeenCalledWith("https://auth.openai.com/authorize?client=fixture")
+    } else {
+      expect(registry.codex.state.error).toBeUndefined()
+      expect(registry.codex.state.models[0]?.id).toBe("test-model")
+    }
+  } finally {
+    registry.close()
+  }
+})
+
+test("Refresh reconciles a provider closed while its previous check is pending", async () => {
+  const { job, home } = await fixture()
+  if (!job.codex) throw new Error("Missing fixture connection")
+  const registry = new ProviderRegistry(home, job.codex.executable, () => {})
+  try {
+    const checking = registry.refresh("codex")
+    const previous = registry.codex
+    previous.close()
+    await registry.refresh("codex")
+    await checking
+    expect(registry.codex).not.toBe(previous)
+    expect(registry.codex.state.error).toBeUndefined()
+    expect(registry.codex.state.models[0]?.id).toBe("test-model")
+  } finally {
+    registry.close()
+  }
+})
+
+test("a closed registry rejects Connect without reviving Codex", async () => {
+  const registry = new ProviderRegistry("/unused", "unused", () => {})
+  const previous = registry.codex
+  registry.close()
+  await expect(registry.connect("codex")).rejects.toThrow("shutting down")
+  await registry.refresh("codex")
+  expect(registry.codex).toBe(previous)
+})
+
+test("Connect waiting for a check cannot revive Codex after shutdown", async () => {
+  const registry = new ProviderRegistry("/unused", "unused", () => {})
+  let finish = () => {}
+  const pending = new Promise<void>((resolve) => { finish = resolve })
+  const refresh = vi.spyOn(registry.codex, "refresh").mockReturnValue(pending)
+  try {
+    const checking = registry.refresh("codex")
+    const connecting = registry.connect("codex")
+    registry.close()
+    finish()
+    await checking
+    await expect(connecting).rejects.toThrow("shutting down")
+  } finally {
+    refresh.mockRestore()
+    registry.close()
   }
 })
 

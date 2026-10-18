@@ -27,6 +27,24 @@ import { WorkspaceResizeHandle } from "./workspace-resize-handle"
 
 export { TopicNavigation, TopicNavigationItem } from "./topic-navigation"
 
+let activeTransition: ViewTransition | undefined
+
+export function transitionWorkspace(update: () => void, type = "workspace-navigation") {
+  if (!document.startViewTransition || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    update()
+    return
+  }
+
+  // Finish stale snapshots on rapid navigation while still applying every requested update.
+  activeTransition?.skipTransition()
+  activeTransition = document.startViewTransition({
+    update: () => flushSync(update),
+    types: [type],
+  })
+  // Skipping an unfinished capture rejects ready; the state update still completes.
+  void activeTransition.ready.catch(() => {})
+}
+
 const WorkspaceLayoutContext = createContext<{
   sidebarOpen: boolean
   chatOpen: boolean
@@ -92,17 +110,6 @@ export function WorkspaceFrame({
     setChatOpen(false)
   }
 
-  function updatePanels(update: () => void) {
-    if (
-      !document.startViewTransition ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) {
-      update()
-      return
-    }
-    document.startViewTransition(() => flushSync(update))
-  }
-
   return (
     <WorkspaceLayoutContext.Provider
       value={{
@@ -150,7 +157,7 @@ export function WorkspaceFrame({
               aria-expanded={!sidebarCollapsed}
               aria-controls={sidebarId}
               className="hidden size-8 rounded-lg text-muted-foreground md:inline-flex"
-              onClick={() => updatePanels(() => setSidebarCollapsed(!sidebarCollapsed))}
+              onClick={() => transitionWorkspace(() => setSidebarCollapsed(!sidebarCollapsed), "workspace-panels")}
             >
               <PanelLeftIcon className="size-4" />
             </Button>
@@ -168,10 +175,10 @@ export function WorkspaceFrame({
                   aria-expanded={!documentCollapsed}
                   aria-controls="learning-document"
                   className="hidden size-8 rounded-lg text-muted-foreground lg:inline-flex"
-                  onClick={() => updatePanels(() => {
+                  onClick={() => transitionWorkspace(() => {
                     setCollapsedDocumentId(documentCollapsed ? null : workspaceId)
                     setCollapsedChatId(null)
-                  })}
+                  }, "workspace-panels")}
                 >
                   <PanelsTopLeftIcon className="size-4" />
                 </Button>
@@ -183,10 +190,10 @@ export function WorkspaceFrame({
                   aria-expanded={!chatCollapsed}
                   aria-controls="learning-chat"
                   className="hidden size-8 rounded-lg text-muted-foreground lg:inline-flex"
-                  onClick={() => updatePanels(() => {
+                  onClick={() => transitionWorkspace(() => {
                     setCollapsedChatId(chatCollapsed ? null : workspaceId)
                     setCollapsedDocumentId(null)
-                  })}
+                  }, "workspace-panels")}
                 >
                   <PanelRightIcon className="size-4" />
                 </Button>
@@ -241,7 +248,7 @@ export function WorkspaceFrame({
               style={{ overflow: "visible" }}
             >
               {banner}
-              <div className="flex min-h-0 flex-1">{children}</div>
+              <div className="workspace-screen-content flex min-h-0 flex-1">{children}</div>
             </Panel>
           </Group>
         </div>
@@ -265,6 +272,7 @@ export function WorkspaceSidebar({
 }) {
   const { sidebarOpen, sidebarCollapsed, setSidebarOpen, sidebarId, navigationName } =
     useWorkspaceLayout()
+  const desktopNavigation = useWorkspaceMedia("(min-width: 48rem)")
   return (
     <>
       {sidebarOpen ? (
@@ -272,15 +280,17 @@ export function WorkspaceSidebar({
           variant="plain"
           size="auto"
           aria-label={`Close ${navigationName}`}
-          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          className="workspace-drawer-backdrop fixed inset-0 z-30 bg-black/60 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       ) : null}
       <aside
         id={sidebarId}
         aria-label={label}
+        data-open={sidebarOpen}
+        inert={desktopNavigation ? sidebarCollapsed : !sidebarOpen}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col bg-sidebar transition-transform duration-200 motion-reduce:transition-none md:static md:h-full md:w-full md:translate-x-0 md:rounded-[1.75rem]",
+          "workspace-sidebar-pane fixed inset-y-0 left-0 z-40 flex w-[min(19rem,85vw)] shrink-0 flex-col bg-sidebar md:static md:h-full md:w-full md:translate-x-0 md:rounded-[1.75rem]",
           sidebarOpen
             ? "visible translate-x-0"
             : "invisible -translate-x-full md:visible",
@@ -381,7 +391,7 @@ export function WorkspacePanes({
           variant="plain"
           size="auto"
           aria-label="Close chat"
-          className="fixed inset-0 z-30 bg-black/60 lg:hidden"
+          className="workspace-drawer-backdrop fixed inset-0 z-30 bg-black/60 lg:hidden"
           onClick={() => setChatOpen(false)}
         />
       ) : null}
@@ -397,10 +407,11 @@ export function WorkspacePanes({
         <aside
           id="learning-chat"
           aria-label={chatLabel}
-          aria-hidden={!chat}
-          inert={!chat}
+          data-open={!!chat && chatOpen}
+          aria-hidden={!chat || (desktopPanes ? chatCollapsed : !chatOpen)}
+          inert={!chat || (desktopPanes ? chatCollapsed : !chatOpen)}
           className={cn(
-            "workspace-chat-pane fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col overflow-hidden bg-sidebar transition-transform duration-200 motion-reduce:transition-none lg:static lg:h-full lg:w-full lg:translate-x-0 lg:rounded-[1.75rem]",
+            "workspace-chat-pane fixed inset-y-0 right-0 z-40 flex w-[min(26rem,100vw)] flex-col overflow-hidden bg-sidebar lg:static lg:h-full lg:w-full lg:translate-x-0 lg:rounded-[1.75rem]",
             chat && chatOpen
               ? "visible translate-x-0"
               : "invisible translate-x-full lg:visible",

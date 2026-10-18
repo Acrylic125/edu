@@ -194,6 +194,12 @@ export class RunnerManager {
           throw new Error("There is no draft plan to confirm.")
         if (!topicIds.includes(topic.id)) topicIds.push(topic.id)
       }
+      const attachmentMaterials = [
+        ...chat.materials,
+        ...this.repository.stateSnapshot.topics.filter((topic) => topicIds.includes(topic.id)).flatMap((topic) => topic.materials),
+      ]
+      if (input.materialIds?.some((id) => !attachmentMaterials.some((material) => material.id === id && material.kind === "image")))
+        throw new Error("An attached image is not available in this chat.")
       this.start(runnerId, chat.id)
       const trace = new TurnTrace(
         join(this.repository.directory, "chats", chat.id, "diagnostics"),
@@ -230,10 +236,15 @@ export class RunnerManager {
         )
         if (confirmed) confirmed.planConfirmed = true
         if (current.providerSession) current.providerSession.status = "pending"
+        const sentMaterialIds = new Set(current.messages.flatMap((message) => message.materialIds ?? []))
+        const materialIds = input.materialIds ?? attachmentMaterials
+          .filter((material) => material.kind === "image" && !sentMaterialIds.has(material.id))
+          .map((material) => material.id)
         current.messages.push({
           id: randomUUID(),
           role: "user",
           content: input.content,
+          materialIds,
           createdAt: new Date().toISOString(),
           topicIds,
         })

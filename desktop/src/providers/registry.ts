@@ -6,6 +6,7 @@ import { ModelAccount } from "../main/account"
 import { CodexProvider } from "./codex"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, resolveCliExecutable, runCliCommand } from "./cli"
 import {
+  providerDefaultModels,
   ProviderModelSchema,
   ProviderStatusSchema,
   ProviderSettingsSchema,
@@ -45,7 +46,7 @@ export class ProviderRegistry {
   private cliAbort = new AbortController()
   private cliStates = ["claude", "antigravity"].map((id) => ProviderStatusSchema.parse({
     id, name: id === "claude" ? "Claude" : "Antigravity", connected: false,
-    models: [{ id: "default", name: "Default model", isDefault: true }],
+    models: [],
   }))
   private openrouterState = ProviderStatusSchema.parse({
     id: "openrouter",
@@ -108,13 +109,29 @@ export class ProviderRegistry {
     this.pollingTimer.unref()
   }
 
+  private reconcileCodex() {
+    if (this.closed) throw new Error("EdU is shutting down.")
+    if (!this.codex.closed) return
+    this.codex = new CodexProvider(
+      this.codex.connection,
+      this.notify,
+      (url) => shell.openExternal(url),
+    )
+  }
+
   async refresh(id?: z.infer<typeof ProviderIdSchema>) {
     if (this.closed) return
     let ids = ProviderIdSchema.options
     if (id) ids = [id]
-    await Promise.all(ids.map((id) => {
+    await Promise.all(ids.map(async (id) => {
       const pending = this.refreshTasks.get(id)
-      if (pending) return pending
+      if (pending) {
+        await pending
+        const recovery = this.refreshTasks.get(id)
+        if (recovery) return recovery
+        if (this.closed || id !== "codex" || !this.codex.closed) return
+      }
+      if (id === "codex") this.reconcileCodex()
       if (this.disconnecting.has(id) || this.statuses.some((provider) => provider.id === id && provider.connecting)) return
       const task = (async () => {
         try {
@@ -162,7 +179,11 @@ export class ProviderRegistry {
         const status = z.object({ loggedIn: z.boolean(), authMethod: z.string().optional(), email: z.string().optional() }).parse(JSON.parse(await runCliCommand(connection, ["auth", "status"], "", undefined, 15_000, this.cliAbort.signal)))
         provider.connected = status.loggedIn && status.authMethod === "claude.ai" && this.settings.some((item) => item.id === "claude" && item.enabled)
         provider.account = status.email
-        provider.models = ["default", "sonnet", "opus", "haiku"].map((id) => ProviderModelSchema.parse({ id, name: id === "default" ? "Default model" : id[0].toUpperCase() + id.slice(1), isDefault: id === "default" }))
+        provider.models = [
+          { id: providerDefaultModels.claude, name: "Haiku 5.5" },
+          { id: "sonnet", name: "Sonnet" },
+          { id: "opus", name: "Opus" },
+        ].map((model) => ProviderModelSchema.parse(model))
       } else {
         const output = await runCliCommand(connection, ["models"], "", undefined, 15_000, this.cliAbort.signal)
         const models = output.split("\n").flatMap((line) => {
@@ -170,7 +191,7 @@ export class ProviderRegistry {
           if (!match) return []
           return [ProviderModelSchema.parse({ id: match[1], name: match[2] })]
         })
-        provider.models = [ProviderModelSchema.parse({ id: "default", name: "Default model", isDefault: true }), ...models]
+        provider.models = models
         if (this.settings.some((item) => item.id === "antigravity" && item.enabled)) {
           // /usage refreshes account quotas without generating a model response or starting sign-in.
           const usage = await runCliCommand(connection, ["--print", "/usage"], "", undefined, 15_000, this.cliAbort.signal)
@@ -276,8 +297,10 @@ export class ProviderRegistry {
   }
 
   async connect(id: z.infer<typeof ProviderIdSchema>) {
+    if (this.closed) throw new Error("EdU is shutting down.")
     if (this.disconnecting.has(id)) throw new Error("Wait for this provider to finish disconnecting.")
     await this.refreshTasks.get(id)
+    if (this.closed) throw new Error("EdU is shutting down.")
     if (id === "claude" || id === "antigravity") {
       const provider = this.cliStates.find((item) => item.id === id)
       if (!provider) throw new Error("Provider not found.")
@@ -318,6 +341,7 @@ export class ProviderRegistry {
       return
     }
     if (id === "codex") {
+      this.reconcileCodex()
       await this.codex.connect()
       return
     }
@@ -388,12 +412,6 @@ export class ProviderRegistry {
   ) {
     const provider = this.statuses.find((item) => item.id === input.provider)
     if (!provider) throw new Error("Provider not found.")
-    if (
-      input.provider !== "openrouter" &&
-      input.model === "default" &&
-      !input.reasoningEffort
-    )
-      return
     const model = provider.models.find((item) => item.id === input.model)
     if (!model && input.provider !== "openrouter")
       throw new Error(

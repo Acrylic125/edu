@@ -38,19 +38,22 @@ import {
   WorkspacePanes,
   WorkspaceSidebar,
   useWorkspaceLayout,
+  transitionWorkspace,
 } from "@edu/ui/workspace"
 import { DesktopSettings, ProviderConnectionSetup } from "./settings/settings"
 import appIcon from "./assets/app-icon.png"
 import { useWorkspace, desktop, desktopErrorMessage } from "./store"
 import { useChatTabs } from "./chat-tabs"
 import { useTopicViews } from "./topic-views"
+import { WorkspaceLoading, WorkspaceLoadingSidebar } from "./workspace-loading"
 import { StudyMarkdown } from "./markdown"
+import { MediaPreview } from "./media-preview"
 import { TopicDirectory } from "./topic-directory"
 import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@edu/ui/context-menu"
 import { z } from "zod"
-import { type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
+import { providerDefaultModels, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
 import { topicSourceMaterials } from "../shared/material-links"
@@ -62,6 +65,7 @@ export function App() {
   const { activeId: topicId, select: selectTopic } = useTopicViews()
   const { activeId: chatId, openIds, select: selectChat, close: closeChat } = useChatTabs()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [imageDrafts, setImageDrafts] = useState<Record<string, (z.infer<typeof MaterialDraftSchema> & { previewUrl: string })[]>>({})
   const [topicMaterials, setTopicMaterials] = useState<z.infer<typeof MaterialDraftSchema>[]>([])
   // Lexical owns the editor content, so replacing a draft from outside remounts its composer.
   const [resets, setResets] = useState<Record<string, number>>({})
@@ -101,7 +105,7 @@ export function App() {
     )?.id
   const newRunnerConfig = snapshot.runners.find((item) => item.id === newRunner)
   const newModel = runnerChoice ??
-    newRunnerConfig ?? { provider: "codex" as const, model: "default" }
+    newRunnerConfig ?? { provider: "codex" as const, model: providerDefaultModels.codex }
   const chatRunnerConfig = snapshot.runners.find(
     (item) => item.id === (chat?.runnerId ?? newRunner),
   )
@@ -194,9 +198,16 @@ export function App() {
   }
 
   function openTopic(id?: string) {
-    selectTopic(id)
-    setView("learn")
-    setError(null)
+    if (view === "learn" && id === topicId) {
+      setError(null)
+      return
+    }
+
+    transitionWorkspace(() => {
+      selectTopic(id)
+      setView("learn")
+      setError(null)
+    })
   }
 
   function openChat(id?: string) {
@@ -233,6 +244,11 @@ export function App() {
     if (chat) return chat.id
     const id = await desktop().createChat({ runnerId: await newRunnerId() })
     openChat(id)
+    setImageDrafts((current) => ({
+      ...current,
+      "new-chat": [],
+      [id]: current["new-chat"] ?? [],
+    }))
     setDrafts((current) => ({
       ...current,
       "new-chat": "",
@@ -244,9 +260,11 @@ export function App() {
   async function sendChat() {
     let content = (drafts[chatKey] ?? "").trim()
     if (chatRunnerBusy || busy || !chatModelConnected) return
+    const pendingImages = imageDrafts[chatKey] ?? []
     if (!content) {
-      if (!chat?.materials.length) return
-      content = `Help me understand the attached materials: ${chat.materials.map((material) => material.name).join(", ")}.`
+      const materials = [...(chat?.materials ?? []), ...pendingImages]
+      if (materials.length === 0) return
+      content = `Help me understand the attached materials: ${materials.map((material) => material.name).join(", ")}.`
     }
     let sentId = chatKey
     const submittedDraft = drafts[chatKey] ?? ""
@@ -254,6 +272,10 @@ export function App() {
     try {
       const success = await perform(async () => {
         sentId = await ensureChat()
+        if (pendingImages.length > 0) {
+          await desktop().importMaterials({ kind: "chat", id: sentId }, pendingImages.map((image) => image.id))
+          setImageDrafts((current) => ({ ...current, [chatKey]: [], [sentId]: [] }))
+        }
         await desktop().send({ chatId: sentId, content, openedTopicId: topic?.id })
       })
       // Typing stays available during submission; never erase edits made while IPC is pending.
@@ -292,20 +314,26 @@ export function App() {
       const runner = await newRunnerId()
       const createdTopic = await desktop().createTopic({ title: content, runnerId: runner })
       const title = (await desktop().snapshot()).topics.find((item) => item.id === createdTopic)?.title ?? "New topic"
+      let materialIds: string[] = []
       if (topicMaterials.length > 0) {
         await desktop().importMaterials({ kind: "topic", id: createdTopic }, topicMaterials.map((material) => material.id))
+        const imported = (await desktop().snapshot()).topics.find((item) => item.id === createdTopic)
+        materialIds = imported?.materials.filter((material) => material.kind === "image").map((material) => material.id) ?? []
         setTopicMaterials([])
+        setImageDrafts((current) => ({ ...current, "new-topic": [] }))
       }
       const chatId = await desktop().createChat({ runnerId: runner })
       createdChat = chatId
       const message = `${topicMention(createdTopic, title)} ${content}`
       submittedMessage = message
-      selectTopic(createdTopic)
-      selectChat(chatId)
+      transitionWorkspace(() => {
+        selectTopic(createdTopic)
+        selectChat(chatId)
+      })
       // The new-topic composer is replaced by the topic, so a failed send keeps the request in its chat.
       replaceDraft("new-topic", "")
       replaceDraft(chatId, message)
-      await desktop().send({ chatId, content: message, openedTopicId: createdTopic })
+      await desktop().send({ chatId, content: message, openedTopicId: createdTopic, materialIds })
     })
     setSubmitting(undefined)
     if (success && createdChat && draftValues.current[createdChat] === submittedMessage) replaceDraft(createdChat, "")
@@ -321,7 +349,8 @@ export function App() {
   function composer(mode: "topic" | "chat") {
     const key = mode === "topic" ? "new-topic" : chatKey
     const existing = mode === "chat" ? chat : undefined
-    const materials = mode === "topic" ? topicMaterials : existing?.materials ?? []
+    const pendingImages = imageDrafts[key] ?? []
+    const materials = mode === "topic" ? topicMaterials : [...(existing?.materials ?? []), ...pendingImages]
     const draft = drafts[key] ?? ""
     let runnerBusy = chatRunnerBusy
     let model = chatModel
@@ -352,6 +381,35 @@ export function App() {
         await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
       })
     }
+    async function pasteImages(files: File[]) {
+      await perform(async () => {
+        if (files.length > 12) throw new Error("Add up to 12 materials at a time.")
+        if (files.some((file) => file.size > 8 * 1024 * 1024))
+          throw new Error("Use images smaller than 8 MB.")
+        const images = await Promise.all(files.map(async (file) => {
+          const previewUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              if (typeof reader.result === "string") resolve(reader.result)
+              else reject(new Error("Could not preview this image."))
+            }
+            reader.onerror = () => reject(new Error("Could not read this image. Try pasting it again."))
+            reader.readAsDataURL(file)
+          })
+          return { mimeType: file.type, data: new Uint8Array(await file.arrayBuffer()), previewUrl }
+        }))
+        const validated = PastedImageSchema.array().parse(images)
+        let draftIds = pendingImages.map((image) => image.id)
+        if (mode === "topic") draftIds = topicMaterials.map((material) => material.id)
+        const materials = await desktop().pasteMaterials(validated, draftIds)
+        const added = materials.slice(draftIds.length).map((material, index) => ({
+          ...material,
+          previewUrl: images[index].previewUrl,
+        }))
+        setImageDrafts((current) => ({ ...current, [key]: [...(current[key] ?? []), ...added] }))
+        if (mode === "topic") setTopicMaterials(materials)
+      })
+    }
     const provider = snapshot.providers.find((provider) => provider.id === model.provider)
     const providerDisconnected = !provider?.connected && !provider?.loading
     const submittingComposer = submitting === key
@@ -365,6 +423,13 @@ export function App() {
       <ChatComposerLayout
         aria-label={mode === "topic" ? "New topic composer" : "Chat composer"}
         newTopicMode={mode === "topic"}
+        onPasteCapture={(event) => {
+          const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"))
+          if (images.length === 0) return
+          event.preventDefault()
+          event.stopPropagation()
+          if (!attachmentBusy) void pasteImages(images)
+        }}
         onDragEnterCapture={(event) => {
           if (!event.dataTransfer.types.includes("Files")) return
           event.preventDefault()
@@ -409,13 +474,50 @@ export function App() {
                 <span>{provider?.name ?? model.provider} is disconnected. Connect it or choose a connected provider before sending.</span>
                 <button type="button" className="shrink-0 font-medium underline underline-offset-2" onClick={() => {
                   setSetupProvider(model.provider)
-                  setView("settings")
+                  transitionWorkspace(() => setView("settings"))
                 }}>Connect provider</button>
               </div>
             )}
-            {mode === "topic" && topicMaterials.length > 0 && (
+            {pendingImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-4 pt-3" aria-label="Attached images">
+                {pendingImages.map((image) => (
+                  <div key={image.id} className="relative size-20 overflow-hidden rounded-lg border border-border bg-muted">
+                    <MediaPreview label={image.name} preview={<img src={image.previewUrl} alt={image.name} />}>
+                      {(open) => (
+                        <button
+                          type="button"
+                          aria-label={`Preview ${image.name}`}
+                          aria-haspopup="dialog"
+                          className="size-full cursor-zoom-in focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                          onClick={open}
+                        >
+                          <img src={image.previewUrl} alt={`Attached image ${image.name}`} className="size-full object-contain" />
+                        </button>
+                      )}
+                    </MediaPreview>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${image.name}`}
+                      title="Remove image"
+                      disabled={busy}
+                      className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-background/95 text-foreground shadow-sm hover:bg-accent disabled:opacity-50"
+                      onClick={() => {
+                        void perform(async () => {
+                          await desktop().discardMaterials([image.id])
+                          setImageDrafts((current) => ({ ...current, [key]: (current[key] ?? []).filter((item) => item.id !== image.id) }))
+                          if (mode === "topic") setTopicMaterials((current) => current.filter((item) => item.id !== image.id))
+                        })
+                      }}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {mode === "topic" && topicMaterials.some((material) => !pendingImages.some((image) => image.id === material.id)) && (
               <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-                {topicMaterials.map((material) => (
+                {topicMaterials.filter((material) => !pendingImages.some((image) => image.id === material.id)).map((material) => (
                   <span
                     key={material.id}
                     className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
@@ -426,7 +528,12 @@ export function App() {
                       type="button"
                       aria-label={`Remove ${material.name}`}
                       disabled={busy}
-                      onClick={() => setTopicMaterials((current) => current.filter((item) => item.id !== material.id))}
+                      onClick={() => {
+                        void perform(async () => {
+                          await desktop().discardMaterials([material.id])
+                          setTopicMaterials((current) => current.filter((item) => item.id !== material.id))
+                        })
+                      }}
                     >
                       <X className="size-3.5" />
                     </button>
@@ -475,7 +582,7 @@ export function App() {
                 lockProvider={!!existing}
                 onSetup={(provider) => {
                   setSetupProvider(provider)
-                  setView("settings")
+                  transitionWorkspace(() => setView("settings"))
                   setError(null)
                 }}
                 onChange={(choice) => {
@@ -536,7 +643,6 @@ export function App() {
         }}
       />
       {composer("topic")}
-      {submitting === "new-topic" && <ChatThinking className="mt-3 text-center">Creating your topic…</ChatThinking>}
     </NewTopicView>
   )
   const chatPane = (
@@ -554,6 +660,32 @@ export function App() {
           <ChatConversation ref={thread} className="px-4">
             {chat.messages.map((message) => (
               <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={window.prune?.copyText} durationMs={message.durationMs}>
+                {message.role === "user" && message.materialIds?.length ? (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {(message.materialIds ?? []).flatMap((id) => {
+                      const image = chatMaterials.find((material) => material.id === id && material.kind === "image")
+                      return image ? [image] : []
+                    }).map((image) => (
+                      <MediaPreview
+                        key={image.id}
+                        label={image.name}
+                        preview={<img src={`prune-source://${image.id}/1`} alt={image.name} />}
+                      >
+                        {(open) => (
+                          <button
+                            type="button"
+                            aria-label={`Preview ${image.name}`}
+                            aria-haspopup="dialog"
+                            className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            onClick={open}
+                          >
+                            <img src={`prune-source://${image.id}/1`} alt={image.name} className="max-h-48 max-w-full object-contain" />
+                          </button>
+                        )}
+                      </MediaPreview>
+                    ))}
+                  </div>
+                ) : null}
                 <StudyMarkdown
                   text={message.content}
                   topics={snapshot.topics}
@@ -666,10 +798,7 @@ export function App() {
   let content
   if (!loaded) {
     content = (
-      <main className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircle className="size-5 animate-spin" />
-        Loading your workspace…
-      </main>
+      <WorkspacePanes body={<WorkspaceLoading />} />
     )
   } else if (!topic) {
     content = (
@@ -783,7 +912,7 @@ export function App() {
         initialProvider={setupProvider}
         snapshot={snapshot}
         onBack={() => {
-          setView("learn")
+          transitionWorkspace(() => setView("learn"))
           setSetupProvider(undefined)
         }}
       />
@@ -793,12 +922,13 @@ export function App() {
   return (
     <>
       <WorkspaceFrame
-        title={topic?.title ?? "New topic"}
+        title={loaded ? topic?.title ?? "New topic" : "Loading workspace…"}
         workspaceId={topic?.id ?? "new"}
         appName="EdU"
         nativeTitlebar={navigator.userAgent.includes("Macintosh")}
-        hasChat={view === "learn" && hasChat}
+        hasChat={loaded && view === "learn" && hasChat}
         sidebar={
+          !loaded ? <WorkspaceLoadingSidebar /> :
           <DesktopSidebar
             snapshot={snapshot}
             topicId={topicId}
@@ -816,7 +946,7 @@ export function App() {
             busy={busy}
             onOpenSettings={() => {
               setSetupProvider(undefined)
-              setView("settings")
+              transitionWorkspace(() => setView("settings"))
               setError(null)
             }}
           />

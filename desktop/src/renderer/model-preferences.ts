@@ -3,7 +3,10 @@ import { persist } from "zustand/middleware"
 import { z } from "zod"
 import { RunnerSchema } from "../shared/contracts"
 
-const FavoriteSchema = RunnerSchema.pick({ provider: true, model: true })
+const FavoriteSchema = z.object({
+  provider: RunnerSchema.shape.provider,
+  model: RunnerSchema.shape.model,
+})
 const PreferencesSchema = z.object({ favorites: z.array(FavoriteSchema) })
 
 export const useModelPreferences = create<{

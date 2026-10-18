@@ -5,6 +5,7 @@ import { Check, ChevronDown, CircleAlert, ChevronRight, Search, Settings, Star }
 import { Toolbar } from "@base-ui/react/toolbar"
 import { z } from "zod"
 import {
+  providerDefaultModels,
   ProviderIdSchema,
   ProviderModelSchema,
   ProviderStatusSchema,
@@ -95,26 +96,21 @@ export function ProviderModelPicker({
   const model = provider?.models.find((entry) => entry.id === value.model)
   const choices = ProviderIdSchema.options.flatMap((id) => {
     const status = providers.find((entry) => entry.id === id)
-    const automatic = id === "openrouter" ? "openrouter/auto" : "default"
-    const models = (status?.models ?? []).filter((entry) => entry.id !== automatic)
+    const models = (status?.models ?? []).filter((entry) => entry.id !== "default")
     const entries = models.map((entry) => ({
       ...entry,
       provider: id,
       providerName: status?.name ?? providerNames[id],
-      automatic: false,
       unavailable: false,
     }))
-    entries.push({
-      ...ProviderModelSchema.parse({
-        id: automatic,
-        name: id === "openrouter" ? "Auto" : "Default model",
-        description: "Use the provider’s recommended model",
-      }),
-      provider: id,
-      providerName: status?.name ?? providerNames[id],
-      automatic: true,
-      unavailable: false,
-    })
+    if (id === "openrouter" && !entries.some((entry) => entry.id === "openrouter/auto")) {
+      entries.push({
+        ...ProviderModelSchema.parse({ id: "openrouter/auto", name: "Auto" }),
+        provider: id,
+        providerName: status?.name ?? providerNames[id],
+        unavailable: false,
+      })
+    }
     if (value.provider === id && !entries.some((entry) => entry.id === value.model)) {
       entries.unshift({
         ...ProviderModelSchema.parse({
@@ -124,7 +120,6 @@ export function ProviderModelPicker({
         }),
         provider: id,
         providerName: status?.name ?? providerNames[id],
-        automatic: false,
         unavailable: true,
       })
     }
@@ -140,12 +135,11 @@ export function ProviderModelPicker({
   function priority(entry: typeof choices[number]) {
     if (entry.provider === value.provider && entry.id === value.model) return 3
     if (entry.favorite) return 2
-    if (entry.isDefault) return 1
+    if (entry.id === providerDefaultModels[entry.provider]) return 1
     return 0
   }
-  const primary = availableChoices.filter((entry) => !entry.automatic)
+  const primary = availableChoices
     .toSorted((a, b) => priority(b) - priority(a)).slice(0, 3)
-  if (primary.length === 0) primary.push(...availableChoices.slice(0, 1))
   const more = availableChoices.filter((entry) => !primary.includes(entry))
   let matches = primary
   const query = search.trim().toLowerCase()
@@ -167,7 +161,6 @@ export function ProviderModelPicker({
     setOpen(false)
   }
   let label = model?.name ?? value.model
-  if (value.model === "default") label = "Default model"
   if (value.model === "openrouter/auto") label = "Auto"
   const effort = value.reasoningEffort ?? model?.defaultReasoningEffort
   let effortLabel = "Auto"
@@ -353,7 +346,6 @@ export function ProviderModelPicker({
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2">
                                     <span className="truncate font-medium">{entry.name}</span>
-                                    {entry.isDefault && <span className="text-[10px] text-muted-foreground">Default</span>}
                                   </div>
                                   <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                                     <ProviderIcon provider={entry.provider} className="size-3 shrink-0 opacity-60" />

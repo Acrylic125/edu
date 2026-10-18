@@ -44,6 +44,9 @@ const bridge: DesktopBridge = {
       await ipcRenderer.invoke(Channel.dropMaterials, { paths, draftIds }),
     )
   },
+  pasteMaterials: async (images, draftIds = []) =>
+    MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.pasteMaterials, { images, draftIds })),
+  discardMaterials: (draftIds) => ipcRenderer.invoke(Channel.discardMaterials, draftIds),
   importMaterials: (owner, draftIds = []) =>
     ipcRenderer.invoke(Channel.importMaterials, { owner, draftIds }),
   exportNotes: (topicId) => ipcRenderer.invoke(Channel.exportNotes, topicId),

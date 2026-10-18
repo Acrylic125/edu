@@ -21,6 +21,7 @@ import {
   IdSchema,
   ImportMaterialsSchema,
   MaterialDraftIdsSchema,
+  PastedMaterialsSchema,
   MessageSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
@@ -58,10 +59,12 @@ let window: BrowserWindow | undefined
 let manager: RunnerManager | undefined
 let providers: ProviderRegistry | undefined
 let quitting = false
+let shuttingDown = false
 const ownsLock = app.requestSingleInstanceLock()
 if (!ownsLock) app.quit()
 else {
   app.on("second-instance", () => {
+    if (shuttingDown) return
     window?.show()
     window?.focus()
   })
@@ -143,6 +146,7 @@ else {
           window.webContents.send(Channel.update, snapshot())
       }
       function trusted(event: Electron.IpcMainInvokeEvent) {
+        if (shuttingDown) throw new Error("EdU is shutting down.")
         if (
           !window ||
           event.sender !== window.webContents ||
@@ -353,6 +357,15 @@ else {
           throw new Error("Drop files from your computer to attach them.")
         return materialDrafts.add(draftIds, paths)
       })
+      ipcMain.handle(Channel.pasteMaterials, async (event, raw) => {
+        trusted(event)
+        const { images, draftIds } = PastedMaterialsSchema.parse(raw)
+        return materialDrafts.paste(draftIds, images)
+      })
+      ipcMain.handle(Channel.discardMaterials, (event, raw) => {
+        trusted(event)
+        materialDrafts.discard(MaterialDraftIdsSchema.parse(raw))
+      })
       ipcMain.handle(Channel.importMaterials, async (event, raw) => {
         trusted(event)
         const { owner, draftIds } = ImportMaterialsSchema.parse(raw)
@@ -467,6 +480,7 @@ else {
       createWindow()
       registry.startPolling()
       app.on("activate", () => {
+        if (shuttingDown) return
         if (!window) createWindow()
       })
     })
@@ -486,6 +500,9 @@ app.on("window-all-closed", () => {
 app.on("before-quit", (event) => {
   if (quitting) return
   event.preventDefault()
+  if (shuttingDown) return
+  shuttingDown = true
+  window?.hide()
   providers?.close()
   void (manager?.shutdown() ?? Promise.resolve()).finally(() => {
     quitting = true

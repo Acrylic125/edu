@@ -92,6 +92,10 @@ export class CodexProvider {
     private openBrowser: (url: string) => Promise<void>,
   ) {}
 
+  get closed() {
+    return this.stopped
+  }
+
   private async server() {
     if (this.stopped) throw new Error("Codex provider is closed.")
     if (this.starting) return this.starting
@@ -252,6 +256,11 @@ export class CodexProvider {
   close() {
     this.stopped = true
     this.loginAttempt++
+    this.state.connected = false
+    this.state.connecting = false
+    this.state.loading = false
+    this.state.account = undefined
+    this.state.models = []
     clearTimeout(this.loginTimer)
     this.startingClient?.close()
     this.client?.close()

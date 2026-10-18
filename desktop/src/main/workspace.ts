@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises"
 import { join } from "node:path"
 import {
+  providerDefaultModels,
   LearningStateSchema,
   ChatSchema,
   LegacyWorkspaceSchema,
@@ -156,7 +157,7 @@ export class WorkspaceRepository {
           id: randomUUID(),
           name: "Tutor",
           provider: "codex",
-          model: "default",
+          model: providerDefaultModels.codex,
         })
       }
       await this.commit(state)

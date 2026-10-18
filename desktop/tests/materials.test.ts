@@ -187,3 +187,30 @@ test("rejects a corrupt PowerPoint without saving an attachment or copying its a
   expect(repository.chat(chat.id).materials).toHaveLength(0)
   await expect(readFile(join(repository.directory, "chats", chat.id, "assets", "broken.pptx"))).rejects.toThrow()
 })
+
+test("clipboard images remain draft attachments until import and retain their bytes", async () => {
+  const { repository, chat, source } = await fixture()
+  const drafts = new MaterialDrafts()
+  const selected = await drafts.add([], [source])
+  const data = new Uint8Array(await readFile(resolve("src/renderer/assets/app-icon.png")))
+  const pasted = await drafts.paste(selected.map((draft) => draft.id), [{ mimeType: "image/png", data }])
+  expect(pasted).toHaveLength(2)
+  expect(repository.chat(chat.id).materials).toHaveLength(0)
+  selection.canceled = true
+  expect(await drafts.select(pasted.map((draft) => draft.id))).toEqual(pasted)
+  await drafts.import(repository, { kind: "chat", id: chat.id }, pasted.map((draft) => draft.id))
+  const image = repository.chat(chat.id).materials.find((material) => material.kind === "image")
+  expect(image).toBeDefined()
+  expect(await readFile(join(repository.directory, "chats", chat.id, "assets", image!.name))).toEqual(Buffer.from(data))
+})
+
+test("discarded clipboard attachments cannot be imported or retained in the draft", async () => {
+  const { repository, chat } = await fixture()
+  const drafts = new MaterialDrafts()
+  const data = new Uint8Array(await readFile(resolve("src/renderer/assets/app-icon.png")))
+  const pasted = await drafts.paste([], [{ mimeType: "image/png", data }])
+  const ids = pasted.map((draft) => draft.id)
+  drafts.discard(ids)
+  await expect(drafts.import(repository, { kind: "chat", id: chat.id }, ids)).rejects.toThrow("Select the learning materials again")
+  expect(repository.chat(chat.id).materials).toHaveLength(0)
+})

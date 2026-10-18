@@ -57,7 +57,8 @@ viewed topic from its view history, independently of the selected chat.
 It explains the material, asks Checks and Tests, and maintains revision notes.
 Use the provider/model picker beside the paperclip to choose your provider and model.
 Codex models and reasoning options come from the bundled runtime’s model catalog;
-**Default model** follows its current default. OpenRouter’s **Auto** routes model
+new selections use GPT 6 Luna for Codex, Haiku 5.5 for Claude Code, and Gemini 3.8 Flash
+(High) for Antigravity. The picker always shows the selected model. OpenRouter’s **Auto** routes model
 requests, and its catalog lists models that support tool calling. Visual sources
 require a model with vision support.
 

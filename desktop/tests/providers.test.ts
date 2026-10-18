@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import * as cli from "../src/providers/cli"
-import { ProviderSettingsSchema } from "../src/shared/contracts"
+import { ProviderSettingsSchema, RunnerInputSchema } from "../src/shared/contracts"
 import { randomUUID } from "node:crypto"
 import { afterEach, expect, test, vi } from "vitest"
 import { ProviderRegistry } from "../src/providers/registry"
@@ -240,7 +240,6 @@ test("Antigravity discovers tab-separated models from the CLI catalog", async ()
   try {
     await registry.refresh("antigravity")
     expect(registry.statuses.find((provider) => provider.id === "antigravity")?.models).toMatchObject([
-      { id: "default", name: "Default model" },
       { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
       { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)" },
     ])
@@ -248,4 +247,34 @@ test("Antigravity discovers tab-separated models from the CLI catalog", async ()
     registry.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+
+test("Claude exposes concrete models without a default sentinel", async () => {
+  const registry = new ProviderRegistry("/tmp/edu-claude-models", "unused", () => {})
+  vi.spyOn(cli, "resolveCliExecutable").mockResolvedValue("/fixture-cli")
+  vi.spyOn(cli, "runCliCommand").mockResolvedValue(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" }))
+  try {
+    await registry.refresh("claude")
+    const models = registry.statuses.find((provider) => provider.id === "claude")?.models
+    expect(models).toContainEqual(expect.objectContaining({ id: "claude-haiku-5-5", name: "Haiku 5.5" }))
+    expect(models?.some((model) => model.id === "default")).toBe(false)
+    expect(() => registry.validateRunner({ name: "Tutor", provider: "claude", model: "default" })).toThrow("Choose an available model")
+  } finally {
+    registry.close()
+  }
+})
+
+
+test.each([
+  ["codex", "gpt-6-luna"],
+  ["claude", "claude-haiku-5-5"],
+  ["antigravity", "gemini-3.8-flash-high"],
+  ["openrouter", "openrouter/auto"],
+])("%s uses its concrete model when a runner omits the model", (provider, model) => {
+  expect(RunnerInputSchema.parse({ name: "Tutor", provider }).model).toBe(model)
+  expect(RunnerInputSchema.parse({ name: "Tutor", provider, model: "chosen-model", reasoningEffort: "high" }))
+    .toMatchObject({ model: "chosen-model", reasoningEffort: "high" })
+  expect(RunnerInputSchema.parse({ name: "Tutor", provider, reasoningEffort: "high" }))
+    .toMatchObject({ model, reasoningEffort: "high" })
 })

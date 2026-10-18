@@ -25,11 +25,13 @@ export const useWorkspace = create<{
   setSnapshot: (snapshot) => {
     useChatTabs.getState().reconcile(snapshot.chats.map((chat) => chat.id))
     useTopicViews.getState().reconcile(snapshot.topics.map((topic) => topic.id))
+    const providerConnected = snapshot.providers.some((provider) => provider.connected)
     // Keep access for this window after setup, even if a provider later disconnects.
     set((state) => ({
       snapshot,
-      loaded: true,
-      providerSetupComplete: state.providerSetupComplete || snapshot.providers.some((provider) => provider.connected),
+      // The initial account checks must settle before a disconnected snapshot can require setup.
+      loaded: state.loaded || providerConnected || snapshot.providers.every((provider) => !provider.loading),
+      providerSetupComplete: state.providerSetupComplete || providerConnected,
     }))
   },
   setError: (error) => set({ error }),

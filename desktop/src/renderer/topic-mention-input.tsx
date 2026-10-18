@@ -66,7 +66,7 @@ class TopicMentionNode extends TextNode {
   createDOM(config: EditorConfig) {
     const element = super.createDOM(config)
     element.className =
-      "inline-block max-w-[15rem] truncate align-baseline rounded-md border border-learning-ink/10 bg-learning-sage/60 px-1.5 py-0.5 text-xs font-medium leading-4 text-learning-ink"
+      "inline-block max-w-[15rem] truncate align-middle rounded-md border border-learning-ink/10 bg-learning-sage/60 px-1.5 py-0.5 text-xs font-medium leading-4 text-learning-ink"
     element.title = this.__text
     return element
   }

@@ -1,7 +1,7 @@
-import { useRef, useState } from "react"
-import { ArrowLeft, Check, Plus, Settings, X } from "lucide-react"
+import { useState } from "react"
+import { ArrowLeft, Check, Settings } from "lucide-react"
 import { useThemeMode } from "@edu/ui/theme"
-import { WorkspaceFrame, WorkspaceSidebar, useWorkspaceLayout } from "@edu/ui/workspace"
+import { WorkspaceFrame, WorkspaceSidebar, useWorkspaceLayout, transitionWorkspace } from "@edu/ui/workspace"
 import { desktop, desktopErrorMessage } from "../store"
 import { ProviderSetupInstructions } from "./provider-setup"
 import { ProviderIcon } from "../provider-icon"
@@ -18,10 +18,13 @@ export function DesktopSettings({ snapshot, onBack, initialProvider }: {
   return (
     <WorkspaceFrame
       title="Settings"
+      workspaceId={`settings-${section}`}
       appName="EdU"
       nativeTitlebar={navigator.userAgent.includes("Macintosh")}
       navigationName="settings"
-      sidebar={<SettingsSidebar section={section} onSection={setSection} onBack={onBack} />}
+      sidebar={<SettingsSidebar section={section} onSection={(next) => {
+        if (next !== section) transitionWorkspace(() => setSection(next))
+      }} onBack={onBack} />}
     >
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-card md:rounded-[1.75rem]" aria-label="Settings">
         <div className="mx-auto max-w-4xl px-8 py-14 lg:px-16 lg:py-16">
@@ -34,11 +37,11 @@ export function DesktopSettings({ snapshot, onBack, initialProvider }: {
 
 export function ProviderConnectionSetup({ snapshot }: { snapshot: Snapshot }) {
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto bg-card" aria-label="Provider setup required">
-      <div className="mx-auto max-w-4xl px-8 py-14 lg:px-16 lg:py-16">
-        <h1 className="text-2xl font-medium tracking-tight">Connect a provider to get started</h1>
-        <p className="mt-3 mb-10 text-sm text-muted-foreground">Connect at least one provider before continuing to your workspace.</p>
-        <ProviderSettings snapshot={snapshot} />
+    <main className="min-h-dvh flex-1 overflow-y-auto bg-card" aria-label="Provider setup required">
+      <div className="mx-auto w-full max-w-2xl px-6 py-12 sm:px-10 sm:py-16">
+        <h1 className="text-2xl font-medium tracking-tight">Connect your AI provider</h1>
+        <p className="mt-3 mb-8 text-sm leading-6 text-muted-foreground">Use your existing account to get started with your learning workspace.</p>
+        <ProviderSettings snapshot={snapshot} onboarding />
       </div>
     </main>
   )
@@ -142,80 +145,40 @@ function AppearanceSettings() {
   )
 }
 
-function ProviderSettings({ snapshot, initialProvider }: {
+function ProviderSettings({ snapshot, initialProvider, onboarding = false }: {
   initialProvider?: Snapshot["providers"][number]["id"]
   snapshot: Snapshot
+  onboarding?: boolean
 }) {
   const [selectedId, setSelectedId] = useState<Snapshot["providers"][number]["id"] | undefined>(initialProvider)
-  const dialog = useRef<HTMLDialogElement>(null)
-  const configured = snapshot.providers.filter((provider) => provider.settings || provider.connected || provider.connecting || provider.id === selectedId)
-  const available = snapshot.providers.filter((provider) => !configured.some((item) => item.id === provider.id))
-  const selected = configured.find((provider) => provider.id === selectedId) ?? configured[0]
-
-  const addButton = (
-    <button className="flex h-9 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm font-medium hover:bg-accent disabled:opacity-50" disabled={available.length === 0} onClick={() => dialog.current?.showModal()}>
-      <Plus className="size-4" /> Add provider
-    </button>
-  )
+  const selected = snapshot.providers.find((provider) => provider.id === selectedId) ?? snapshot.providers[0]
 
   return (
-    <section aria-labelledby="providers-heading">
-      <h1 id="providers-heading" className="text-xl font-medium tracking-tight">Provider</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Use your existing ChatGPT, Claude, Antigravity, or OpenRouter account.</p>
-      <p className="mt-2 text-xs text-muted-foreground">All providers are checked every 5 minutes.</p>
-      {configured.length === 0 ? (
-        <div className="mt-8 flex min-h-60 flex-col items-center justify-center gap-5 rounded-xl border border-border p-8">
-          <div className="flex items-end gap-2 text-muted-foreground" aria-hidden="true">
-            <span className="size-9 rounded-lg border border-border bg-learning-sage" /><span className="mb-4 size-9 rounded-lg border border-border bg-learning-yellow" /><span className="size-9 rounded-lg border border-border bg-learning-blue" />
-          </div>
-          <p className="text-sm text-muted-foreground">Choose your own provider</p>
-          {addButton}
-        </div>
-      ) : (
-        <div className="mt-9 grid gap-8 md:grid-cols-[160px_minmax(0,1fr)]">
-          <div>
-            <h2 className="mb-3 text-sm font-medium">Providers</h2>
-            {addButton}
-            <div className="mt-3 space-y-1" aria-label="Your providers">
-              {configured.map((provider) => (
-                <button key={provider.id} aria-pressed={selected?.id === provider.id} aria-description={provider.connected ? "Connected" : "Setup incomplete"} onClick={() => setSelectedId(provider.id)} className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm ${selected?.id === provider.id ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-accent"}`}>
-                  <span className="flex size-7 shrink-0 items-center justify-center" aria-hidden="true">
-                    <ProviderIcon provider={provider.id} className="size-5 object-contain" />
-                  </span>
-                  <span className="min-w-0 flex-1 break-words">{provider.settings?.displayName ?? (provider.id === "codex" ? "ChatGPT" : provider.name)}</span>
-                  {provider.connected && <Check aria-hidden="true" className="size-4 shrink-0 text-emerald-500" />}
-                </button>
-              ))}
-            </div>
-          </div>
-          {selected && <ProviderEditor key={selected.id} provider={selected} />}
-        </div>
+    <section aria-label={onboarding ? "Choose a provider" : undefined} aria-labelledby={onboarding ? undefined : "providers-heading"}>
+      {!onboarding && (
+        <>
+          <h1 id="providers-heading" className="text-xl font-medium tracking-tight">Providers</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">Connect your existing ChatGPT, Claude, Antigravity, or OpenRouter account.</p>
+        </>
       )}
-      <dialog ref={dialog} className="m-auto w-[min(400px,calc(100vw-48px))] rounded-2xl border border-border bg-popover p-6 text-popover-foreground shadow-xl backdrop:bg-black/50">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Add provider</h2>
-          <button aria-label="Close add provider" className="rounded-full p-1 text-muted-foreground hover:bg-accent" onClick={() => dialog.current?.close()}><X className="size-4" /></button>
-        </div>
-        <div className="space-y-2">
-          {available.map((provider) => {
-            let description = "Install the CLI if needed, then connect"
-            if (provider.id === "codex") description = "Sign in with your ChatGPT account"
-            else if (provider.id === "openrouter") description = "Connect your OpenRouter account"
-            return (
-              <button key={provider.id} className="block w-full rounded-xl border border-border p-4 text-left hover:bg-accent disabled:opacity-50" onClick={() => {
-                setSelectedId(provider.id)
-                dialog.current?.close()
-              }}>
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  <ProviderIcon provider={provider.id} className="size-5 shrink-0 object-contain" />
-                  {provider.id === "codex" ? "ChatGPT" : provider.name}
+      <div className="mt-9 grid gap-8 md:grid-cols-[160px_minmax(0,1fr)]">
+        <div>
+          <h2 className="mb-3 text-sm font-medium">Providers</h2>
+          <div className="space-y-1" aria-label="Providers">
+            {snapshot.providers.map((provider) => (
+              <button key={provider.id} aria-pressed={selected?.id === provider.id} aria-description={provider.connected ? "Connected" : "Setup incomplete"} onClick={() => setSelectedId(provider.id)} className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm ${selected?.id === provider.id ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-accent"}`}>
+                <span className="flex size-7 shrink-0 items-center justify-center" aria-hidden="true">
+                  <ProviderIcon provider={provider.id} className="size-5 object-contain" />
                 </span>
-                <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                <span className="min-w-0 flex-1 break-words">{provider.settings?.displayName ?? (provider.id === "codex" ? "ChatGPT" : provider.name)}</span>
+                {provider.connected && <Check aria-hidden="true" className="size-4 shrink-0 text-emerald-500" />}
               </button>
-            )
-          })}
+            ))}
+          </div>
         </div>
-      </dialog>
+        {selected && <ProviderEditor key={selected.id} provider={selected} />}
+      </div>
+
     </section>
   )
 }

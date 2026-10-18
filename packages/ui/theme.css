@@ -5,19 +5,6 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@keyframes workspace-chat-reveal {
-  from {
-    opacity: 0;
-    clip-path: inset(0 0 0 12% round 1.75rem);
-    translate: 12px 0;
-  }
-  to {
-    opacity: 1;
-    clip-path: inset(0 round 1.75rem);
-    translate: 0 0;
-  }
-}
-
 @keyframes workspace-content-reveal {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -29,31 +16,110 @@
 }
 
 .workspace-document-enter {
-  animation: workspace-content-reveal 180ms ease-out;
+  animation: workspace-content-reveal 275ms cubic-bezier(0.333, 0, 0.667, 1);
+}
+
+.workspace-drawer-backdrop {
+  animation: workspace-content-reveal 140ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.workspace-screen-content main { view-transition-name: workspace-document; }
+
+/* Named snapshots animate panel geometry without easing manual resize gestures. */
+@media (width >= 48rem) {
+  .workspace-sidebar-pane { view-transition-name: workspace-sidebar; }
 }
 
 @media (width >= 64rem) {
-  .workspace-chat-pane {
-    animation: workspace-chat-reveal 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  .workspace-chat-pane { view-transition-name: workspace-chat; }
+}
+
+@media (width < 48rem) {
+  .workspace-sidebar-pane {
+    transition: translate 225ms cubic-bezier(0.333, 0, 0.667, 1), visibility 225ms;
+  }
+
+  .workspace-sidebar-pane[data-open="true"] {
+    visibility: visible;
   }
 }
 
-::view-transition-old(root) {
-  animation: workspace-content-dismiss 120ms ease-out both;
+@media (width < 64rem) {
+  .workspace-chat-pane {
+    transition: translate 225ms cubic-bezier(0.333, 0, 0.667, 1), visibility 225ms;
+  }
+
+  .workspace-chat-pane[data-open="true"] {
+    visibility: visible;
+  }
 }
 
+::view-transition-old(root),
 ::view-transition-new(root) {
-  animation: workspace-content-reveal 160ms ease-out both;
+  animation: none;
+}
+
+::view-transition-group(workspace-sidebar),
+::view-transition-group(workspace-document),
+::view-transition-group(workspace-chat) {
+  animation-duration: 275ms;
+  animation-timing-function: cubic-bezier(0.333, 0, 0.667, 1);
+}
+
+::view-transition-old(workspace-sidebar),
+::view-transition-old(workspace-document),
+::view-transition-old(workspace-chat) {
+  animation: workspace-content-dismiss 200ms cubic-bezier(0.333, 0, 0.667, 1) both;
+}
+
+::view-transition-new(workspace-sidebar),
+::view-transition-new(workspace-document),
+::view-transition-new(workspace-chat) {
+  animation: workspace-content-reveal 275ms cubic-bezier(0.333, 0, 0.667, 1) both;
+}
+
+@keyframes workspace-screen-leave {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+@keyframes workspace-document-arrive {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes workspace-chat-arrive {
+  from { opacity: 0; transform: translateX(35px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+:root:active-view-transition-type(workspace-navigation)::view-transition-old(workspace-document) {
+  animation: workspace-screen-leave 275ms cubic-bezier(0.333, 0, 0.667, 1) both;
+}
+
+:root:active-view-transition-type(workspace-navigation)::view-transition-new(workspace-document) {
+  animation: workspace-document-arrive 275ms cubic-bezier(0.333, 0, 0.667, 1) both;
+}
+
+::view-transition-new(workspace-chat):only-child {
+  animation: workspace-chat-arrive 275ms cubic-bezier(0.333, 0, 0.667, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-chat-pane,
-  .workspace-document-enter {
+  .workspace-document-enter,
+  .workspace-drawer-backdrop {
     animation: none;
   }
-  ::view-transition-old(root),
-  ::view-transition-new(root) {
-    animation: none;
+
+  .workspace-sidebar-pane,
+  .workspace-chat-pane {
+    transition: none;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 

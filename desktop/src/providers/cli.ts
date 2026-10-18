@@ -3,7 +3,7 @@ import { access, constants, mkdir, stat, writeFile } from "node:fs/promises"
 import { delimiter, isAbsolute, join, resolve } from "node:path"
 import { homedir } from "node:os"
 import { z } from "zod"
-import { CliConnectionSchema } from "../shared/contracts"
+import { CliConnectionSchema, providerDefaultModels } from "../shared/contracts"
 
 export async function resolveCliExecutable(provider: z.infer<typeof CliConnectionSchema>["provider"], binaryPath?: string) {
   if (binaryPath) {
@@ -136,7 +136,7 @@ export function cliPromptArguments(connection: z.infer<typeof CliConnectionSchem
   if (connection.provider === "claude")
     args.push("--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--safe-mode", "--no-session-persistence")
   else args.push("--agent", "edu-tutor", "--sandbox", "--print-timeout", "2m")
-  if (model !== "default") args.push("--model", model)
+  args.push("--model", model === "default" ? providerDefaultModels[connection.provider] : model)
   if (effort) args.push("--effort", effort)
   return args
 }

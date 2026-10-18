@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, test, vi } from "vitest"
@@ -599,4 +599,35 @@ test("persists response choices with their assistant message without carrying th
   children.at(-1)?.emit("message", { type: "result", reply: "Here is a practice question.", learning: first.learning })
   await vi.waitFor(() => expect(repository.chat(first.id).messages.at(-1)?.content).toBe("Here is a practice question."))
   expect(repository.chat(first.id).messages.at(-1)).not.toHaveProperty("responseQuestion")
+})
+
+test("keeps newly attached images on their user message across reload without repeating them", async () => {
+  const { manager, repository, first } = await fixture()
+  const firstImage = { id: randomUUID(), name: "first.png", kind: "image" as const, text: "Image source", pages: [] }
+  const secondImage = { ...firstImage, id: randomUUID(), name: "second.png" }
+  await repository.mutate((state) => state.chats[0].materials.push(firstImage))
+  await manager.send({ chatId: first.id, content: "Explain the first image" })
+  expect(repository.chat(first.id).messages[0]).toMatchObject({ materialIds: [firstImage.id] })
+  manager.stop(first.runnerId, first.id)
+  await repository.mutate((state) => state.chats[0].materials.push(secondImage))
+  await manager.send({ chatId: first.id, content: "Now explain the second image" })
+  expect(repository.chat(first.id).messages[1]).toMatchObject({ materialIds: [secondImage.id] })
+  const restored = new WorkspaceRepository(repository.directory)
+  await restored.load()
+  expect(restored.chat(first.id).messages.map((message) => message.materialIds)).toEqual([[firstImage.id], [secondImage.id]])
+})
+
+test("preserves explicitly submitted topic images and rejects images outside the chat context", async () => {
+  const { manager, repository, first, second, topic } = await fixture()
+  const image = { id: randomUUID(), name: "topic.png", kind: "image" as const, text: "Image source", pages: [] }
+  const assets = join(repository.directory, "topics", topic.id, "assets")
+  await mkdir(assets, { recursive: true })
+  await writeFile(join(assets, image.name), await readFile(resolve("src/renderer/assets/app-icon.png")))
+  await repository.mutate((state) => state.topics.find((item) => item.id === topic.id)!.materials.push(image))
+  await expect(manager.send({ chatId: second.id, content: "Invalid attachment", materialIds: [image.id] })).rejects.toThrow("not available in this chat")
+  expect(repository.chat(second.id).messages).toHaveLength(0)
+  await manager.send({ chatId: first.id, content: "Explain this topic image", openedTopicId: topic.id, materialIds: [image.id] })
+  expect(repository.chat(first.id).messages[0]).toMatchObject({ materialIds: [image.id], topicIds: [topic.id] })
+  await manager.send({ chatId: second.id, content: `${topicMention(topic.id, topic.title)} Retry the image request` })
+  expect(repository.chat(second.id).messages[0]).toMatchObject({ materialIds: [image.id], topicIds: [topic.id] })
 })

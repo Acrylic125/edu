@@ -60,9 +60,10 @@ test("native sandboxed app manages runners and restores topics across restarts",
     expect(await page.evaluate(() => "require" in window)).toBe(false)
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await page.getByRole("button", { name: "Providers", exact: true }).click()
-    await expect(page.getByText("Choose your own provider")).toBeVisible()
-    await page.getByRole("button", { name: "Add provider", exact: true }).click()
-    await page.getByRole("button", { name: /ChatGPT.*Sign in/ }).click()
+    await expect(page.getByRole("button", { name: "ChatGPT", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await page.getByRole("button", { name: "Claude", exact: true }).click()
+    await expect(page.getByRole("region", { name: "Claude connection", exact: true })).toBeVisible()
+    await page.getByRole("button", { name: "ChatGPT", exact: true }).click()
     await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeVisible()
     await page.getByText("Advanced settings", { exact: true }).click()
     await page.getByLabel("Display name", { exact: true }).fill("My ChatGPT")
@@ -103,6 +104,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     const modelTrigger = page.getByRole("combobox", {
       name: "Choose provider and model",
     })
+    await expect(modelTrigger).toHaveText("GPT-6-Luna")
     await modelTrigger.click()
     await expect(page.getByRole("button", { name: "Favorites", exact: true })).toHaveCount(0)
     await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible()
@@ -196,12 +198,10 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
     await modelTrigger.click()
     await page.getByRole("button", { name: /More models/ }).click()
-    await page
-      .getByRole("option", { name: "Default model", exact: true })
-      .click()
-    await expect(
-      page.getByRole("button", { name: "Choose reasoning effort" }),
-    ).not.toBeVisible()
+    await expect(page.getByRole("option", { name: "Default model", exact: true })).toHaveCount(0)
+    await expect(page.getByText("Default", { exact: true })).toHaveCount(0)
+    await page.getByRole("option", { name: "GPT-6-Luna", exact: true }).click()
+    await expect(modelTrigger).toHaveText("GPT-6-Luna")
     await page.screenshot({ path: "test-results/welcome-dark.png" })
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await page.getByRole("radio", { name: "Light", exact: true }).check()

@@ -423,3 +423,26 @@ test("ignores legacy behaviour settings and files while preserving learning reco
   expect(new ChatDatabase(join(store.directory, "state.sqlite")).load()?.state).not.toHaveProperty("behaviourMemory")
   expect(await readFile(path, "utf8")).toBe("Old preference file")
 })
+
+
+test("new workspaces select GPT 6 Luna explicitly", async () => {
+  const store = await repository()
+  expect(store.stateSnapshot.runners[0]).toMatchObject({ provider: "codex", model: "gpt-6-luna" })
+})
+
+test("restores legacy default selections as concrete provider models from SQLite", async () => {
+  const store = await repository()
+  const runners = [
+    { id: randomUUID(), name: "Codex", provider: "codex", model: "default" },
+    { id: randomUUID(), name: "Claude", provider: "claude", model: "default" },
+    { id: randomUUID(), name: "Antigravity", provider: "antigravity", model: "default" },
+    { id: randomUUID(), name: "Custom", provider: "codex", model: "gpt-6-astra" },
+  ]
+  const database = new DatabaseSync(join(store.directory, "state.sqlite"))
+  database.prepare("UPDATE metadata SET payload = ? WHERE key = 'settings'").run(JSON.stringify({ runners, providerSettings: [] }))
+  database.close()
+  const restored = await new WorkspaceRepository(store.directory).load()
+  expect(restored.runners.map((runner) => runner.model)).toEqual([
+    "gpt-6-luna", "claude-haiku-5-5", "gemini-3.8-flash-high", "gpt-6-astra",
+  ])
+})
