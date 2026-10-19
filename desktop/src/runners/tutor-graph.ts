@@ -85,9 +85,9 @@ export function createTutorGraph({ session, model, consumeTools, recover, maxAtt
     })
     .addNode("recover", async () => {
       diagnostic("graph.node", { node: "recover" })
-      let message = "The learning state is staged, but the learner-facing reply is missing. Provide the explanation, question, or plan for this same learner request without advancing the lesson."
+      let message = "State staged. Reply to the current learner request without advancing the lesson."
       if (!session.saved) {
-        message = "Save the complete learning state with save_learning_state, then provide the learner-facing reply without advancing the lesson. Repair each rejected structured topic write using its original tool and target first. save_learning_state only saves this chat's private handoff and cannot repair a rejected topic write. The previous reply has not been shown or saved."
+        message = "Reply not published. Stay on the current request.\n1. Repair rejected writes with their original tool and target.\n2. Save the private handoff with save_learning_state. This does not repair topic writes.\n3. Provide the learner-facing reply."
         if (session.saveError) message += `\nCorrect rejected saves first: ${session.saveError}`
       }
       await recover(message)

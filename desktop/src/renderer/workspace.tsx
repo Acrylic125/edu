@@ -55,6 +55,7 @@ import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@edu/ui/context-menu"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@edu/ui/collapsible"
+import { Badge } from "@edu/ui/badge"
 import { z } from "zod"
 import { providerDefaultModels, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { topicMention } from "../shared/topic-mentions"
@@ -1114,9 +1115,12 @@ function DesktopSidebar({
         {activeTopics.map(topicItem)}
       </TopicNavigation>
       {archivedTopics.length > 0 && (
-        <Collapsible defaultOpen className="mt-6">
+        <Collapsible className="mt-6">
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            Archived chats
+            <span className="flex min-w-0 items-center gap-2">
+              Archived chats
+              <Badge variant="secondary" className="min-w-5 px-1.5 tabular-nums">{archivedTopics.length}</Badge>
+            </span>
             <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-data-panel-open:rotate-90 motion-reduce:transition-none" />
           </CollapsibleTrigger>
           <CollapsibleContent>

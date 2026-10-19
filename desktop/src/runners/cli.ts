@@ -26,7 +26,13 @@ export async function runCliTutorTurn(job: WorkerJob, activity: (message: string
     const session = await createTutorSession(job, activity, telemetry)
     const transcript: z.infer<ReturnType<typeof z.json>>[] = job.chat.messages.map((message) => ({ role: message.role, content: session.modelText(messageText(message)) }))
     const instructions = `${session.instructions}
-Return JSON with reply and calls. Use calls to request EdU tools; each call has name and arguments (a JSON-encoded string). The harness executes calls and returns their results. Use native web search and URL reading for online research; native file and shell tools are disabled. Return an empty reply when reading guidance or materials; use their results in the next request. When ready to answer, return the learner-facing reply together with any state updates and save_learning_state as the last call. The harness validates and commits these saves before displaying the reply. Correct rejected saves before finishing. A reply with no calls is also allowed after a successful save.
+- Return JSON with reply and calls.
+- Each call has name and arguments, a JSON-encoded string. The harness returns tool results.
+- Use native web search and URL reading. Native file and shell tools are disabled.
+- For guidance or material reads, leave reply empty. Consume results in the next request.
+- When ready, return the reply with state updates and save_learning_state as the last call.
+- Repair rejected saves before finishing. The harness validates and commits before display.
+- After a successful save, a reply without calls is allowed.
 Available EdU tools: ${JSON.stringify(session.tools)}`
     let action = ActionSchema.parse({ reply: "", calls: [] })
     return await runAgentGraph({

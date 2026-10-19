@@ -97,7 +97,7 @@ Screenshots attached to the current learner message are also supplied directly a
     const previous = job.chat.providerSession
     const canResume =
       previous?.status === "ready" &&
-      previous.toolVersion === 14 &&
+      previous.toolVersion === 15 &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -136,7 +136,7 @@ Screenshots attached to the current learner message are also supplied directly a
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 14,
+      toolVersion: 15,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })
@@ -284,12 +284,12 @@ Screenshots attached to the current learner message are also supplied directly a
       recover() {
         if (!session.saved) {
           input =
-            "Complete the current learner request without advancing the lesson. Repair each rejected save using its original tool and target first. Use the structured topic tools for JSON state and updateTopic for conceptual notes; save_learning_state only saves this chat's private handoff and next action. Then save the chat handoff and provide the learner-facing reply. The previous reply was not saved."
+            "Reply not saved. Stay on the current request.\n1. Repair rejected writes with their original tool and target.\n2. Save the private handoff with save_learning_state. This does not repair topic writes.\n3. Provide the learner-facing reply."
           if (session.saveError)
             input += `\nCorrect this rejected save: ${session.saveError}`
         } else {
           input =
-            "The learning state is staged, but the learner-facing reply is missing. Provide the explanation, question, or plan for this same learner request without advancing the lesson."
+            "State staged. Reply to the current learner request without advancing the lesson."
         }
       },
       finish: () => ({ ...session.finish(reply), providerSession }),

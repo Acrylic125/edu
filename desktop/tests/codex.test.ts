@@ -56,7 +56,7 @@ test("Codex enables live web research while keeping shell access disabled", asyn
 test.each([false, true])("Codex receives attached screenshot pixels directly when resumed=%s", async (resumed) => {
   const { job, home } = await fixture()
   if (!job.codex) throw new Error("Missing Codex fixture")
-  if (resumed) job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
+  if (resumed) job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 15, status: "ready" }
   await mkdir(job.assetDirectory, { recursive: true })
   const material = { id: randomUUID(), name: "screenshot.png", kind: "image" as const, text: "Image source. Use read_material to inspect the image visually.", pages: [] }
   await writeFile(join(job.assetDirectory, material.name), createCanvas(80, 40).toBuffer("image/png"))
@@ -676,7 +676,7 @@ test("resumes the native Codex thread after restart and sends only the new reque
 test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "old-handoff-tools", "old-response-tools", "old-web-tools", "old-topic-uuid-tools"])("reconstructs committed history when the saved session is %s", async (reason) => {
   const { job, home } = await fixture(reason === "missing" ? "resume-missing" : "completed")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 15, status: "ready" }
   if (reason === "old-tools") job.chat.providerSession.toolVersion = 1
   if (reason === "old-tools-v2") job.chat.providerSession.toolVersion = 2
   if (reason === "old-handoff-tools") job.chat.providerSession.toolVersion = 10
@@ -697,7 +697,7 @@ test.each(["pending", "missing", "other-account", "old-tools", "old-tools-v2", "
 test("does not replace a resumable conversation on a transient provider failure", async () => {
   const { job, home } = await fixture("resume-network")
   if (!job.codex) throw new Error("Missing connection")
-  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 14, status: "ready" }
+  job.chat.providerSession = { provider: "codex", threadId: "thread", home: job.codex.home, executable: job.codex.executable, toolVersion: 15, status: "ready" }
   await expect(runCodexTutorTurn(job, () => {}, () => {})).rejects.toThrow("temporarily unavailable")
   expect(await readFile(join(home, "requests.jsonl"), "utf8")).not.toContain('"method":"thread/start"')
 })

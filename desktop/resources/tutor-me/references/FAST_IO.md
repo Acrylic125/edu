@@ -1,13 +1,32 @@
 # State tool sequencing
 
-Use the harness tools; native filesystem helpers and delegation are unavailable.
+## Read
 
-- Read only the source section needed for the current explanation with `read_material`. Request visuals for diagrams or slides and reuse cached renders.
-- Use `whereAmI` for this thread's active part. Use `whatIsNext` only on a fresh thread, an explicit continuation request, or after completing a part/step. Present competing continuations as choices.
-- Use `getQuestions` only when explicitly asked or when deduplicating evaluation questions. Use `getMistakesForTopic` only to generate evaluation questions for the requested topics or when explicitly asked. `topics: null` includes archived topics.
-- Use `updateTopic` for curriculum/goals/references and conceptual summaries, `activatePart` on visiting a part, `recordQuestion` before asking, `recordAnswer` on receiving an answer, and `documentMistake` after confirmed incorrect reasoning has been deliberated. Use `complete` only after the part's checks are resolved or explicitly skipped: `masteryVerified=false` for a finished walkthrough with unverified mastery, or `masteryVerified=true` after all goals are satisfied. Keep a part with a pending check active. Use `getTopicProgress` for status across threads.
-- Create topics only when explicitly requested or needed as prerequisites. The harness assigns the topic ID, creates its summary, JSON state, and assets directory, and registers this thread.
+- Batch independent reads.
+- Reuse supplied status snapshots and cached source renders.
+- Read only the source section needed with `read_material`.
+- Use `getQuestions` for explicit history requests or question deduplication.
+- Use `getMistakesForTopic` for evaluation-question generation or an explicit request.
+- Follow SKILL.md for status and continuation reads.
 
-Every writer automatically registers the current chat as a tutor thread. A read leaves membership unchanged. Mutations are staged and replayed under the shared repository mutex against the latest state, so one thread's progress does not overwrite another's. The final transaction includes the chat handoff and learner-facing reply. Failed writes block publication until the same tool/target is repaired. A chat handoff save cannot repair a failed topic mutation.
+## Write
 
-Keep the private checked key and temporary preparation in `save_learning_state`. Save it before the final reply, then provide the actual explanation, question, or choice. Never include checked keys in a pending prompt or conceptual summary.
+- Use StateService tools for structured state. Every writer registers the current thread; reads leave membership unchanged.
+- Use `updateTopic` for curriculum and summaries.
+- Use the question guide for question, answer, and mistake records.
+- Use SKILL.md for activation and completion.
+- Writes stage, then replay against current state under the repository mutex.
+- The final reply, topic writes, and private handoff commit together.
+- Repair every rejected write with the same tool and target. A handoff save cannot repair a topic write.
+
+## Save the handoff
+
+1. Finish the other state writes.
+2. Call `save_learning_state` once before the final reply.
+3. Provide the learner-facing reply.
+
+- `workpad` and `nextAction` require non-whitespace text, including status and confirmation turns.
+- Record pending question keys, temporary preparation, and a concrete next action.
+- If no question is pending, state the current status explicitly.
+- `notes` is private chat context. Use `updateTopic.summary` for topic notes.
+- Keep checked keys only in `privateAnswerKey` or the private `workpad`.

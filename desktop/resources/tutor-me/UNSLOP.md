@@ -1,56 +1,52 @@
 # Unslop
 
-Edit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meaning and match the intended tone.
+Edit wording after drafting. Preserve meaning and examples. Rule numbers are stable IDs.
 
-## Patterns to detect and fix
+## Content
 
-Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.
+1. Cut empty participles: "highlighting...", "ensuring...", "reflecting...", "showcasing...", "fostering...". Give the actual fact.
+2. Replace vague attributions with sources: "Experts believe", "Industry reports suggest", "Some critics argue".
 
-### Content
+## Language
 
-1. Superficial -ing phrases. "highlighting...", "ensuring...", "reflecting...", "showcasing...", "fostering...". Delete or expand with real sources.
-2. Vague attributions. "Experts believe", "Industry reports suggest", "Some critics argue". Name the source or delete.
+3. Use plain words instead of "Additionally", "crucial", "delve", "enduring", "enhance", "fostering", "garner", "interplay", "intricate", abstract "landscape", "pivotal", "showcase", "tapestry", "testament", "underscore", or "vibrant".
+4. Use "is" or "has" instead of "serves as", "stands as", "boasts", or "features".
+5. State the point directly instead of "Not just X, but Y."
+6. Use the natural number of points. Avoid forced groups of three.
+7. Keep one name: avoid cycling through "protagonist", "main character", "central figure", and "hero".
+8. Replace false "from X to Y" ranges with a list.
 
-### Language
+## Style
 
-3. AI vocabulary. Additionally, crucial, delve, enduring, enhance, fostering, garner, interplay, intricate, landscape (abstract), pivotal, showcase, tapestry (abstract), testament, underscore, vibrant. Replace with plain words.
-4. Fancy ways to say "is". "serves as", "stands as", "boasts", "features". Say "is" or "has".
-5. "Not just X, but Y." State the point directly instead.
-6. Rule of three. Don't force ideas into groups of three. Use the natural number.
-7. Synonym cycling. Protagonist, main character, central figure, hero all in one paragraph. Pick one, repeat it.
-8. False ranges. "from X to Y" where X and Y aren't on a meaningful scale. List topics directly.
+9. Use periods or commas instead of em dashes.
+10. Use colons before lists or examples. Replace "If you're coming from traditional automation: instead of registering event handlers, you describe conditions" with "Describing when the scheduler should fire works best as plain English."
+11. Use bold sparingly.
+12. Avoid repeated labels: "Performance: Performance improved...". A useful lead-in adds new information: "Schema in TypeScript. Tables live in one file."
+13. Use sentence case headings.
+14. Remove decorative emojis.
+15. Use straight quotes.
 
-### Style
+## Communication
 
-9. Em dash overuse. Avoid em dashes entirely. Use periods or commas only (no parentheses, no en dashes, no hyphen-as-dash substitutes). If a thought needs separation, end the sentence or use a comma.
-10. Colon overuse. Colons are fine before a list or example, not as mid-sentence connectors. "If you're coming from traditional automation: instead of registering event handlers, you describe conditions" adds nothing with the colon. Rewrite to let the point stand on its own without comparison framing. "Describing when the scheduler should fire works best as plain English." Same meaning, no crutch punctuation.
-11. Boldface overuse. Don't bold every proper noun or acronym.
-12. Inline-header lists. The tell is a bold label and colon that restates the line: "Performance: Performance improved...". Convert those to prose. A bold lead-in that ends in a period, names the item, and is followed by genuinely new detail ("Schema in TypeScript. Tables live in one file.") is fine, not a tell.
-13. Title case headings. Use sentence case.
-14. Decorative emojis. Remove from headings and bullets.
-15. Curly quotes. Use straight quotes.
+16. Cut chatbot phrases: "I hope this helps!", "Let me know if...", "Of course!", "Certainly!", "Found the smoking gun!"
+17. Cut praise: "Great question!", "You're absolutely right!" Answer directly.
 
-### Communication artifacts
+## Filler
 
-16. Chatbot phrases. "I hope this helps!", "Let me know if...", "Of course!", "Certainly!", "Found the smoking gun!" Remove.
-17. Sycophantic tone. "Great question! You're absolutely right!" Respond directly.
+18. Use "To" for "In order to" and "Because" for "Due to the fact that". Delete "It is important to note that".
+19. Replace "could potentially possibly be argued that it might" with "may".
+20. Replace generic conclusions such as "The future looks bright" with specific facts or plans.
 
-### Filler
+## Jargon
 
-18. Filler phrases. "In order to" becomes "To". "Due to the fact that" becomes "Because". Delete "It is important to note that".
-19. Excessive hedging. "could potentially possibly be argued that it might" becomes "may".
-20. Generic conclusions. "The future looks bright." State specific plans or facts.
+26. Replace abstract metaphors with concrete terms: substrate (base), wedge (add), vector (way/method), ratchet (limit that only tightens), evacuate (move), endgame (last phase). Avoid locus, vantage, nexus, primitive as a noun, harness as a metaphor, surface in "API surface", bedrock, scaffolding as a metaphor, modality, paradigm, gold-plating, north star, and flywheel.
 
-### Jargon
+## Plain speech
 
-26. Abstract metaphor nouns. Substrate (base), wedge, wedge in (add), vector (way, method), locus, vantage, nexus, primitive as a noun, harness as a metaphor, surface as in "API surface", bedrock, scaffolding as a metaphor, modality, paradigm, gold-plating (more than the job needs), ratchet as a metaphor (the mechanism's real name, or a limit that only tightens), evacuate for moving code (move out), endgame (the last phase), north star, flywheel. These read as technical but usually have a plainer concrete word. Pick the concrete word.
-
-### Plain speech
-
-27. Say what it does, not how it feels. "the database stays close at hand", "SQL you can read", "types that follow your schema" name a feeling. The fix names the mechanism or a number: ".toSQL() returns the exact string sent to the database", "a column rename fails the build". Ask what the sentence tells the reader to do or know, then write that. If you can't restate it as a concrete instruction, fact, or number, cut it. One more check: if the sentence could appear unchanged in another project's docs, it says nothing about this one. Cut it.
-28. Shorten or split dense sentences. If the reader has to backtrack to parse a sentence, break it in two or drop clauses. One idea per sentence.
-29. Active voice. Prefer it. Catch "is/are/was/were + past participle" and name the actor: "queries are validated" becomes "the compiler validates queries", "the file is parsed by the loader" becomes "the loader parses the file". Passive is fine only when the actor is unknown or genuinely doesn't matter.
-30. Cut adverbs, or use a stronger verb. "runs quickly" becomes "is fast" or the number, and "significantly improves" becomes the measured delta. An adverb propping up a weak verb means the verb is wrong.
-31. Prefer the plain word. "utilize" and "leverage" become "use", "facilitate" becomes "help", "numerous" becomes "many", "in the event that" becomes "if". The fancier synonym is rarely clearer.
-32. Mannered prose. Metaphor or flourish where a literal phrase exists: aphorisms ("wire it or delete it"), rhetorical fragments for effect, personified code ("the plan holds it"), figurative verbs ("rides along", "stands on"), stock framing phrases. "A dial worth turning" becomes "a parameter worth varying". Say what you mean. Rule 26 covers the metaphor nouns.
-33. Over-compression. Dropped articles, verbless fragments, symbol-speak, and abbreviations that make the reader decode instead of read. "Parser rejects bad date → exit 2, no write" becomes "The parser rejects a bad date, exits with code 2, and writes nothing." Write whole sentences with their articles and verbs, and spell out arrows and abbreviations.
+27. Name the mechanism. Replace "the database stays close at hand", "SQL you can read", or "types that follow your schema" with facts such as "`.toSQL()` returns the exact string sent to the database" or "a column rename fails the build".
+28. Split dense sentences into one idea each.
+29. Use active voice: "queries are validated" becomes "the compiler validates queries". "The file is parsed by the loader" becomes "the loader parses the file".
+30. Replace weak adverbs: "runs quickly" becomes "is fast" or a measurement. Replace "significantly improves" with the measured change.
+31. Prefer "use" over "utilize" or "leverage", "help" over "facilitate", "many" over "numerous", and "if" over "in the event that".
+32. Replace mannered phrasing: "A dial worth turning" becomes "a parameter worth varying". Avoid "wire it or delete it", "the plan holds it", "rides along", and "stands on" as metaphors.
+33. Keep complete sentences. Replace "Parser rejects bad date → exit 2, no write" with "The parser rejects a bad date, exits with code 2, and writes nothing."

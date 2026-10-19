@@ -1,7 +1,5 @@
 # Topic files and source attribution
 
-Each topic folder contains:
-
 ```text
 topics/<topic-id>/
   topic.md
@@ -9,19 +7,55 @@ topics/<topic-id>/
   assets/
 ```
 
-`topic.md` is the conceptual summary: scope, key ideas, explanations, worked examples, terminology, and citations. Follow the summary template: title, one special `<topic-directory />` element, taught topic-part explanations, Topic terminology, and Materials. The directory describes curriculum, not evidence of completion. Fill gaps incrementally as teaching proceeds; clarify the relevant conceptual phrasing when mistakes reveal ambiguity. Keep useful explanations and source examples together under their topic-part heading. Preserve existing legacy notes as historical evidence. Revise the summary with `updateTopic`; exact questions, learner answers, progress, and mistakes belong in structured state.
+## Ownership
 
-`topic.state.json` has version `11-10-2026`, an ISO createdAt, name, ordered content parts, and a threadTutors array. Each part has a stable `tp-` id, optional parent part, name, references, a goal with a stable `tpg-` id, objective and understoodWhen criteria, and mistakes with context and issue. Each writer thread has an id and a progress map keyed by part id. Progress has active/covered/completed status (`covered` means the walkthrough finished with mastery unverified; `completed` means all goals were verified) and ordered question steps with an optional answerFromUser. An absent answer means no answer was recorded. Read-only references do not create threadTutors.
+- `topic.md`: conceptual explanations, worked examples, terminology, and citations.
+- `topic.state.json`: curriculum, references, mistakes, and each thread's progress and question history. Managed by StateService.
+- Private chat handoff: checked keys and temporary session logistics.
+- Legacy topic workpads: unused. Preserve existing files; do not read them to restore progress.
 
-Reference paths are relative to this JSON file. Use `assets/<filename>` for local PDF, PPT, and image assets. PDF/PPT pages are inclusive ranges `{from, to}` using 1-based file pages. Website references use an HTTP or HTTPS URL. Referenced supplied materials are registered and copied into the topic before its state commits, so the source remains readable in later chats. Use materialIds to select the intended source when attached filenames are ambiguous. Keep content in source order, parents before children, and preserve stable part and goal IDs on revision.
+## Summary
 
-The StateService tools own structured writes. Chat workpads own checked answer keys and temporary session logistics. Per-topic `topic.workpad.md` and `agent.workpad.md` files are unused and are neither read nor written. Existing files can remain on disk; they cannot direct teaching or restore progress. Never edit state files directly or write progress into the topic summary.
+- Follow [GUIDE_DOCUMENT_TEMPLATE.md](../assets/GUIDE_DOCUMENT_TEMPLATE.md).
+- Fill explanations incrementally under the corresponding part headings.
+- Preserve useful explanations, actual source examples, and legacy evidence during edits.
+- Read existing notes before replacing them with `updateTopic.summary`.
+- When a mistake exposes unclear teaching, clarify the conceptual explanation in place.
+- Keep individual attempts and mistake logs in structured state.
 
-In chat, use `Sourced from: [Lecture.pdf, pg. 5-6](edu-material://<material-id>/5)`. For visual material, request visuals and embed the returned `prune-source://<material-id>/<page>` image. In summaries, including Materials, wrap every local Markdown link destination in angle brackets: `[Lecture 4A.pdf, pg. 1-15](<assets/Lecture 4A - Pointers and Functions.pdf#page=1>)`. The brackets keep spaces and parentheses in exact filenames valid Markdown. Link every listed supplied material, including text files, as `[Lecture 4 code.txt](<assets/Lecture 4 - Code used in lecture.txt>)`. Before submitting updateTopic.summary, check that every Materials entry links its exact supplied asset and every local Markdown destination uses `(<assets/...>)`. Directory JSON hrefs and structured reference paths remain plain `assets/<filename>` strings. Display the relevant material before its citation; a link alone is not a visible reference.
+## References
+
+- Preserve source order, parents before children, and stable part and goal IDs.
+- Local paths are relative to `topic.state.json`: `assets/<exact filename>`.
+- Types: `pdf`, `ppt`, `image`, `text`, or `website`.
+- Use `text` for plain text, Markdown, and source code. Example: `{"type":"text","path":"assets/Lecture 4 - Code used in lecture.txt"}`.
+- PDF and PPT ranges are inclusive, 1-based `{from, to}`. Text and image references have no page ranges.
+- Website references use actual HTTP or HTTPS URLs.
+- Referenced supplied assets are copied and registered before commit.
+- Use `materialIds` when source filenames are ambiguous.
+
+## Citations
+
+- Chat: `Sourced from: [Lecture.pdf, pg. 5-6](edu-material://<material-id>/5)`.
+- Visual: request `includeVisuals=true`, then embed `![Description](prune-source://<material-id>/<page>)`.
+- Summary: `[Lecture 4A.pdf, pg. 1-15](<assets/Lecture 4A - Pointers and Functions.pdf#page=1>)`.
+- Text asset: `[Lecture 4 code.txt](<assets/Lecture 4 - Code used in lecture.txt>)`.
+- Wrap every local Markdown destination in angle brackets, including Materials entries.
+- Keep exact filenames in targets. Shorten labels while retaining lecture/part identifiers and extensions.
+- Link every listed supplied material. Anchor PDFs to the first cited page.
+- Directory JSON hrefs and structured paths stay plain `assets/<filename>` strings.
+- Cite online sources with direct Markdown links.
 
 ## Topic directory
 
-Use exactly one `<topic-directory heading="Topic directory" items='[...]' />` element in place of a Markdown directory heading. The `items` value is single-quoted JSON; encode apostrophes within it as `\u0027`. Each entry has `title`, optional `anchor`, `sources` with `label` and `href`, and nested `children`. Follow the source hierarchy and section order. Add a stable anchor only when the corresponding notes exist; leave uncovered entries unlinked. This directory carries no active/completed state.
+- Use exactly one `<topic-directory heading="Topic directory" items='[...]' />`.
+- Follow curriculum hierarchy and source order with nested `children`.
+- Entries have `title`, optional `anchor`, and `sources` containing `label` and `href`.
+- Add an anchor only when notes exist. Leave uncovered entries unlinked.
+- The directory shows curriculum, not progress.
+- Use single-quoted JSON. Encode apostrophes inside it as `\u0027`.
+
+### Directory example
 
 ```markdown
 <topic-directory heading="Topic directory" items='[{"title":"1. Limits","anchor":"limits","sources":[{"label":"Lecture 1.pdf, pg. 2-4","href":"assets/Lecture 1.pdf#page=2"}],"children":[{"title":"1.1 One-sided limits"}]}]' />
@@ -32,4 +66,8 @@ Use exactly one `<topic-directory heading="Topic directory" items='[...]' />` el
 {Conceptual explanation of the material discussed so far.}
 ```
 
-Shorten citation labels semantically, retaining the lecture/part identifier and extension; keep the exact supplied filename in the link target. Cite page ranges and anchor PDF links to their first 1-based page. Use a `Sourced from:` line after the explanation. Materials lists original assets and relevant page ranges. Assessment records and session logistics do not belong in Materials or the directory.
+### Directory with section sources
+
+```markdown
+<topic-directory heading="Topic directory" items='[{"title":"2. Arrays","anchor":"arrays","sources":[{"label":"Lecture 5A.pdf, pg. 5-6","href":"assets/Lecture 5A - Arrays.pdf#page=5"}],"children":[{"title":"2.1 Array Declaration","sources":[{"label":"Lecture 5A.pdf, pg. 7","href":"assets/Lecture 5A - Arrays.pdf#page=7"}]}]}]' />
+```

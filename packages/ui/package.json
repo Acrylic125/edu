@@ -9,6 +9,7 @@
     "./chat": "./chat/chat-layout.tsx",
     "./scroll-area": "./primitives/scroll-area.tsx",
     "./button": "./primitives/button.tsx",
+    "./badge": "./primitives/badge.tsx",
     "./context-menu": "./primitives/context-menu.tsx",
     "./collapsible": "./primitives/collapsible.tsx",
     "./learning-books": "./learning/learning-books.tsx",

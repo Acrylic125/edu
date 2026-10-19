@@ -1,31 +1,63 @@
 # Questions and feedback
 
-Ask one question at a time. Let the answer determine the next question rather than preparing a fixed test set. Apply the [assessment boundary](WHAT_IS_UNDERSTANDING.md#assessment-boundary) when designing questions, choosing follow-ups, and evaluating answers in every mode.
+- Ask one question at a time. Choose the next from the learner's answer.
+- Use [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment.
+- Verify the key privately before asking.
 
-## Walk through a topic
+## Walkthrough checks
 
-Explain a coherent source section first. While walking through, if the source material poses a question or example, ask. Explain worked examples as required by TUTOR_EXPLANATION.md; preserve the learner's attempt at an unsolved exercise before revealing its solution unless they request a walkthrough.
+1. Explain a coherent source section first.
+2. Ask source questions. For worked examples, explain before checking. For unsolved exercises, preserve the learner's first attempt.
+3. Ask for an own-words summary of the part.
+4. Follow up on missing goal evidence until the criteria are met.
 
-Ask the learner to summarize the part in their own words. Push on understanding with targeted follow-ups until the learner demonstrates the part's goals and `understoodWhen` criteria. Evaluate the evidence needed for those goals using [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md). Ask one question at a time, chosen from the preceding answer to resolve a specific remaining gap.
+- After a successful check, offer continue or quick practice.
+- At a part boundary, a test is also an option.
+- For a short, optional, unimportant part, offer continue without assessment.
+- Continuing without assessment leaves mastery unverified.
 
-After a check establishes understanding, offer continue or quick practice as a multiple-choice response. A test can be offered at a part boundary. For a short, optional, unimportant part, an option to continue can be provided. If the learner continues without assessment, preserve the unassessed goals rather than claiming mastery.
+## Practice
 
-## Practice after a part
-
-Call `getQuestions(topicId, topicPartId)` to deduplicate prior questions. Source questions from attached assets, excluding walkthroughs and questions already answered correctly. When no suitable attached question remains, source internet questions that have not been asked previously. End practice when neither source has a suitable question. If web search is unavailable, state that limitation and end practice instead of inventing an internet source.
+1. Retrieve `getQuestions` for the part.
+2. Select questions using the sourcing order below.
 
 ## Independent tests
 
-Retrieve `getMistakesForTopic` for the topics being evaluated and `getQuestions` for their relevant parts. These reads can run concurrently. Use `topics: null` only for an all-topics evaluation or explicit all-topics mistake request.
+1. Retrieve `getMistakesForTopic` for the evaluated topics.
+2. Retrieve `getQuestions` for their relevant parts.
+3. Select questions using the sourcing order below.
 
-Prioritize questions from attached assets, excluding walkthroughs and questions already answered correctly. Then source internet questions that have not been asked previously. End the test when neither source has a suitable question. Favor opportunities to revisit recorded mistakes and combine understanding across topics. [TUTOR_TESTS.md](TUTOR_TESTS.md) describes the same selection boundary for a requested test.
+- The first two reads can run concurrently.
+- Prioritize recorded mistakes and combinations of covered concepts.
+- Use `topics: null` only for an all-topics evaluation or explicit all-topics mistake request.
+- A shown solution or reproduced worked example is assisted practice.
+- Assess transfer with a meaningfully different problem or constraint.
 
-## Deliberate before documenting a mistake
+## Sourcing order for practice and tests
 
-Compare the learner's actual reasoning against the objective and criteria, not just an answer key. When a goal-relevant gap or disputed claim remains, choose a useful skeptical follow-up before giving away an answer: an edge case, assumption, consistency check, verification method, breakdown, or consequence of their claim. The tutor may be wrong; concede when the learner resolves the concern. Avoid repetitive near-identical probes when a direct explanation would help.
+1. Attached practice assets. Exclude walkthroughs and questions already answered correctly.
+2. Internet questions not previously asked, once suitable attached questions are exhausted.
+3. End when no suitable source remains. Disclose unavailable web search.
 
-Offer to verify disputed reasoning with a small test script or walkthrough, explain what you would check, and wait for agreement before performing that verification. This is a teaching choice, not a permission requirement for ordinary state saves.
+## Deliberate
 
-After deliberation confirms an incorrect answer, call `documentMistake` with its context and the issue plus rationale. Clearly distinguish learner errors from tutor errors. An unanswered question, wording preference, or request for explanation is not evidence of a mistake.
+- Compare actual reasoning with the objective, not just the key.
+- Probe a disputed goal-relevant claim before revealing its answer.
+- Choose a useful edge case, assumption, consistency check, verification, breakdown, or consequence.
+- Concede when the learner resolves the concern. The tutor can be wrong.
+- If repeated probes stop helping, explain the difficult point directly.
+- For a disputed claim, offer a test script or walkthrough. State what it checks and wait for agreement.
 
-Record each exact question with `recordQuestion` and each actual learner answer with `recordAnswer`. Keep a checked key in the private chat handoff. When a follow-up is needed, preserve the original answer and append a new question step. Use `complete` with `masteryVerified=true` only after the learner's reasoning satisfies every goal. After the part's checks are resolved or explicitly skipped, a finished walkthrough with unverified mastery uses `masteryVerified=false`, recording coverage without mastery. Keep a part with a pending check active. Exact question/answer records and mistake history live in topic.state.json; the topic summary contains useful conceptual explanations.
+## Record questions and mistakes
+
+- Activate the part before recording progress.
+- Call `recordQuestion` before asking. Save the exact self-contained prompt, inputs, and attribution.
+- Call `recordAnswer` with the learner's actual words and workings at the question's zero-based `stepIndex`.
+- Preserve original attempts. Record retries as new follow-up steps.
+- Resume unanswered questions unless explicitly skipped or terminated.
+- Preserve a skipped step without `answerFromUser`.
+- After deliberation confirms an error, call `documentMistake` with context, issue, and rationale.
+- Attribute learner and tutor errors accurately. Consolidate related mistakes.
+- Requests for explanation, wording preferences, and unassessed reasoning are not mistakes.
+- Mistakes are historical evidence, not a separate mastery system.
+- Follow SKILL.md for part completion and pending-answer protection.

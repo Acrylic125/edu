@@ -1,40 +1,36 @@
 # Explain from the source
 
-Read the current source section and explain its actual example in small, justified steps. Retain its notation, variable names, and values, and include the relevant content so the learner can follow the explanation on its own. Use roughly one or two concise lines per step, with a small table, sketch, or expression when it clarifies the point. Use the compact `Sourced from:` format in [FILE_STRUCTURE.md](FILE_STRUCTURE.md) for attribution after the explanation.
+## Teach a section
 
-## Walk through lecture slides and textbook exposition
+- Read the current source section before teaching.
+- Group reveal slides and repeated material into one coherent section.
+- State the main idea and purpose.
+- Explain unfamiliar terms, notation, assumptions, and relationships.
+- Walk through the source's actual example with its names and values.
+- Justify each meaningful transition. Use roughly one or two concise lines per step.
+- Connect to taught concepts and state relevant source limitations.
+- Explain worked examples before checking understanding.
+- Let the learner attempt unsolved exercises first, unless they request a walkthrough.
+- Follow an explicit quiz-only or practice-only request.
 
-Teach each new coherent section before checking it. Show the relevant source content and explain it in plain language:
+## Show the material
 
-- State the main idea and the purpose of the claim, definition, or example.
-- Unpack unfamiliar terms, symbols, assumptions, and relationships. For a diagram, explain what its parts and connections mean; for a table, explain the pattern or comparison it expresses.
-- Work through the source's reasoning or example, explaining why each meaningful transition follows. For code, connect the operations to the values or state they change; for a derivation, justify the key steps rather than merely displaying the equations.
-- Connect the takeaway to what was already taught and identify any important limitation stated in the source.
+Apply SKILL.md's pending-answer boundary first.
 
-Use only the elements relevant to the section; this is a teaching standard, not a fixed set of headings to repeat. A short slide may need one clear paragraph, while a dense passage may need several small steps. Explain beyond reading its bullets aloud. Group reveal slides or repeated material so the explanation remains coherent.
+- Show every specific reference discussed in the same response, including earlier examples and learner assets.
+- Images and slides: embed the original or a readable crop with necessary labels, axes, and legends.
+- Text: show a relevant excerpt with context.
+- Equations: render the expression and define its symbols.
+- Tables: include relevant rows, headers, and units.
+- Code: include the complete relevant loop, branch, or function with its inputs and declarations.
+- Other formats: provide a visible excerpt or preview.
+- Keep source values and control flow. Label adaptations and reconstructions.
+- Reuse cached text and renders. Read only the needed region.
+- If access or quotation limits prevent display, state the limitation and provide a labelled alternative.
+- A link or text description does not replace an available source visual.
+- Put citations after the explanation using [FILE_STRUCTURE.md](FILE_STRUCTURE.md).
 
-After the coherent explanation, optionally ask a Check using the Feynman default in [TUTOR_QUESTIONS_AND_DELIBERATE.md](TUTOR_QUESTIONS_AND_DELIBERATE.md): invite the learner to explain what they understand about the section in their own words. Use another format when it addresses a specific gap or requested practice. Do not make the learner discover the entire concept through a sequence of questions or wait for a wrong answer before explaining it. When a slide or passage contains a worked example, actually explain that worked example; asking for its output alone does not cover it. When it contains an explicit unsolved exercise, explain the preceding concepts and let the learner attempt the exercise before revealing the solution, unless they request a walkthrough. An explicit quiz/practice-only request can change the default.
-
-Persist the useful conceptual explanation and worked steps under the corresponding topic heading, as conceptual summaries. A section consisting only of questions and answers is not a complete set of learning notes. Include newly taught notes in the normal save; this does not require rewriting earlier sections or rereading the source.
-
-## Display every reference in chat
-
-Apply SKILL.md’s pending-answer boundary first: for a live Check, Test, or retry, display only the prompt and necessary unsolved material. Crop out solution panels/answer annotations, or transcribe the question if a clean crop is unavailable. Status/resume replies do not reveal keys or earlier solutions that answer the pending question.
-
-Every specific reference brought into an explanation or question must be visible in that response within that boundary. This includes supplied materials, learner solution assets, and examples or answers from earlier messages. Display the relevant part alongside its explanation, even when the original was attached or shown earlier; do not require the learner to open a file or scroll back to understand the point.
-
-- **Images, diagrams, charts, screenshots, and slide visuals:** embed the original relevant image or a readable crop/render. Show labels, legends, axes, and surrounding details needed to interpret it. A text description alone is not a replacement. A labelled reconstruction can supplement the source visual; if the original is unavailable, disclose that and clearly identify any reconstruction.
-- **Text, definitions, and passages:** show the relevant excerpt, with enough context to preserve its meaning. For length or quotation limits, use a permitted short excerpt or clearly labelled summary and state the limitation; never imply omitted material is on screen.
-- **Equations and calculations:** render the expression and identify the symbols or values being discussed.
-- **Tables and data:** display the relevant rows/columns with their headers and units.
-- **Code:** show the complete relevant construct and the declarations/inputs needed to follow it, as below.
-- **Other file formats:** present a suitable visible excerpt or preview of the relevant content. If that is not possible, explain the limitation explicitly and provide an accessible alternative.
-
-Use cached text and existing image/page renders first. Render or crop only the needed region when necessary, retain it for reuse, and embed it in chat. Put source attribution after the visible content; a source link or a note-file entry alone does not satisfy this requirement.
-
-When referring to source code, include the complete relevant loop, conditional, or function in a fenced code block. Include the variables, sizes, initial values, and calls needed to understand that construct. Omit unrelated includes, printing, or program scaffolding only when they are not part of the explanation. Keep the source's actual values and control flow; label any necessary adaptation.
-
-For example, explaining the supplied array-copy loop requires showing:
+### Code example
 
 ```c
 #define N 10
@@ -47,14 +43,25 @@ for (i = 0; i < N; i++) {
 }
 ```
 
-Then explain that `i` runs from 0 through 9 and each iteration copies one integer to the corresponding destination element. Quoting only `dest[i] = source[i]` hides the loop bounds and progression. This example illustrates excerpt completeness; for another lesson, use its actual source code rather than substituting this example.
+- `i` runs from 0 through 9. Each iteration copies one integer to the corresponding destination element.
+- Showing only `dest[i] = source[i]` hides the loop bounds and progression.
+- For another lesson, use its actual source code.
 
-Before sending, check each specific reference in the response: can the learner see the material being discussed in this message? Add the missing excerpt or visual when needed; do not substitute a direction to consult the source.
+## Resolve confusion
 
-Connect to concepts already covered. Introduce a necessary prerequisite explicitly and briefly. A heading in the directory does not establish prior knowledge.
+- Identify the difficult transition and explain it concretely before another probe.
+- For code, substitute current values and show the state change.
+- For diagrams and calculations, show the relevant relationship.
+- Use the learner's response to distinguish unclear teaching from a prerequisite gap.
+- If uncertain, make one focused clarification.
+- Review a missing prerequisite briefly, then return to the section.
+- A directory heading does not establish prior knowledge.
+- Apply teaching feedback at its stated scope.
 
-When the learner is confused, identify the difficult transition and re-explain it directly. For code, substitute the current variable value into the source expression and show what is read or changed. For a diagram or calculation, show or describe the relevant elements and their relationship within the response. Prefer this concrete explanation to another request for the learner to explain themselves.
+## Inspect attached images
 
-Distinguish unclear teaching from a prerequisite gap using the learner's actual response. If the cause is uncertain, say only what the evidence supports and choose one small clarification. Offer a brief prerequisite review when needed, then return to the source section.
-
-Read [WHAT_IS_UNDERSTANDING.md](WHAT_IS_UNDERSTANDING.md) for assessment. A short probe can help after clarification, but it is not mandatory after every explanation. Consolidate the useful conceptual clarification into the topic summary. Record confirmed learner-specific mistakes through documentMistake after deliberation. Keep temporary remediation steps in the private chat handoff. Apply explicit teaching feedback at its stated scope.
+- Inspect pixels even when OCR is empty.
+- Explain recognizable text, notation, diagrams, or code in context.
+- Mark uncertain symbols or words. Example: "I read this as x approaching a from the right."
+- Ask only about ambiguities that change the explanation.
+- If inaccessible or unreadable, state the specific limitation.
