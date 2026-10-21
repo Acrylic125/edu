@@ -10,7 +10,7 @@ export const useWorkspace = create<{
   error: string | null
   setSnapshot: (snapshot: Snapshot) => void
   setError: (error: string | null) => void
-}>((set) => ({
+}>((set, get) => ({
   snapshot: {
     runners: [],
     topics: [],
@@ -23,8 +23,15 @@ export const useWorkspace = create<{
   providerSetupComplete: false,
   error: null,
   setSnapshot: (snapshot) => {
+    const activeChatId = useChatTabs.getState().activeId
+    const previousChat = get().snapshot.chats.find((chat) => chat.id === activeChatId)
+    const currentChat = snapshot.chats.find((chat) => chat.id === activeChatId)
     useChatTabs.getState().reconcile(snapshot.chats.map((chat) => chat.id))
     useTopicViews.getState().reconcile(snapshot.topics.map((topic) => topic.id))
+    if (previousChat?.scratchpadRequested && currentChat && !currentChat.scratchpadRequested && !useTopicViews.getState().activeId) {
+      const createdId = currentChat.messages.at(-1)?.topicIds[0]
+      if (createdId && snapshot.topics.some((topic) => topic.id === createdId)) useTopicViews.getState().select(createdId)
+    }
     const providerConnected = snapshot.providers.some((provider) => provider.connected)
     // Keep access for this window after setup, even if a provider later disconnects.
     set((state) => ({

@@ -5,6 +5,15 @@ import { cn } from "../utils"
 
 export const ContextMenu = ContextMenuPrimitive.Root
 
+export function ContextMenuSeparator({ className, ...props }: ContextMenuPrimitive.Separator.Props) {
+  return (
+    <ContextMenuPrimitive.Separator
+      className={cn("-mx-1 my-1 h-px bg-border", className)}
+      {...props}
+    />
+  )
+}
+
 export function ContextMenuTrigger(props: ContextMenuPrimitive.Trigger.Props) {
   return (
     <ContextMenuPrimitive.Trigger

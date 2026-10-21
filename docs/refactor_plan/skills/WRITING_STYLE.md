@@ -13,7 +13,7 @@ Three rules sit above the layers:
 - **Use the short, everyday word.** "Use", not "utilize". "Help", not "facilitate". "Do", not "perform". A long word has to buy its length with precision.
 - **When a rule makes a sentence worse, fix the sentence another way or leave it alone.** A sentence that follows every rule and sounds like a machine wrote it has failed.
 
-Don't invent jargon. Use the words a developer would say out loud: "move", "delete", "a budget that only decreases", not "evacuate", "ratchet", or "endgame". A named pattern is fine when the doc says what it means the first time. Propose a new offender and its replacement as an addition to `unslop`'s abstract-metaphor rule in your reply, with the diff. Don't edit that skill.
+Don't invent jargon. Use the words a developer would say out loud: "move", "delete", "a budget that only decreases", not "evacuate", "ratchet", or "endgame". A named pattern is fine when the doc says what it means the first time.
 
 ## Vary the rhythm
 
@@ -26,7 +26,7 @@ A doc can obey every layer and still read machine-written: every sentence clippe
 
 ## Write sentences to the reader (Google developer style)
 
-- Talk to the reader as "you", in the present tense. "Will" only for things that genuinely happen later.
+- Explain the subject directly in the present tense. Use “you” for actions, not accounts of who said or understood what. Keep learning assessments in progress records.
 - Say who does what: "the compiler checks", not "is checked". Passive is fine only when the actor is unknown or beside the point.
 - Write instructions as commands: "Click Submit." State facts plainly. Never "should be done".
 - Put the condition before the instruction: "To delete the document, click Delete."
@@ -34,8 +34,9 @@ A doc can obey every layer and still read machine-written: every sentence clippe
 - Sound like a knowledgeable friend. No buzzwords, no figurative language, no "please" in instructions, and never "simply", "easy", or "quickly" in a procedure. If it were simple, the reader would not be here.
 - Don't pre-announce ("we will soon support...") and don't start consecutive sentences with the same phrase.
 - Link with words that say where the link goes: the page title or a short description. Never "click here". Prefer a sentence of context on the page over a link off it.
-- Headings carry the point, not just the topic ("Pick the mode first", not "Modes"). Sentence case. A task heading is a bare verb phrase ("Create an instance"). A concept heading is a noun phrase. One h1 per page, no skipped levels.
+- Headings name the concept or example's goal, such as “Encoding an addition”. Start with the explanation or concrete example; keep document organization and teaching-process labels implicit. Use sentence case, one h1 per page, and no skipped levels.
 - Numbered lists for sequences, bullets for everything else. Introduce a list with a complete sentence. Keep items parallel.
+- State the concept directly. Let a compact `Source:` citation carry attribution instead of phrases such as “the lecture also calls for”. In chat, cite attached pages used to teach a concept with a linked `Source:` line. Scratchpad citations can be selective. Original illustrations need no separate citation; their source-based teaching still does.
 - Code goes in code font. UI elements go in bold. Use serial commas. Drop "etc." and say up front that a list is partial.
 
 ## Make statements load one at a time (STE rules)
@@ -66,12 +67,12 @@ A doc can obey every layer and still read machine-written: every sentence clippe
 
 ## Supplement with Visuals / Blocks per point
 
-After each point, **consider when it makes sense**, to add visuals / blocks to clarify the preceeding sentences.
+Show structure, flow, layout and quantitative relationships visually in chat and scratchpads. Label the example's actual inputs, intermediate steps and taught results; leave pending check results unfilled. Explain what to observe.
 
-- **Code** Use code blocks with the associated language.
+- **Code** Use fenced code blocks with the associated language; put identifiers such as `$9` and `$t0` in inline backticks in prose.
 - **Quote** Use quotes to quote points `>`.
 - **Tables and data:** Use to display the relevant rows/columns with their headers and units.
-- **Image / Screenshots** Use sourced images (e.g. from slides, pdf, user attached images)
+- **Image / Screenshots** Use source images when quoting or examining the source itself. Create your own diagrams and plots to illustrate concepts in chat and scratchpads.
 - **Mermaid Diagrams** Use mermaid diagrams to show flow, class diagrams, pie charts, tree view, sequence, use case diagrams, and/or xy chart.
 - **Plots** Use to visualize functions, plots, and 2d/3d charts, heatmap, and animations. Use 
 ```xml
@@ -91,8 +92,8 @@ After each point, **consider when it makes sense**, to add visuals / blocks to c
 Refer to https://plotly.com/javascript/ 
 
 ### Rules
-- Use cached text and existing image/page renders first. Render or crop only the needed region when necessary, retain it for reuse, and embed it in chat. Put source attribution after the visible content; a source link or a note-file entry alone does not satisfy this requirement.
-- Do not force it, only add it when you think it helps the user understand the point better.
+- When quoting or examining a source figure, use its cached render or crop the relevant region and cite it. For explanation, choose or create the clearest illustration; distinguish invented inputs from source data.
+- Choose visuals that explain the concept; omit decorative graphics.
 - When referring to source code, include the complete relevant loop, conditional, or function in a fenced code block. Include the variables, sizes, initial values, and calls needed to understand that construct. Omit unrelated includes, printing, or program scaffolding only when they are not part of the explanation. Keep the source's actual values and control flow; label any necessary adaptation.
 - When explaining code, if no comments are provided, add in 1-2 line comments describing `WHY` it is there.
 

@@ -42,7 +42,7 @@ test("dropping native files into topic and chat composers attaches them without 
       }
     })
     const page = await app.firstWindow()
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     const topicDraft = page.getByRole("textbox", { name: "Message your tutor" })
     await expect(topicDraft).toBeVisible()
     await topicDraft.fill("Teach me limits")

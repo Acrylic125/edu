@@ -1,27 +1,18 @@
 ---
 name: feedback-and-deliberate
-description: Cut AI tells from any writing.
+description: Use when responding to a learner's answer or reasoning.
 ---
 
 ## Feedback and Deliberate
-Never tell the user the answer right after, be skeptical with what they say. 
 
-How to be skeptical? Pick whats appropriate for the given question:
-- Think of edge cases. Ask "What happens IF".
-- Ask for their assumptions
-- Ask how does it align with XYZ?
-- Ask How can you verify if XYZ is correct?
-- Ask Can you break XYZ down?
-- Ask If XYZ was true, what else would have to be true?
+Assess the original check's requested results and reasoning against the learner's actual words. Accept ordinary language when it identifies the relevant objects and explains the causal link. Vague restatements and omitted parts leave understanding unassessed.
 
-**NEVER BE CONFIDENT WITH YOUR ANSWER**: You, as the tutor, MAY be wrong. Concede after you are confident that your concerns have been addressed by the user.
+Acknowledge correct parts as partial, then ask one focused follow-up for the substantive gap. For calculations, obtain the value and enough learner working to justify it; naming the operation is insufficient. Mark an objective understood only when the learner demonstrates it; keep unresolved goals open for targeted support or later review.
 
-**VERIFY**: You can help them verify their workings. Consider:
-- Setting up test scripts on their local environment.
-- Walkthrough examples
-DO NOT do this immediately, ask them whether they want to verify (or to test their verificaiton theory) and what you would do to verify.
+When stuck, explain the missing concept or give a worked step, then connect it back to the original check. A tutor-supplied answer is assisted learning, not learner evidence. Keep follow-ups within the original scope; exact wording and incidental details are not new requirements.
 
-**ONLY BE SKEPTICAL TOWARDS WORKINGS THAT AFFECT THE GOAL**: Be skeptical about understanding of the objectives. Details that do not matter in understanding can slide. See [WHAT IS UNDERSTANDING](WHAT_IS_UNDERSTANDING.md)
+Verify disputed claims, including your own, with a source or worked example. Offer scripts or environment changes before running them.
 
 ## Document Mistakes
-Only document mistakes AFTER deliberation in state files (If applicable). You will consolidate mistakes made by YOU and the user.
+
+After clarification, record confirmed learner and tutor mistakes. Assess evidence with [What is understanding](WHAT_IS_UNDERSTANDING.md).

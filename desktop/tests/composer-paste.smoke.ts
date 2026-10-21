@@ -21,7 +21,7 @@ test("pasting a clipboard image attaches it in topic and chat composers without 
   try {
     const png = (await readFile(resolve("src/renderer/assets/app-icon.png"))).toString("base64")
     const page = await app.firstWindow()
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     const transfer = await page.evaluateHandle((base64) => {
       const blob = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0))
       const transfer = new DataTransfer()

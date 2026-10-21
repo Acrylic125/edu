@@ -7,6 +7,12 @@ description: Cut AI tells from any writing.
 
 Edit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meaning and match the intended tone.
 
+## Scratchpad names
+
+Before creating or renaming a scratchpad, review its proposed name using the rules below. Use a short, specific name in sentence case that identifies its subject or task. Preserve established technical terms, course codes and acronyms. Use the learner's exact title when they explicitly supply one.
+
+For a topic, name the concept, such as "Virtual memory". For a test, name the assessed scope, such as "Virtual memory practice". For a generic scratchpad, name its contents or task, such as "Lab 3 notes". Replace slogans, metaphors and promotional phrasing with the actual subject. "Unlocking the power of virtual memory" becomes "Virtual memory".
+
 ## Patterns to detect and fix
 
 Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.

@@ -61,7 +61,7 @@ test("topic and chat composers keep runners internal when multiple runners are s
       ipcMain.handle("prune:create-topic", () => new Promise(() => {}))
     })
     await page.getByRole("textbox", { name: "Message your tutor" }).fill("Teach me limits")
-    await page.getByRole("form", { name: "New topic composer" }).getByRole("button", { name: "Send message" }).click()
+    await page.getByRole("form", { name: "New scratchpad composer" }).getByRole("button", { name: "Send message" }).click()
     await expect(page.getByRole("button", { name: "Creating topic" })).toHaveAttribute("aria-busy", "true")
     await expect(page.getByRole("button", { name: "Creating topic" }).locator("svg.animate-spin")).toBeVisible()
     await expect(page.getByRole("status").filter({ hasText: "Creating your topic" })).toBeVisible()

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import { BookOpen } from "lucide-react"
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin"
 import { LexicalComposer } from "@lexical/react/LexicalComposer"
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext"
@@ -20,6 +19,8 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getRoot,
+  $getSelection,
+  $isRangeSelection,
   $isElementNode,
   $isLineBreakNode,
   $isRootNode,
@@ -28,16 +29,19 @@ import {
   COMMAND_PRIORITY_NORMAL,
   KEY_ENTER_COMMAND,
   TextNode,
+  RootNode,
   type EditorConfig,
   type LexicalNode,
   type NodeKey,
   type SerializedTextNode,
   type Spread,
 } from "lexical"
+import { Badge } from "@edu/ui/badge"
+import { parseScratchpadCommand, scratchpadCommands } from "../shared/scratchpad-commands"
 import { parseTopicMentions, topicMention } from "../shared/topic-mentions"
 import type { Snapshot } from "../shared/contracts"
 
-type Topic = Pick<Snapshot["topics"][number], "id" | "title" | "archived">
+type Topic = Pick<Snapshot["topics"][number], "id" | "title" | "archived" | "state">
 
 class TopicMentionNode extends TextNode {
   __topicId: string
@@ -87,6 +91,127 @@ class TopicMentionNode extends TextNode {
 function $createTopicMentionNode(topicId: string, title: string) {
   return $applyNodeReplacement(
     new TopicMentionNode(topicId, `@${title}`).setMode("token"),
+  )
+}
+
+class ScratchpadCommandNode extends TextNode {
+  static getType() {
+    return "scratchpad-command"
+  }
+
+  static clone(node: ScratchpadCommandNode) {
+    return new ScratchpadCommandNode(node.__text, node.__key)
+  }
+
+  static importJSON(json: SerializedTextNode) {
+    return $applyNodeReplacement(new ScratchpadCommandNode(json.text)).updateFromJSON(json)
+  }
+
+  createDOM(config: EditorConfig) {
+    const element = super.createDOM(config)
+    element.className = "rounded-md border border-learning-ink/10 bg-learning-sage/60 px-1 py-0.5 font-medium text-learning-ink"
+    element.dataset.scratchpadCommand = this.__text
+    return element
+  }
+
+  isTextEntity() {
+    return true
+  }
+}
+
+function ScratchpadCommands() {
+  const [editor] = useLexicalComposerContext()
+  // The root transform also removes highlighting when an edit moves a command away from the start.
+  useEffect(() => editor.registerNodeTransform(RootNode, (root) => {
+    const first = root.getFirstChild()
+    let start = first
+    if ($isElementNode(first)) start = first.getFirstChild()
+    for (const node of root.getAllTextNodes()) {
+      if (!(node instanceof ScratchpadCommandNode)) continue
+      const command = parseScratchpadCommand(node.getTextContent())
+      const following = node.getNextSibling()?.getTextContent() ?? ""
+      if (node !== start || !command || node.getTextContent() !== command.command || (following && !/^\s/.test(following))) {
+        const replacement = $createTextNode(node.getTextContent())
+        node.replace(replacement)
+        if (node === start) start = replacement
+      }
+    }
+    if (!$isTextNode(start) || start instanceof TopicMentionNode || start instanceof ScratchpadCommandNode) return
+    const command = parseScratchpadCommand(root.getTextContent())
+    if (!command || !start.getTextContent().startsWith(command.command)) return
+    const [prefix] = start.splitText(command.command.length)
+    prefix.replace($applyNodeReplacement(new ScratchpadCommandNode(command.command)))
+  }), [editor])
+  return null
+}
+
+class CommandOption extends MenuOption {
+  constructor(readonly command: (typeof scratchpadCommands)[number]) {
+    super(command.command)
+  }
+}
+
+function CommandTypeahead() {
+  const [editor] = useLexicalComposerContext()
+  const [query, setQuery] = useState<string | null>(null)
+  const options = scratchpadCommands
+    .filter(({ command }) => command.startsWith(`/${query ?? ""}`))
+    .map((command) => new CommandOption(command))
+
+  return (
+    <LexicalTypeaheadMenuPlugin
+      options={options}
+      onQueryChange={setQuery}
+      commandPriority={COMMAND_PRIORITY_NORMAL}
+      triggerFn={(text) => {
+        const selection = $getSelection()
+        const first = $getRoot().getFirstChild()
+        if (!$isRangeSelection(selection) || !$isElementNode(first) || selection.anchor.getNode() !== first.getFirstChild()) return null
+        if (!/^\/[a-z-]*$/.test(text) || !scratchpadCommands.some(({ command }) => command.startsWith(text))) return null
+        return { leadOffset: 0, matchingString: text.slice(1), replaceableString: text }
+      }}
+      onSelectOption={(option, textNode, closeMenu) => {
+        editor.update(() => {
+          if (!textNode) return
+          const command = $applyNodeReplacement(new ScratchpadCommandNode(option.command.command))
+          textNode.replace(command)
+          const space = $createTextNode(" ")
+          command.insertAfter(space)
+          space.select()
+          closeMenu()
+        })
+      }}
+      menuRenderFn={(anchor, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) => {
+        const container = editor.getRootElement()?.parentElement
+        if (!anchor.current || !container) return null
+        return createPortal(
+          <div className="absolute inset-x-0 bottom-full z-50 mb-3 rounded-2xl border border-border bg-popover p-1.5 text-popover-foreground shadow-lg">
+            <ul role="listbox" aria-label="Scratchpad commands">
+              {options.map((option, index) => (
+                <li
+                  key={option.key}
+                  id={`typeahead-item-${index}`}
+                  ref={(element) => option.setRefElement(element)}
+                  role="option"
+                  aria-selected={selectedIndex === index}
+                  className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm aria-selected:bg-accent"
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    selectOptionAndCleanUp(option)
+                  }}
+                >
+                  <span className="shrink-0 font-medium">{option.command.command}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{option.command.description}</span>
+                  <Badge variant={option.command.type}>{option.command.label}</Badge>
+                </li>
+              ))}
+            </ul>
+          </div>,
+          container,
+        )
+      }}
+    />
   )
 }
 
@@ -174,7 +299,7 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
                 {topics.length === 0 ? "Create a topic to tag it here." : "No matching topics"}
               </p>
             ) : (
-              <ul role="listbox" aria-label="Topics">
+              <ul role="listbox" aria-label="Scratchpads">
                 {options.map((option, index) => (
                   <li
                     key={option.key}
@@ -188,7 +313,9 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
                       selectOptionAndCleanUp(option)
                     }}
                   >
-                    <BookOpen className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <Badge variant={option.topic.state?.type ?? "topic"}>
+                      {{ topic: "Topic", test: "Test", generic: "Generic" }[option.topic.state?.type ?? "topic"]}
+                    </Badge>
                     <span className="truncate">{option.topic.title}</span>
                   </li>
                 ))}
@@ -225,7 +352,7 @@ export function TopicMentionInput({
     <LexicalComposer
       initialConfig={{
         namespace: "edu-composer",
-        nodes: [TopicMentionNode],
+        nodes: [TopicMentionNode, ScratchpadCommandNode],
         onError: (error) => {
           throw error
         },
@@ -265,12 +392,14 @@ export function TopicMentionInput({
           ErrorBoundary={LexicalErrorBoundary}
         />
       </div>
+      <ScratchpadCommands />
       <HistoryPlugin />
       {autoFocus && <AutoFocusPlugin defaultSelection="rootEnd" />}
       <OnChangePlugin
         ignoreSelectionChange
         onChange={(state) => onChange(state.read(() => serialize($getRoot())))}
       />
+      <CommandTypeahead />
       <TopicTypeahead topics={topics} />
       <SubmitOnEnter onSubmit={onSubmit} />
     </LexicalComposer>

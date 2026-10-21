@@ -117,7 +117,7 @@ test.each(["claude", "antigravity"] as const)("%s can persist structured topic s
   })
   const actions = [
     { reply: "I’ll explain slowly. Let’s clarify approaching a limit.", calls: [
-      { name: "updateTopic", arguments: JSON.stringify({ topicId: "topic_1", summary: "A limit describes the approached value." }) },
+      { name: "topic_updateTopic", arguments: JSON.stringify({ topicId: "scratchpad_1", summary: "A limit describes the approached value." }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
   ]
@@ -162,7 +162,7 @@ test.each(["claude", "antigravity"] as const)("%s returns a reply and validated 
   const result = await runCliTutorTurn(job, () => {}, () => {}, (event, details) => {
     if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
   })
-  expect(nodes).toEqual(["agent", "tools", "validate", "finish"])
+  expect(nodes).toEqual(["model", "execute_tools", "validate", "publish"])
   expect(result.reply).toBe(reply)
   expect(result.learning).toEqual(chat.learning)
   expect(command).toHaveBeenCalledTimes(1)
@@ -200,7 +200,7 @@ test("a reply accompanying source reads waits for the tool results", async () =>
   })
   const actions = [
     { reply: "Premature reply", calls: [
-      { name: "read_skill", arguments: JSON.stringify({ path: "references/FILE_STRUCTURE.md" }) },
+      { name: "read_skill", arguments: JSON.stringify({ path: "skills/MANAGE_TOPIC.md" }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
     { reply: "Reply using the tool results", calls: [] },
@@ -229,7 +229,7 @@ test.each(["claude", "antigravity"] as const)("%s consumes cross-topic retrieval
   })
   const actions = [
     { reply: "Premature review", calls: [
-      { name: "read_topic_notes", arguments: JSON.stringify({ topicId: "topic_1" }) },
+      { name: "read_scratchpad", arguments: JSON.stringify({ scratchpadId: "scratchpad_1" }) },
       { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
     ] },
     { reply: evidence, calls: [] },

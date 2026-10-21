@@ -8,14 +8,15 @@ import {
   type SendSchema,
   type RunnerSchema,
   type WorkerJob,
-  type CreateTopicSchema,
+  CreateTopicSchema,
 } from "../shared/contracts"
 import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions"
 import { newTopic, WorkspaceRepository } from "../main/workspace"
 import { generateTopicTitle } from "./title"
 import { TurnTrace } from "./trace"
 import { TurnTelemetry } from "./telemetry"
-import { applyTopicMutation } from "../main/state-service"
+import { ScratchpadTransactionSchema } from "../shared/scratchpad-state"
+import { applyScratchpadMutation } from "../main/state-service"
 
 export class RunnerManager {
   private codexProcesses = new Map<string, number>()
@@ -140,7 +141,8 @@ export class RunnerManager {
     this.notify()
   }
 
-  async createTopic(input: z.infer<typeof CreateTopicSchema>) {
+  async createTopic(raw: z.input<typeof CreateTopicSchema>) {
+    const input = CreateTopicSchema.parse(raw)
     const runners = this.repository.stateSnapshot.runners
     let runner = runners.find((item) => item.id === input.runnerId)
     if (!input.runnerId) runner = runners[0]
@@ -194,8 +196,8 @@ export class RunnerManager {
         ...chat.materials,
         ...this.repository.stateSnapshot.topics.filter((topic) => topicIds.includes(topic.id)).flatMap((topic) => topic.materials),
       ]
-      if (input.materialIds?.some((id) => !attachmentMaterials.some((material) => material.id === id && material.kind === "image")))
-        throw new Error("An attached image is not available in this chat.")
+      if (input.materialIds?.some((id) => !attachmentMaterials.some((material) => material.id === id)))
+        throw new Error("An attached file is not available in this chat.")
       this.start(runnerId, chat.id)
       const trace = new TurnTrace(
         join(this.repository.directory, "chats", chat.id, "diagnostics"),
@@ -236,7 +238,7 @@ export class RunnerManager {
         if (current.providerSession) current.providerSession.status = "pending"
         const sentMaterialIds = new Set(current.messages.flatMap((message) => message.materialIds ?? []))
         const materialIds = input.materialIds ?? attachmentMaterials
-          .filter((material) => material.kind === "image" && !sentMaterialIds.has(material.id))
+          .filter((material) => !sentMaterialIds.has(material.id))
           .map((material) => material.id)
         current.messages.push({
           id: randomUUID(),
@@ -273,7 +275,7 @@ export class RunnerManager {
         chat: { ...turnWorkspace.chats.find((item) => item.id === chat.id), providerSession: chat.providerSession },
         topics: this.contextTopics(chat.id, turnWorkspace).map((topic) => ({
           ...topic,
-          assetDirectory: join(this.repository.directory, "topics", topic.id, "assets"),
+          assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
         })),
         runner,
         ...connection,
@@ -282,7 +284,8 @@ export class RunnerManager {
         confirmTopicId: input.confirmTopicId,
         openedTopicId: input.openedTopicId,
         workspaceTopics: turnWorkspace.topics.map((topic) => ({
-          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes, state: topic.state,
+          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes, state: topic.state, materials: topic.materials,
+          assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
         })),
       })
       this.notify()
@@ -365,23 +368,25 @@ export class RunnerManager {
         phase: event.learning.phase,
         topicMutations: event.topicMutations.length,
       })
-      const context = this.contextTopics(chatId).map((topic) => topic.id)
+      const context = this.contextTopics(chatId).filter((topic) => !topic.archived).map((topic) => topic.id)
       const commit = () => this.repository.mutate((workspace) => {
         const writable = new Set(context)
-        for (const mutation of event.topicMutations) {
-          if (mutation.type === "createTopic") {
+        for (const mutation of ScratchpadTransactionSchema.parse({ operations: event.topicMutations }).operations) {
+          if (["createTopic", "createTest", "createGeneric"].includes(mutation.type)) {
             writable.add(mutation.topicId)
           } else if (!writable.has(mutation.topicId)) {
             throw new Error("Only tagged or newly created topics can be written.")
           }
-          applyTopicMutation(workspace, chatId, mutation)
+          applyScratchpadMutation(workspace, chatId, mutation)
         }
         if (event.topicUpdates.length) throw new Error("Legacy topic writes are no longer supported. Retry with structured topic tools.")
         const chat = workspace.chats.find((item) => item.id === chatId)
         if (!chat) throw new Error("Chat not found.")
         chat.learning = event.learning
+        if (event.topicMutations.some((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)))
+          chat.scratchpadRequested = false
         chat.topicHandles = [...new Set([...chat.topicHandles, ...event.topicMutations
-          .filter((mutation) => mutation.type === "createTopic").map((mutation) => mutation.topicId)])]
+          .filter((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)).map((mutation) => mutation.topicId)])]
         chat.providerSession = event.providerSession
         chat.messages.push({
           id: randomUUID(),
@@ -390,7 +395,7 @@ export class RunnerManager {
           ...(event.learning.responseQuestion && { responseQuestion: event.learning.responseQuestion }),
           durationMs,
           createdAt: new Date().toISOString(),
-          topicIds: event.topicMutations.filter((mutation) => mutation.type === "createTopic").map((mutation) => mutation.topicId),
+          topicIds: event.topicMutations.filter((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)).map((mutation) => mutation.topicId),
         })
 
       })

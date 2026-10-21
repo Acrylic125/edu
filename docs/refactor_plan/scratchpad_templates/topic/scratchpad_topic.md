@@ -1,20 +1,9 @@
-# {TOPIC_NAME}
+# Topic document guidance
 
-<topic-directory heading="Topic directory" items='[{"title":"{TOPIC_PART}","children":[]}]' />
+Build the walkthrough with `topic_editContent`, following MANAGE_TOPIC.md. The app renders the document from the saved blocks.
 
-## {TAUGHT_TOPIC_PART}
+Start with the example's goal and inputs. Extend the same example as each section is taught. Put explanation lines, tables, formulas and diagrams in `markdown` blocks; associate them with the curriculum using `sectionId`. Preserve stable block IDs when revising earlier working.
 
-{Conceptual explanation and worked source example.}
+Add `source` blocks for citations or source images, and `term` blocks for taught terminology. Select current explanation blocks with `present` to show them in chat. The app generates the title, directory, anchors, section headings and final terminology table.
 
-Sourced from: [{SHORT_SOURCE_NAME}, pg. {START}-{END}](<assets/{SOURCE_FILENAME}#page={START}>).
-
-## Topic terminology
-
-| Term | Meaning |
-|---|---|
-| {encountered term} | {accurate explanation} |
-
-## Materials
-
-- [{SHORT_SOURCE_NAME}, pg. {START}-{END}](<assets/{SOURCE_FILENAME}#page={START}>).
-- [{SHORT_TEXT_SOURCE_NAME}](<assets/{TEXT_SOURCE_FILENAME}>).
+Record checks and answers with the learning tools. Keep private assessment keys in the handoff.

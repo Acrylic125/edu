@@ -16,34 +16,35 @@ description: Manage scratchpads of type, "test". Extract "type" from `{scratchpa
 ## Creating Test
 
 Steps:
-1. Create scratchpad name.
-2. Create test (`createTest`).
-3. Source topics, ask what topics are to be tested
-4. Validate a list of objectives for the test.
-  - User confirms, proceed to walking part by part.
-  - User declines, make changes.
+1. Establish the covered scope with `test_getCoveredTopics`. Use `topics: null` for all workspace topics unless the learner named a narrower scope. Include earlier teaching across tutor threads, not just the open scratchpad or latest lesson.
+2. Use completed parts as covered. For partial parts, read their recorded questions, answers and taught content to identify the concepts actually introduced. Planned goals, attached pages and activation alone do not establish that a concept has been taught. Exclude untouched parts and untaught portions of active parts. If teaching evidence is missing or ambiguous, clarify what was covered before asking questions about it.
+3. Create the test with references to the source topics and objectives drawn from this covered scope. When scope is already clear from the request and evidence, proceed; otherwise validate the objectives with the learner.
+4. Save the agreed scope and a per-part coverage tally in the private handoff. Preserve it across turns; refresh teaching evidence when the learner asks to expand the test.
 
 ## Explaining
 When needed, [explain in this style](WRITING_STYLE.md).
 
 ## Asking Checks and Questions
 
-Always go question by quesiton, it is dynamic what quesitons can be asked so no "Fixed Test Set".
+Ask one question at a time. Select questions dynamically across the full agreed covered scope.
 
-### Instructions:
-1. Retrieve mistakes for all the topics involved (`getMistakesForTopic`)
-2. Retrieve the topic's questions (`getQuestions`)
-3. Source questions 
-(1 and 2 can be done concurrently)
+Before each question:
+1. Read existing questions from both the source topics and the test to avoid reusing walkthrough checks or previous test questions, and reconstruct the coverage tally. Read mistakes for the source topics involved.
+2. Choose an eligible part with the fewest questions so far. Rotate across all covered parts before repeating one; use past mistakes to break ties. Recency does not increase a part's priority. Count a cross-topic question against each part it actually assesses.
+3. Select a question using the Question Sources rules below. Verify every required concept and prerequisite against the covered scope, including for mixed-topic exercises.
+4. Add the question with references to its source topics, goals matching the covered concepts, and its source reference. Save the updated tally and next part in the private handoff. Continue using the agreed scope when resuming an existing test; correct any earlier out-of-scope selection.
 
-Prioritise the following to source questions. 
-1. Source questions from attached assets (NOT FROM WALK THROUGHS). Move to (2) IF the question was asked previously / None available AND was answered correctly.
-2. Source questions from the internet. Move to (3) IF the question was asked previously. 
-3. End of practice
+Prefer questions that exercise past mistakes or combine covered concepts after satisfying the coverage rotation. A cross-topic question must use only concepts already taught.
 
-Prioritise questions that:
-- Contains areas to make past mistakes made by the user for the topic.
-- Requires a combination of cross topic understanding.
+## Question Sources
+
+Use a question from topic assets if and only if the source explicitly identifies it as an exam or exam-preparation question, such as a past-year paper, sample exam, or textbook practice exercise, and that question has not already been covered or asked. Read the source with `read_material` to verify its purpose and the actual question before selecting it. An ambiguous source is ineligible.
+
+Lecture slides, tutorials, worked examples and walkthrough checks are ineligible question sources, including their quizzes and "try it yourself" exercises. Use these materials only to establish what concepts were taught. Rewording a question or changing its values does not make it a new eligible source.
+
+If no eligible, unused question is available in the topic assets, search online for an exam or exam-preparation question within the covered scope. Inspect the original source and retain its URL and question identifier or page in the question references. Apply the same source and duplication rules to online questions; lecture slides and tutorials remain ineligible.
+
+If online search is unavailable or no suitable question can be verified, explain the limitation and stop sourcing questions. Do not substitute a generated question or a question from an ineligible source.
 
 ## Feedback and Deliberating
 After the user answers, give [FEEDBACK and DELIBERATE on the answer](FEEDBACK_AND_DELIBERATE.md)

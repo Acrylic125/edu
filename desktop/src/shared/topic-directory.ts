@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ContentBlockIdSchema } from "./content-document"
 import { TopicPartSchema } from "./topic-state"
 
 const TopicDirectorySourceSchema = z.object({
@@ -8,10 +9,7 @@ const TopicDirectorySourceSchema = z.object({
 
 export const TopicDirectoryEntrySchema = z.object({
   title: TopicPartSchema.shape.name,
-  anchor: z
-    .string()
-    .regex(/^[a-z0-9][a-z0-9-]*$/)
-    .optional(),
+  anchor: ContentBlockIdSchema.optional(),
   sources: z.array(TopicDirectorySourceSchema).max(1000).default([]),
   get children() {
     return z.array(TopicDirectoryEntrySchema).max(1000).default([])

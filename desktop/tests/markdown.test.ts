@@ -26,6 +26,84 @@ function render(text: string) {
 }
 
 describe("study Markdown", () => {
+  it("shows cited source pages only when chat previews are enabled and avoids duplicate images", () => {
+    const text = `The source shows a fixed-width instruction. [Source](edu-material://${material.id}/2) and [same page](<assets/${material.name}#page=2>)\n\n> [!CHECK]\n> Why use a fixed width?`
+    const props = { text, materials: [material] }
+    const scratchpad = renderToStaticMarkup(createElement(StudyMarkdown, props))
+    expect(scratchpad).not.toContain("<img")
+    const chat = renderToStaticMarkup(createElement(StudyMarkdown, { ...props, showSourcePreviews: true }))
+    expect(chat.match(/<img /g)).toHaveLength(1)
+    expect(chat.indexOf("<img ")).toBeLessThan(chat.indexOf('aria-label="Check your understanding"'))
+    expect(chat).toContain(`src="prune-source://${material.id}/2"`)
+    const embedded = renderToStaticMarkup(createElement(StudyMarkdown, {
+      ...props, showSourcePreviews: true,
+      text: `${text}\n\n![Existing source](prune-source://${material.id}/2)`,
+    }))
+    expect(embedded.match(/<img /g)).toHaveLength(1)
+  })
+
+  it("does not turn unknown sources or text assets into broken source images", () => {
+    const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+      text: `[Text](edu-material://${material.id}/1) [Missing](edu-material://00000000-0000-4000-8000-000000000000/1)`,
+      materials: [{ ...material, kind: "text" }], showSourcePreviews: true,
+    }))
+    expect(html).not.toContain("<img")
+  })
+
+  it("preserves MIPS registers as literal text in checks and scratchpad prose", () => {
+    const text = "Given $9 = 7 and $10 = 5, what result should `add $8, $9, $10` produce in $8? Register $t0 stores the sum of $t1 and $t2."
+    const html = render(`> [!CHECK]\n> ${text}`)
+    expect(html).not.toContain('class="katex"')
+    expect(html).toContain("Given $9 = 7 and $10 = 5")
+    expect(html).toContain("produce in $8?")
+    expect(html).toContain("Register $t0 stores the sum of $t1 and $t2.")
+    expect(html).toContain("<code>add $8, $9, $10</code>")
+  })
+
+  it("keeps genuine math alongside registers without changing escaped dollars", () => {
+    const html = render(String.raw`Register $9 holds 7. There are $2^5 = 32$ patterns; $7 + 5 = 12$. With \(x = 2\), $10 holds 5. The price is \$8.`)
+    expect(html.match(/class="katex"/g)).toHaveLength(3)
+    expect(html).toContain("Register $9 holds 7.")
+    expect(html).toContain("$10 holds 5. The price is $8.")
+    expect(html).not.toContain("katex-error")
+  })
+
+  it.each(["$2 +\n3$", "$2^n$bits", "$2 = xy$", "$2 + xy$"])("preserves supported inline math boundaries: %s", (text) => {
+    const html = render(text)
+    expect(html).toContain('class="katex"')
+    expect(html).not.toContain("katex-error")
+  })
+
+  it.each([
+    ["Register $9 holds 7; compute ", "$x + 1$"],
+    ["Register $t0 is the input. Evaluate ", "$x^2$"],
+  ])("keeps register prose separate from following variable math", (prose, math) => {
+    const html = render(prose + math)
+    expect(html).toContain(`<p>${prose}<span class="katex">`)
+    expect(html.match(/class="katex"/g)).toHaveLength(1)
+    expect(html).not.toContain("katex-error")
+  })
+
+  it("renders understanding checks as labelled cards with rich question content", () => {
+    const html = render("An explanation.\n\n> [!CHECK]\n> Why does **five bits** cover $2^5$ values?\n>\n> - Explain the range.\n> - Use `0–31`.\n\nNext section.")
+    expect(html).toContain('aria-label="Check your understanding"')
+    expect(html).toContain('class="understanding-check')
+    expect(html).toContain('<strong>five bits</strong>')
+    expect(html).toContain('class="katex"')
+    expect(html).toContain('<li>Use <code>0–31</code>.</li>')
+    expect(html).not.toContain('[!CHECK]')
+    expect(html).toMatch(/<\/section>\s*<p>Next section\.<\/p>/)
+  })
+
+  it("renders existing Check paragraphs as cards while preserving ordinary quotes and examples", () => {
+    const html = render("**Check:** Why binary?\n\n> A source quotation.\n\n```markdown\n> [!CHECK]\n> Example only.\n```\n\n**Note:** Keep this as prose.")
+    expect(html.match(/aria-label="Check your understanding"/g)).toHaveLength(1)
+    expect(html).toContain('<p>Why binary?</p>')
+    expect(html).toContain('<blockquote>\n<p>A source quotation.</p>\n</blockquote>')
+    expect(html).toContain('[!CHECK]')
+    expect(html).toContain('<strong>Note:</strong> Keep this as prose.')
+  })
+
   it("renders visualization blocks without changing payload strings or surrounding Markdown", () => {
     const source = String.raw`<visualization settings='{"type":"Plotly.js","data":[{"type":"scatter","x":[0],"y":[1],"text":["\\(x\\) Sourced from: Lecture 6.pdf, pg. 2 <x> />"]}]}' />`
     const html = renderToStaticMarkup(createElement(StudyMarkdown, { text: `Before **plot**\n\n${source}\n\nAfter`, materials: [material] }))
@@ -126,7 +204,7 @@ describe("study Markdown", () => {
       materials: [{ ...material, name }],
       onOpenMaterial: vi.fn(),
     }))
-    expect(html).toContain(`<a href="edu-material://${material.id}/1">${name}</a>`)
+    expect(html).toContain(`<a href="edu-material://${material.id}/1" title="${name}">Lecture 4A - Pointers and Funct….${extension}</a>`)
     expect(html).toContain(", pages 1-15.")
   })
 
@@ -188,4 +266,28 @@ describe("study Markdown", () => {
       expect(html).toContain("<code")
     }
   })
+})
+
+it("shortens opaque source names while preserving page ranges and link targets", () => {
+  const name = "c3e312d6-5a40-42a6-893a-559bfa0fd7d9-b29c1ab5-88d4-4a6a-988a-1ee55fafeb31-pdf.pdf"
+  const source = { ...material, name }
+  const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+    text: `Sourced from: ${name}, pg. 7-8.`,
+    materials: [source],
+    onOpenMaterial: vi.fn(),
+  }))
+  expect(html).toContain('>Document.pdf, pg. 7-8</a>')
+  expect(html).toContain(`<a href="edu-material://${material.id}/7"`)
+  expect(html).toContain(`title="${name}"`)
+})
+
+
+it("repairs spaced asset destinations with parentheses while preserving code samples", () => {
+  const link = `[Lecture PDF](assets/${material.name}#page=6)`
+  const html = renderToStaticMarkup(createElement(StudyMarkdown, {
+    text: `${link}\n\n\`${link}\`\n\n\`\`\`markdown\n${link}\n\`\`\``, materials: [material], onOpenMaterial: vi.fn(),
+  }))
+  expect(html.match(/<a /g)).toHaveLength(1)
+  expect(html).toContain(`href="edu-material://${material.id}/6"`)
+  expect(html).toContain(`<code>${link}</code>`)
 })

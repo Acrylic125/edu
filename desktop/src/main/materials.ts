@@ -3,15 +3,15 @@ import { constants } from "node:fs"
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, extname, join } from "node:path"
-import { dialog } from "electron"
+import { dialog, type BrowserWindow, type OpenDialogOptions } from "electron"
 import { extractText, getDocumentProxy } from "unpdf"
 import { OfficeGenerator, OfficeParser } from "officeparser"
 import { z } from "zod"
 import { MaterialOwnerSchema, MaterialSchema, PastedImageSchema } from "../shared/contracts"
 import { WorkspaceRepository } from "./workspace"
 
-async function selectMaterialFiles() {
-  const selection = await dialog.showOpenDialog({
+async function selectMaterialFiles(parent?: BrowserWindow) {
+  const options = {
     title: "Add learning materials",
     properties: ["openFile", "multiSelections"],
     filters: [
@@ -35,7 +35,10 @@ async function selectMaterialFiles() {
         ],
       },
     ],
-  })
+  } satisfies OpenDialogOptions
+  let selection
+  if (parent) selection = await dialog.showOpenDialog(parent, options)
+  else selection = await dialog.showOpenDialog(options)
   if (selection.canceled) return []
   if (selection.filePaths.length > 12)
     throw new Error("Add up to 12 materials at a time.")
@@ -46,8 +49,8 @@ export class MaterialDrafts {
   // Clipboard images have no native path, so keep their bytes until the draft is imported.
   private sources = new Map<string, { name: string; source: string | Uint8Array }>()
 
-  async select(draftIds: string[]) {
-    return this.add(draftIds, await selectMaterialFiles())
+  async select(draftIds: string[], parent?: BrowserWindow) {
+    return this.add(draftIds, await selectMaterialFiles(parent))
   }
 
   async add(draftIds: string[], sources: string[]) {
@@ -130,15 +133,16 @@ export async function importMaterials(
   repository: WorkspaceRepository,
   owner: z.infer<typeof MaterialOwnerSchema>,
   selectedSources?: string[],
+  parent?: BrowserWindow,
 ) {
   const collection = owner.kind === "topic" ? "topics" : "chats"
   const current = () =>
     owner.kind === "topic" ? repository.topic(owner.id) : repository.chat(owner.id)
   current()
-  const sources = selectedSources ?? await selectMaterialFiles()
+  const sources = selectedSources ?? await selectMaterialFiles(parent)
   if (sources.length === 0) return
   const materials: z.infer<typeof MaterialSchema>[] = []
-  const assetDirectory = join(repository.directory, collection, owner.id, "assets")
+  const assetDirectory = join(repository.directory, collection === "topics" ? "scratchpads" : collection, owner.id, "assets")
   await mkdir(assetDirectory, { recursive: true })
   try {
     for (const source of sources) {

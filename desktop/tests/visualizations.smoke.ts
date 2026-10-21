@@ -91,7 +91,7 @@ test("local 2D and 3D visualizations interact, expand and persist in chat and to
     await page.setViewportSize({ width: 1440, height: 940 })
     await page.reload()
     await expect(quadratic.locator(".scatterlayer .trace")).toBeAttached()
-    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Plotting", exact: true }).click()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Plotting", exact: true }).click()
     await expect(page.locator(".study-document").getByRole("figure", { name: longTitle }).locator(".scatterlayer .trace")).toBeAttached()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(externalRequests).toEqual([])

@@ -48,7 +48,7 @@ test.skipIf(!environment.PRUNE_LIVE_DATA_DIR)(
     const tagged = chat.messages.flatMap((message) => message.topicIds)
     const topics = []
     for (const topic of workspace.topics.filter((topic) => tagged.includes(topic.id)))
-      topics.push({ ...topic, assetDirectory: await copy("topics", topic) })
+      topics.push({ ...topic, assetDirectory: await copy("scratchpads", topic) })
     const job = WorkerJobSchema.parse({
       chat,
       topics,

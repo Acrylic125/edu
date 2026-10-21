@@ -27,3 +27,7 @@ Writers (NOT READ) will FORCE the thread to be added as threadTutors in the topi
 `createTopic(Topic without id/createdAt, threadId)` -> None
   - Call only when a topic is EXPLICITLY created / asked to be created / a prerequisite topic needs to be created.
   - Creates the topic `{topicId}` folder, comprising of: `scratchpad.md`, `scratchpad.state.json`, `assets` (WRITES)
+
+## Structured document edits
+
+Use `topic_editContent` to add, edit or delete blocks in JSON. Read current block IDs first. All changes in one call are atomic. `present` selects the ordered stored blocks to render in the current reply. The app manages revision checks and generates Markdown and navigation. Curriculum changes use the role's update tool; learning evidence uses its question, answer, mistake and progress tools.

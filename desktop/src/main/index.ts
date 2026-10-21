@@ -86,7 +86,7 @@ else {
         if (!id.success || !page.success)
           return new Response("Source not found", { status: 404 })
         const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id.data))
           const material = owner?.materials.find((item) => item.id === id.data)
           if (!owner || !material) continue
@@ -319,7 +319,9 @@ else {
       })
       ipcMain.handle(Channel.createChat, async (event, raw) => {
         trusted(event)
-        const chat = newChat(CreateChatSchema.parse(raw).runnerId)
+        const input = CreateChatSchema.parse(raw)
+        const chat = newChat(input.runnerId)
+        chat.scratchpadRequested = input.scratchpadRequested ?? false
         await repository.mutate((workspace) => {
           if (!workspace.runners.some((runner) => runner.id === chat.runnerId))
             throw new Error("Runner not found.")
@@ -344,7 +346,7 @@ else {
       })
       ipcMain.handle(Channel.selectMaterials, async (event, raw) => {
         trusted(event)
-        return materialDrafts.select(MaterialDraftIdsSchema.parse(raw))
+        return materialDrafts.select(MaterialDraftIdsSchema.parse(raw), window)
       })
       ipcMain.handle(Channel.dropMaterials, async (event, raw) => {
         trusted(event)
@@ -378,7 +380,7 @@ else {
         if (busy)
           throw new Error("Wait for the current lesson before adding sources.")
         if (draftIds.length > 0) await materialDrafts.import(repository, owner, draftIds)
-        else await importMaterials(repository, owner)
+        else await importMaterials(repository, owner, undefined, window)
         notify()
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
@@ -402,7 +404,7 @@ else {
       ipcMain.handle(Channel.openWorkspace, async (event, raw) => {
         trusted(event)
         const topic = repository.topic(IdSchema.parse(raw))
-        const path = join(directory, "topics", topic.id)
+        const path = join(directory, "scratchpads", topic.id)
         await mkdir(path, { recursive: true, mode: 0o700 })
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
@@ -411,7 +413,7 @@ else {
         trusted(event)
         const id = IdSchema.parse(raw)
         const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id))
           const material = owner?.materials.find((item) => item.id === id)
           if (!owner || !material) continue

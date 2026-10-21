@@ -3,6 +3,7 @@ import { runCodexTutorTurn } from "./codex"
 import { generateTopicTitle } from "./title"
 import { runCliTutorTurn } from "./cli"
 import { TurnTelemetry } from "./telemetry"
+import { TutorPublicationError } from "./publication-error"
 
 let busy = false
 process.parentPort.on("message", async (event) => {
@@ -65,6 +66,8 @@ process.parentPort.on("message", async (event) => {
     await flushTelemetry(false)
     process.parentPort.postMessage({ type: "result", ...result })
   } catch (error) {
+    if (error instanceof TutorPublicationError)
+      process.parentPort.postMessage({ type: "trace", event: "tutor.publication_failed", details: { error: error.detail } })
     await flushTelemetry(true)
     let message = "The runner failed. Retry this turn."
     if (error instanceof Error) message = error.message

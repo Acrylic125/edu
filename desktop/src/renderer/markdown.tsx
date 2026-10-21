@@ -1,4 +1,4 @@
-import { createContext, useContext, isValidElement, type ComponentPropsWithoutRef } from "react"
+import { Children, createContext, useContext, isValidElement, type ComponentPropsWithoutRef } from "react"
 import Markdown, { defaultUrlTransform, type ExtraProps } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -11,18 +11,33 @@ import { MermaidDiagram } from "./mermaid-diagram"
 import { MediaPreview } from "./media-preview"
 import { normalizeMathDelimiters } from "./normalize-math"
 import { linkSourceCitations } from "./source-citations"
-import { resolveMaterialLink } from "../shared/material-links"
+import { sourcePreviews } from "./source-previews"
+import { materialReferenceLabel, resolveMaterialLink } from "../shared/material-links"
 import { sectionAnchors } from "./section-anchors"
+import { understandingChecks } from "./understanding-checks"
+import { Check } from "lucide-react"
 import type { Snapshot } from "../shared/contracts"
 
 const VisualizationBlocks = createContext<ReturnType<typeof prepareVisualizationMarkdown>["blocks"]>([])
+const UnderstandingCheckLabel = createContext("Check your understanding")
 
 function VisualizationMarkdownDiv({ node, children }: ComponentPropsWithoutRef<"div"> & ExtraProps) {
   const blocks = useContext(VisualizationBlocks)
+  const checkLabel = useContext(UnderstandingCheckLabel)
   const index = node?.properties["data-visualization-index"]
   if (typeof index === "number" && blocks[index]) {
     const block = blocks[index]
     return <PlotlyVisualization source={block.source} pending={block.pending} />
+  }
+  if (node?.properties["data-understanding-check"]) {
+    return (
+      <section aria-label={checkLabel} className="understanding-check rounded-xl bg-learning-sage p-3.5 text-learning-ink">
+        <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+          <Check aria-hidden="true" className="size-3.5 shrink-0" /> {checkLabel}
+        </p>
+        <div className="understanding-check-body">{children}</div>
+      </section>
+    )
   }
   return <div>{children}</div>
 }
@@ -32,18 +47,25 @@ export function StudyMarkdown({
   topics = [],
   onOpenTopic,
   materials = [],
+  labelMaterials = materials,
   onOpenMaterial,
+  showSourcePreviews = false,
+  checkLabel = "Check your understanding",
 }: {
   text: string
+  checkLabel?: string
+  showSourcePreviews?: boolean
   topics?: { id: string; title: string }[]
   onOpenTopic?: (id: string) => void
   materials?: Snapshot["topics"][number]["materials"]
+  labelMaterials?: Snapshot["topics"][number]["materials"]
   onOpenMaterial?: (id: string) => void
 }) {
   const prepared = prepareVisualizationMarkdown(text)
   return (
     <div className="markdown">
       <VisualizationBlocks.Provider value={prepared.blocks}>
+      <UnderstandingCheckLabel.Provider value={checkLabel}>
       <Markdown
         skipHtml
         urlTransform={(url) =>
@@ -51,7 +73,7 @@ export function StudyMarkdown({
             ? url
             : defaultUrlTransform(url)
         }
-        remarkPlugins={[remarkGfm, remarkMath, sectionAnchors, visualizationMarkdown(prepared)]}
+        remarkPlugins={[remarkGfm, remarkMath, sectionAnchors, understandingChecks, visualizationMarkdown(prepared), [sourcePreviews, { enabled: showSourcePreviews, materials }]]}
         rehypePlugins={[rehypeKatex, [rehypeHighlight, { plainText: ["mermaid"] }]]}
         components={{
           div: VisualizationMarkdownDiv,
@@ -110,15 +132,22 @@ export function StudyMarkdown({
             }
             const source = resolveMaterialLink(href ?? "", materials)
             if (source && onOpenMaterial) {
+              const material = materials.find((item) => item.id === source.id)!
+              const parts = Children.toArray(children)
+              let label = children
+              if (parts.every((part) => typeof part === "string")) {
+                label = materialReferenceLabel(parts.join(""), material, labelMaterials)
+              }
               return (
                 <a
                   href={`edu-material://${source.id}/${source.page}`}
+                  title={material.name}
                   onClick={(event) => {
                     event.preventDefault()
                     onOpenMaterial(source.id)
                   }}
                 >
-                  {children}
+                  {label}
                 </a>
               )
             }
@@ -151,6 +180,7 @@ export function StudyMarkdown({
       >
         {normalizeMathDelimiters(linkSourceCitations(prepared.text, materials))}
       </Markdown>
+      </UnderstandingCheckLabel.Provider>
       </VisualizationBlocks.Provider>
     </div>
   )

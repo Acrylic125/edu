@@ -7,6 +7,7 @@ import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { createTutorSession } from "./tutor"
 import { runAgentGraph } from "./graph"
+import { TutorPublicationError } from "./publication-error"
 import type { TurnTelemetry } from "./telemetry"
 
 const CallSchema = z.object({
@@ -97,7 +98,7 @@ Screenshots attached to the current learner message are also supplied directly a
     const previous = job.chat.providerSession
     const canResume =
       previous?.status === "ready" &&
-      previous.toolVersion === 15 &&
+      previous.toolVersion === 23 &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -136,7 +137,7 @@ Screenshots attached to the current learner message are also supplied directly a
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 15,
+      toolVersion: 23,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })
@@ -280,21 +281,17 @@ Screenshots attached to the current learner message are also supplied directly a
           completion.dispose()
         }
       },
-      ready: () => session.saved && !!reply.trim(),
+      ready() {
+        diagnostic("tutor.validation", { saved: session.saved, saveError: session.saveError ?? null, emptyReply: !session.hasReply(reply) })
+        return session.saved && session.hasReply(reply)
+      },
       recover() {
-        if (!session.saved) {
-          input =
-            "Reply not saved. Stay on the current request.\n1. Repair rejected writes with their original tool and target.\n2. Save the private handoff with save_learning_state. This does not repair topic writes.\n3. Provide the learner-facing reply."
-          if (session.saveError)
-            input += `\nCorrect this rejected save: ${session.saveError}`
-        } else {
-          input =
-            "State staged. Reply to the current learner request without advancing the lesson."
-        }
+        input = session.recoveryMessage(reply)
       },
       finish: () => ({ ...session.finish(reply), providerSession }),
-      exhausted: () => new Error(
+      exhausted: () => new TutorPublicationError(
         session.saveError ??
+        (!session.hasReply(reply) && session.saved ? "The tutor saved its learning state but returned no learner-facing reply." : undefined) ??
         `Codex did not save a complete learning state after 3 attempts (${toolCount} tutoring tool calls). Open Diagnostics to inspect the turn trace.`,
       ),
     })

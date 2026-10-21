@@ -54,10 +54,10 @@ test("a read batch must be consumed by the next model request before its reply c
     model: async () => {
       count++
       if (count === 1) return { reply: "Premature", calls: [
-        { name: "read_skill", arguments: JSON.stringify({ path: "references/FILE_STRUCTURE.md" }) },
+        { name: "read_skill", arguments: JSON.stringify({ path: "skills/MANAGE_TOPIC.md" }) },
         { name: "save_learning_state", arguments: JSON.stringify(chat.learning) },
       ], finishAfterTools: true }
-      expect(readResults[0]).toContain("Topic files and source attribution")
+      expect(readResults[0]).toContain("# Manage Topic")
       return { reply: "Reply after reading", calls: [], finishAfterTools: true }
     },
     consumeTools: (_calls, results) => { readResults.push(...results.map((result) => result.text)) },
@@ -89,4 +89,17 @@ test("native tool graphs invalidate a previous successful save on malformed argu
   expect(result.results.map((result) => result.success)).toEqual([true, false])
   expect(tutor.saved).toBe(false)
   expect(() => tutor.finish("Stale reply")).toThrow()
+})
+
+test("exhausted validation exposes a retry message while retaining internal diagnostic detail", async () => {
+  const { chat, tutor } = await session()
+  const graph = createTutorGraph({
+    session: tutor,
+    model: async () => ({ reply: "Invalid reply", calls: [{ name: "save_learning_state", arguments: JSON.stringify({ ...chat.learning, workpad: "" }) }], finishAfterTools: true }),
+    consumeTools: () => {}, recover: () => {}, maxAttempts: 1, exhausted: () => new Error("Model budget"),
+  })
+  await expect(graph.invoke({})).rejects.toMatchObject({
+    message: "The response could not be prepared. Please retry your message.",
+    detail: expect.stringContaining("A private handoff and a concrete next action are required"),
+  })
 })

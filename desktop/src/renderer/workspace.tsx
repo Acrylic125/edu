@@ -7,6 +7,7 @@ import {
   AtSign,
   Check,
   ChevronRight,
+  Copy,
   FolderOpen,
   FileText,
   LoaderCircle,
@@ -53,14 +54,15 @@ import { MediaPreview } from "./media-preview"
 import { TopicDirectory } from "./topic-directory"
 import { ProviderModelPicker } from "./provider-model-picker"
 import { TopicMentionInput } from "./topic-mention-input"
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@edu/ui/context-menu"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@edu/ui/context-menu"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@edu/ui/collapsible"
 import { Badge } from "@edu/ui/badge"
 import { z } from "zod"
 import { providerDefaultModels, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
+import { mostRecentTopic } from "../shared/recent-topic"
 import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
-import { topicSourceMaterials } from "../shared/material-links"
+import { materialDisplayName, topicSourceMaterials } from "../shared/material-links"
 
 function ConfirmPlanButton(props: Pick<ComponentProps<"button">, "disabled" | "onClick">) {
   return (
@@ -96,6 +98,9 @@ export function App() {
       >
     >()
   const [busy, setBusy] = useState(false)
+  const [fileSelection, setFileSelection] = useState<string>()
+  const [fileSelectionError, setFileSelectionError] = useState<{ key: string; message: string }>()
+  const fileSelectionId = useRef<symbol | undefined>(undefined)
   const [submitting, setSubmitting] = useState<string>()
   const responding = useRef(new Set<string>())
   const draftValues = useRef(drafts)
@@ -104,8 +109,19 @@ export function App() {
   const thread = useChatScroll(chatId)
   const topic = snapshot.topics.find((item) => item.id === topicId)
   const chat = snapshot.chats.find((item) => item.id === chatId)
+  const messageCheckLabels = new Map<string, string>()
+  let checkLabel = "Check your understanding"
+  for (const message of chat?.messages ?? []) {
+    if (message.role === "user" && message.topicIds.length > 0) {
+      const hasTest = snapshot.topics.some((item) => message.topicIds.includes(item.id) && item.state?.type === "test")
+      checkLabel = hasTest ? "TEST" : "Check your understanding"
+    }
+    messageCheckLabels.set(message.id, checkLabel)
+  }
   const taggedTopicIds = new Set(chat?.messages.flatMap((message) => message.topicIds) ?? [])
-  const draftPlans = snapshot.topics.filter((candidate) => taggedTopicIds.has(candidate.id) && !candidate.planConfirmed && candidate.learning.outline.length > 0)
+  const draftPlans = snapshot.topics.filter((candidate) => taggedTopicIds.has(candidate.id) && !candidate.archived && !candidate.planConfirmed && candidate.learning.outline.length > 0)
+  const awaitingPlanConfirmation = chat?.phase === "awaiting_plan_confirmation" && draftPlans.length > 0
+  const labelMaterials = [...snapshot.topics, ...snapshot.chats].flatMap((item) => item.materials)
   const chatMaterials = [
     ...(chat?.materials ?? []),
     ...snapshot.topics.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
@@ -157,7 +173,7 @@ export function App() {
         useChatTabs.getState().cycle(event.shiftKey)
         restoreChatFocus()
       } else {
-        const topics = useWorkspace.getState().snapshot.topics.filter((item) => !item.archived)
+        const topics = useWorkspace.getState().snapshot.topics
         if (topics.length === 0) return
         const reverse = event.shiftKey
         const views = useTopicViews.getState()
@@ -270,10 +286,10 @@ export function App() {
   }
 
   async function sendChat() {
-    let content = (drafts[chatKey] ?? "").trim()
-    if (chatRunnerBusy || busy || !chatModelConnected) return
+    let content = drafts[chatKey] ?? ""
+    if (chatRunnerBusy || busy || fileSelection === chatKey || !chatModelConnected) return
     const pendingImages = imageDrafts[chatKey] ?? []
-    if (!content) {
+    if (!content.trim()) {
       const materials = [...(chat?.materials ?? []), ...pendingImages]
       if (materials.length === 0) return
       content = `Help me understand the attached materials: ${materials.map((material) => material.name).join(", ")}.`
@@ -330,11 +346,11 @@ export function App() {
   }
 
   async function startTopic() {
-    let content = (drafts["new-topic"] ?? "").trim()
-    if (busy || !newModelConnected) return
-    if (!content) {
+    let content = drafts["new-topic"] ?? ""
+    if (busy || fileSelection === "new-topic" || !newModelConnected) return
+    if (!content.trim()) {
       if (topicMaterials.length === 0) return
-      content = `Help me learn the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
+      content = `Help me work with the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
     }
     openTopic()
     let createdChat: string | undefined
@@ -342,38 +358,66 @@ export function App() {
     setSubmitting("new-topic")
     const success = await perform(async () => {
       const runner = await newRunnerId()
-      const createdTopic = await desktop().createTopic({ title: content, runnerId: runner })
-      const title = (await desktop().snapshot()).topics.find((item) => item.id === createdTopic)?.title ?? "New topic"
+      const chatId = await desktop().createChat({ runnerId: runner, scratchpadRequested: true })
+      createdChat = chatId
       let materialIds: string[] = []
       if (topicMaterials.length > 0) {
-        await desktop().importMaterials({ kind: "topic", id: createdTopic }, topicMaterials.map((material) => material.id))
-        const imported = (await desktop().snapshot()).topics.find((item) => item.id === createdTopic)
-        materialIds = imported?.materials.filter((material) => material.kind === "image").map((material) => material.id) ?? []
+        await desktop().importMaterials({ kind: "chat", id: chatId }, topicMaterials.map((material) => material.id))
+        const imported = (await desktop().snapshot()).chats.find((item) => item.id === chatId)
+        materialIds = imported?.materials.map((material) => material.id) ?? []
         setTopicMaterials([])
         setImageDrafts((current) => ({ ...current, "new-topic": [] }))
       }
-      const chatId = await desktop().createChat({ runnerId: runner })
-      createdChat = chatId
-      const message = `${topicMention(createdTopic, title)} ${content}`
+      const message = content
       submittedMessage = message
       transitionWorkspace(() => {
-        selectTopic(createdTopic)
+        selectTopic(undefined)
         selectChat(chatId)
       })
       // The new-topic composer is replaced by the topic, so a failed send keeps the request in its chat.
       replaceDraft("new-topic", "")
       replaceDraft(chatId, message)
-      await desktop().send({ chatId, content: message, openedTopicId: createdTopic, materialIds })
+      await desktop().send({ chatId, content: message, materialIds })
     })
     setSubmitting(undefined)
     if (success && createdChat && draftValues.current[createdChat] === submittedMessage) replaceDraft(createdChat, "")
   }
 
-  async function attachNewTopic() {
-    await perform(async () => {
-      const materials = await desktop().selectMaterials(topicMaterials.map((material) => material.id))
-      setTopicMaterials(materials)
-    })
+  async function attachMaterials(mode: "topic" | "chat") {
+    if (fileSelectionId.current || busy) return
+    const key = mode === "topic" ? "new-topic" : chatKey
+    const selectionId = Symbol()
+    const draftIds = mode === "topic" ? topicMaterials.map((material) => material.id) : []
+    fileSelectionId.current = selectionId
+    setFileSelection(key)
+    setFileSelectionError(undefined)
+    setError(null)
+    try {
+      const materials = await desktop().selectMaterials(draftIds)
+      if (fileSelectionId.current !== selectionId) {
+        // A canceled picker can still finish later; its files must not attach to another draft.
+        await desktop().discardMaterials(materials.filter((material) => !draftIds.includes(material.id)).map((material) => material.id))
+        return
+      }
+      if (mode === "topic") setTopicMaterials(materials)
+      else if (materials.length > 0) {
+        fileSelectionId.current = undefined
+        setFileSelection(undefined)
+        await perform(async () => {
+          const id = await ensureChat()
+          await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
+        })
+      }
+    } catch (failure) {
+      if (fileSelectionId.current === selectionId) {
+        setFileSelectionError({ key, message: failure instanceof Error ? desktopErrorMessage(failure) : "Could not select files. Try again." })
+      }
+    } finally {
+      if (fileSelectionId.current === selectionId) {
+        fileSelectionId.current = undefined
+        setFileSelection(undefined)
+      }
+    }
   }
 
   function composer(mode: "topic" | "chat") {
@@ -384,20 +428,14 @@ export function App() {
     const draft = drafts[key] ?? ""
     let runnerBusy = chatRunnerBusy
     let model = chatModel
-    let placeholder = "Ask anything, or type @ to tag a topic…"
+    let placeholder = "Ask anything, or type @ to tag a scratchpad…"
     let submit = sendChat
-    let attach = async () => {
-      await perform(async () => {
-        const id = await ensureChat()
-        await desktop().importMaterials({ kind: "chat", id })
-      })
-    }
+    const attach = () => attachMaterials(mode)
     if (mode === "topic") {
       runnerBusy = false
       model = newModel
       placeholder = "What would you like to learn?"
       submit = startTopic
-      attach = attachNewTopic
     }
     async function dropFiles(files: File[]) {
       await perform(async () => {
@@ -446,12 +484,12 @@ export function App() {
     let submitLabel = "Send message"
     if (submittingComposer) {
       submitLabel = "Sending message"
-      if (mode === "topic") submitLabel = "Creating topic"
+      if (mode === "topic") submitLabel = "Creating scratchpad"
     }
-    const attachmentBusy = busy || (mode === "topic" && runnerBusy)
+    const attachmentBusy = busy || fileSelection !== undefined || (mode === "topic" && runnerBusy)
     return (
       <ChatComposerLayout
-        aria-label={mode === "topic" ? "New topic composer" : "Chat composer"}
+        aria-label={mode === "topic" ? "New scratchpad composer" : "Chat composer"}
         newTopicMode={mode === "topic"}
         onPasteCapture={(event) => {
           const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"))
@@ -499,6 +537,22 @@ export function App() {
         }}
         attachments={
           <>
+            {fileSelection === key && (
+              <div role="status" className="m-3 flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
+                <span>Waiting for file selection. Choose files in the file picker, or cancel and try again if it hasn’t appeared.</span>
+                <button type="button" className="shrink-0 font-medium underline underline-offset-2" aria-label="Cancel file selection" onClick={() => {
+                  fileSelectionId.current = undefined
+                  setFileSelection(undefined)
+                  setFileSelectionError({ key, message: "File selection canceled. Your draft is unchanged." })
+                }}>Cancel</button>
+              </div>
+            )}
+            {fileSelectionError?.key === key && (
+              <div role="alert" className="m-3 flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <span>{fileSelectionError.message}</span>
+                <button type="button" className="shrink-0 font-medium underline underline-offset-2" disabled={attachmentBusy} aria-label="Retry attaching files" onClick={() => { void attach() }}>Retry</button>
+              </div>
+            )}
             {providerDisconnected && (
               <div role="alert" className="m-3 flex items-center justify-between gap-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                 <span>{provider?.name ?? model.provider} is disconnected. Connect it or choose a connected provider before sending.</span>
@@ -550,10 +604,11 @@ export function App() {
                 {topicMaterials.filter((material) => !pendingImages.some((image) => image.id === material.id)).map((material) => (
                   <span
                     key={material.id}
-                    className="flex max-w-48 items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
+                    title={material.name}
+                    className="flex h-6 max-w-48 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground"
                   >
                     <FileText className="size-3.5 shrink-0" />
-                    <span className="truncate">{material.name}</span>
+                    <span className="truncate">{materialDisplayName(material, [...labelMaterials, ...topicMaterials])}</span>
                     <button
                       type="button"
                       aria-label={`Remove ${material.name}`}
@@ -644,7 +699,7 @@ export function App() {
                 type="submit"
                 aria-label={submitLabel}
                 aria-busy={submittingComposer}
-                disabled={(!draft.trim() && materials.length === 0) || busy || runnerBusy || !provider?.connected}
+                disabled={(!draft.trim() && materials.length === 0) || busy || fileSelection === key || runnerBusy || !provider?.connected}
               >
                 {submittingComposer ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
               </button>
@@ -663,9 +718,11 @@ export function App() {
     onNew: () => openChat(),
     onClose: closeChat,
   }
+  const recentTopic = mostRecentTopic(snapshot)
   const newTopicContent = (
     <NewTopicView>
       <LearningSuggestions
+        testTopic={recentTopic && { title: recentTopic.title, mention: topicMention(recentTopic.id, recentTopic.title) }}
         disabled={busy}
         onSelect={(prompt) => {
           openTopic()
@@ -682,8 +739,8 @@ export function App() {
           <ChatEmptyState
             title="Start a chat"
             description={topic
-              ? "The open topic's notes and sources are included. Type @ to bring another topic into this chat."
-              : "Ask anything. Type @ to bring a topic's notes and sources into this chat."}
+              ? "The open scratchpad and its sources are included. Type @ to bring another scratchpad into this chat."
+              : "Ask anything. Type @ to bring a scratchpad and its sources into this chat."}
             onPrompt={(prompt) => replaceDraft(chatKey, prompt)}
           />
         ) : (
@@ -691,45 +748,64 @@ export function App() {
             {chat.messages.map((message) => (
               <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={window.prune?.copyText} durationMs={message.durationMs}>
                 {message.role === "user" && message.materialIds?.length ? (
-                  <div className="mb-3 flex flex-wrap gap-2">
+                  <div className="mb-2 flex flex-wrap gap-1" aria-label="Attached files">
                     {(message.materialIds ?? []).flatMap((id) => {
-                      const image = chatMaterials.find((material) => material.id === id && material.kind === "image")
-                      return image ? [image] : []
-                    }).map((image) => (
-                      <MediaPreview
-                        key={image.id}
-                        label={image.name}
-                        preview={<img src={`prune-source://${image.id}/1`} alt={image.name} />}
-                      >
-                        {(open) => (
+                      const material = chatMaterials.find((material) => material.id === id)
+                      return material ? [material] : []
+                    }).map((material) => {
+                      if (material.kind !== "image") {
+                        return (
                           <button
+                            key={material.id}
                             type="button"
-                            aria-label={`Preview ${image.name}`}
-                            aria-haspopup="dialog"
-                            className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                            onClick={open}
+                            title={material.name}
+                            className="inline-flex h-6 max-w-48 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted"
+                            onClick={() => { void perform(() => desktop().openMaterial(material.id)) }}
                           >
-                            <img src={`prune-source://${image.id}/1`} alt={image.name} className="max-h-48 max-w-full object-contain" />
+                            <FileText className="size-3 shrink-0" />
+                            <span className="truncate">{materialDisplayName(material, labelMaterials)}</span>
                           </button>
-                        )}
-                      </MediaPreview>
-                    ))}
+                        )
+                      }
+                      return (
+                        <MediaPreview
+                          key={material.id}
+                          label={material.name}
+                          preview={<img src={`prune-source://${material.id}/1`} alt={material.name} />}
+                        >
+                          {(open) => (
+                            <button
+                              type="button"
+                              aria-label={`Preview ${material.name}`}
+                              aria-haspopup="dialog"
+                              className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                              onClick={open}
+                            >
+                              <img src={`prune-source://${material.id}/1`} alt={material.name} className="max-h-48 max-w-full object-contain" />
+                            </button>
+                          )}
+                        </MediaPreview>
+                      )
+                    })}
                   </div>
                 ) : null}
                 <StudyMarkdown
                   text={message.content}
+                  checkLabel={messageCheckLabels.get(message.id)}
+                  showSourcePreviews={message.role === "assistant"}
                   topics={snapshot.topics}
                   onOpenTopic={openTopic}
                   materials={chatMaterials}
+                  labelMaterials={labelMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
-                {message.role === "assistant" && message.id === chat.messages.at(-1)?.id && draftPlans.map((plan) => (
+                {message.role === "assistant" && message.id === chat.messages.at(-1)?.id && awaitingPlanConfirmation && draftPlans.map((plan) => (
                   <div key={plan.id} className="mt-4" role="group" aria-label={`Confirm learning plan for ${plan.title}`}>
                     <p className="mb-3 text-sm text-muted-foreground">Review the plan for {plan.title}. You can ask for changes in chat.</p>
                     <ConfirmPlanButton disabled={busy || chatRunnerBusy || !chatModelConnected} onClick={() => { void confirmPlan(plan) }} />
                   </div>
                 ))}
-                {message.role === "assistant" && message.responseQuestion && (
+                {message.role === "assistant" && message.responseQuestion && !(message.id === chat.messages.at(-1)?.id && awaitingPlanConfirmation) && (
                   <fieldset
                     className="mt-4 flex min-w-0 flex-col gap-2"
                     disabled={message.id !== chat.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting === chat.id}
@@ -753,9 +829,12 @@ export function App() {
               <ChatMessage role="assistant">
                 <StudyMarkdown
                   text={runtime.reply}
+                  checkLabel={checkLabel}
+                  showSourcePreviews
                   topics={snapshot.topics}
                   onOpenTopic={openTopic}
                   materials={chatMaterials}
+                  labelMaterials={labelMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
               </ChatMessage>
@@ -847,8 +926,9 @@ export function App() {
     )
   } else {
     const documentMaterials = topicSourceMaterials(topic, snapshot.chats)
-    const thread = topic.state?.threadTutors.find((thread) => thread.id === chat?.id)
-    const currentPart = topic.state?.content.find((part) => thread?.progress[part.id]?.status === "active")
+    const topicState = topic.state?.type === "topic" ? topic.state : undefined
+    const thread = topicState?.threadTutors.find((thread) => thread.id === chat?.id)
+    const currentPart = topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
       topic.learning.notes.replace(/^# .+\n+/, ""),
     )
@@ -857,7 +937,10 @@ export function App() {
         chatLabel="Tutor chat"
         status={chatRunning ? "Working" : "Ready to learn"}
         documentActions={
-          <div className="absolute right-4 top-4 z-10 flex gap-1">
+          <div className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-2">
+            <Badge variant={topic.state?.type ?? "topic"}>
+              {{ topic: "Topic", test: "Test", generic: "Generic" }[topic.state?.type ?? "topic"]}
+            </Badge>
             <button
               className="rounded-full p-2 text-muted-foreground hover:bg-accent"
               aria-label="Open workspace in Finder"
@@ -879,20 +962,20 @@ export function App() {
                     <button
                       type="button"
                       key={material.id}
-                      className="flex max-w-full cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      className="flex h-6 max-w-full cursor-pointer items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                       title={`Open ${material.name}`}
                       onClick={() =>
                         void perform(() => desktop().openMaterial(material.id))
                       }
                     >
-                      <FileText className="size-4 shrink-0" />
-                      <span className="truncate">{material.name}</span>
+                      <FileText className="size-3 shrink-0" />
+                      <span className="truncate">{materialDisplayName(material, labelMaterials)}</span>
                     </button>
                   ))
                 : null
             }
             actions={
-              !topic.planConfirmed &&
+              topic.state?.type === "topic" && !topic.planConfirmed &&
               topic.learning.outline.length > 0 && (
                 <div className="mt-9" role="group" aria-label="Topic plan confirmation">
                   <p className="mb-3 text-sm text-muted-foreground">
@@ -906,17 +989,21 @@ export function App() {
               )
             }
           >
-            <StudyMarkdown text={notes.before} materials={documentMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            <StudyMarkdown text={notes.before} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             {notes.directory && (
               <TopicDirectory
                 heading={notes.directory.heading}
                 items={notes.directory.items}
+                markdown={[notes.before, notes.after]}
+                topics={snapshot.topics}
+                onOpenTopic={openTopic}
                 currentSection={currentPart?.name ?? ""}
                 materials={documentMaterials}
+                labelMaterials={labelMaterials}
                 onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
               />
             )}
-            {notes.after.trim() && <StudyMarkdown text={notes.after} materials={documentMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
+            {notes.after.trim() && <StudyMarkdown text={notes.after} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
           </LearningDocumentLayout>
         }
         chat={chatPane}
@@ -944,9 +1031,10 @@ export function App() {
   return (
     <>
       <WorkspaceFrame
-        title={loaded ? topic?.title ?? "New topic" : "Loading workspace…"}
+        title={loaded ? topic?.title ?? "New scratchpad" : "Loading workspace…"}
         workspaceId={topic?.id ?? "new"}
         appName="EdU"
+        navigationName="scratchpads"
         nativeTitlebar={navigator.userAgent.includes("Macintosh")}
         hasChat={loaded && view === "learn" && hasChat}
         sidebar={
@@ -965,6 +1053,9 @@ export function App() {
             onArchiveTopic={(item) => {
               void perform(() => desktop().archiveTopic({ topicId: item.id, archived: !item.archived }))
             }}
+            onCopyTopicId={(item) => {
+              void perform(() => desktop().copyText(item.id))
+            }}
             busy={busy}
             onOpenSettings={() => {
               setSetupProvider(undefined)
@@ -974,7 +1065,14 @@ export function App() {
           />
         }
         banner={
-          error && (
+          <>
+          {busy && (
+            <div role="status" className="flex items-center gap-2 border-b border-border px-5 py-3 text-sm text-muted-foreground">
+              <LoaderCircle className="size-4 animate-spin" />
+              {submitting ? "Sending your request…" : "Finishing your action…"}
+            </div>
+          )}
+          {error && (
             <div
               className="flex items-center justify-between gap-4 border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive"
               role="alert"
@@ -988,7 +1086,8 @@ export function App() {
                 <X className="size-4" />
               </button>
             </div>
-          )
+          )}
+          </>
         }
       >
         {content}
@@ -1005,6 +1104,7 @@ function DesktopSidebar({
   onOpenSettings,
   onTagTopic,
   onArchiveTopic,
+  onCopyTopicId,
   busy,
 }: {
   snapshot: Snapshot
@@ -1014,12 +1114,18 @@ function DesktopSidebar({
   onOpenSettings: () => void
   onTagTopic: (topic: Snapshot["topics"][number]) => void
   onArchiveTopic: (topic: Snapshot["topics"][number]) => void
+  onCopyTopicId: (topic: Snapshot["topics"][number]) => void
   busy: boolean
 }) {
   const { closeNavigation, revealChat } = useWorkspaceLayout()
   const tagging = useRef(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const activeTopics = snapshot.topics.filter((item) => !item.archived)
   const archivedTopics = snapshot.topics.filter((item) => item.archived)
+
+  useEffect(() => {
+    if (archivedTopics.some((item) => item.id === topicId)) setArchivedOpen(true)
+  }, [archivedTopics, topicId])
   const runningChats = snapshot.chats.filter((chat) =>
     snapshot.runtime.some(
       (state) => state.chatId === chat.id && state.status === "running",
@@ -1051,6 +1157,7 @@ function DesktopSidebar({
           render={
             <TopicNavigationItem
               title={item.title}
+              scratchpadType={item.state?.type ?? "topic"}
               selected={view === "learn" && item.id === topicId}
               busy={runningTopicIds.has(item.id)}
               onClick={() => openTopic(item.id)}
@@ -1074,7 +1181,12 @@ function DesktopSidebar({
           </ContextMenuItem>
           <ContextMenuItem disabled={busy} onClick={() => onArchiveTopic(item)}>
             {item.archived ? <ArchiveRestore aria-hidden="true" /> : <Archive aria-hidden="true" />}
-            {item.archived ? "Unarchive Chat" : "Archive Chat"}
+            {item.archived ? "Unarchive scratchpad" : "Archive scratchpad"}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => onCopyTopicId(item)}>
+            <Copy aria-hidden="true" />
+            Copy Scratchpad ID
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -1109,22 +1221,22 @@ function DesktopSidebar({
         onClick={() => openTopic()}
       >
         <Plus className="size-4" aria-hidden="true" />
-        New topic
+        New scratchpad
       </button>
-      <TopicNavigation empty={activeTopics.length === 0}>
+      <TopicNavigation label="Your scratchpads" empty={activeTopics.length === 0}>
         {activeTopics.map(topicItem)}
       </TopicNavigation>
       {archivedTopics.length > 0 && (
-        <Collapsible className="mt-6">
+        <Collapsible className="mt-6" open={archivedOpen} onOpenChange={setArchivedOpen}>
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span className="flex min-w-0 items-center gap-2">
-              Archived chats
+              Archived
               <Badge variant="secondary" className="min-w-5 px-1.5 tabular-nums">{archivedTopics.length}</Badge>
             </span>
             <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-data-panel-open:rotate-90 motion-reduce:transition-none" />
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <nav className="space-y-1.5" aria-label="Archived chats">
+            <nav className="space-y-1.5" aria-label="Archived">
               {archivedTopics.map(topicItem)}
             </nav>
           </CollapsibleContent>

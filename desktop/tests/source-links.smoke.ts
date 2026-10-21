@@ -29,7 +29,7 @@ test("chat displays source diagrams and opens original materials from citations"
     state.topics.push(topic)
     state.chats.push(chat)
   })
-  const assets = join(repository.directory, "topics", topic.id, "assets")
+  const assets = join(repository.directory, "scratchpads", topic.id, "assets")
   await mkdir(assets, { recursive: true })
   const pdf = await readFile(resolve("tests/fixtures/diagram.pdf"))
   await copyFile(resolve("tests/fixtures/diagram.pdf"), join(assets, name))
@@ -58,7 +58,7 @@ test("chat displays source diagrams and opens original materials from citations"
     }
     await page.getByRole("button", { name: topic.title, exact: true }).click()
     await app.evaluate(() => { delete process.env.EDU_TEST_OPENED_SOURCE })
-    await page.getByRole("button", { name, exact: true }).click()
+    await page.getByTitle(`Open ${name}`, { exact: true }).click()
     await expect.poll(() => app.evaluate(() => process.env.EDU_TEST_OPENED_SOURCE)).toBe(join(assets, name))
     expect(await page.evaluate(() => {
       if (!window.prune) throw new Error("Desktop bridge is missing")

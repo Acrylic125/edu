@@ -1,6 +1,9 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph"
 import { z } from "zod"
 import type { Diagnostic } from "../shared/contracts"
+import type { TurnTelemetry } from "./telemetry"
+import { isScratchpadReadTool } from "./scratchpad-tools"
+import { TutorPublicationError } from "./publication-error"
 import type { createTutorSession } from "./tutor"
 
 type TutorSession = Awaited<ReturnType<typeof createTutorSession>>
@@ -27,7 +30,6 @@ const TurnState = Annotation.Root({
   ready: Annotation<boolean>({ reducer: (_previous, next) => next, default: () => false }),
   result: Annotation<ReturnType<TutorSession["finish"]> | null>({ reducer: (_previous, next) => next, default: () => null }),
 })
-const readTools = new Set(["read_skill", "read_material", "read_topic_notes", "getQuestions", "getMistakesForTopic", "whereAmI", "whatIsNext"])
 
 type ConsumeTools = (calls: typeof ToolState.State.calls, results: typeof ToolState.State.results) => void | Promise<void>
 
@@ -57,7 +59,7 @@ export function createTutorToolGraph(session: TutorSession, diagnostic: Diagnost
     .compile()
 }
 
-export function createTutorGraph({ session, model, consumeTools, recover, maxAttempts, exhausted, diagnostic = () => {} }: {
+export function createTutorGraph({ session, model, consumeTools, recover, maxAttempts, exhausted, telemetry, diagnostic = () => {} }: {
   session: TutorSession
   model: (attempt: number) => Promise<z.infer<typeof ModelResponseSchema>>
   consumeTools: ConsumeTools
@@ -65,41 +67,45 @@ export function createTutorGraph({ session, model, consumeTools, recover, maxAtt
   maxAttempts: number
   exhausted: () => Error
   diagnostic?: Diagnostic
+  telemetry?: TurnTelemetry
 }) {
+  // The desktop runner owns tracing; inherited LangSmith settings must not upload its conversations.
+  process.env.LANGSMITH_TRACING = "false"
+  process.env.LANGCHAIN_TRACING_V2 = "false"
+  process.env.LANGCHAIN_TRACING = ""
   const tools = createTutorToolGraph(session, diagnostic, consumeTools)
   return new StateGraph(TurnState)
     .addNode("model", async (state) => {
       diagnostic("graph.node", { node: "model", attempt: state.attempt + 1 })
-      const response = ModelResponseSchema.parse(await model(state.attempt + 1))
+      let output
+      if (telemetry) output = await telemetry.span("graph.model", "AGENT", () => model(state.attempt + 1))
+      else output = await model(state.attempt + 1)
+      const response = ModelResponseSchema.parse(output)
       return { ...response, attempt: state.attempt + 1, ready: false, results: [] }
     })
     .addNode("tools", tools)
     .addNode("validate", (state) => {
       diagnostic("graph.node", { node: "validate", saved: session.saved })
-      let ready = session.saved && state.reply.trim().length > 0
+      diagnostic("tutor.validation", { saved: session.saved, saveError: session.saveError ?? null, emptyReply: !session.hasReply(state.reply) })
+      let ready = session.saved && session.hasReply(state.reply)
       if (state.calls.length) {
         ready = ready && state.finishAfterTools && state.results.every((result) => result.success) &&
-          !state.calls.some((call) => readTools.has(call.name)) && state.calls.at(-1)?.name === "save_learning_state"
+          !state.calls.some((call) => isScratchpadReadTool(call.name)) && state.calls.at(-1)?.name === "save_learning_state"
       }
       return { ready }
     })
-    .addNode("recover", async () => {
+    .addNode("recover", async (state) => {
       diagnostic("graph.node", { node: "recover" })
-      let message = "State staged. Reply to the current learner request without advancing the lesson."
-      if (!session.saved) {
-        message = "Reply not published. Stay on the current request.\n1. Repair rejected writes with their original tool and target.\n2. Save the private handoff with save_learning_state. This does not repair topic writes.\n3. Provide the learner-facing reply."
-        if (session.saveError) message += `\nCorrect rejected saves first: ${session.saveError}`
-      }
-      await recover(message)
+      await recover(session.recoveryMessage(state.reply))
       return {}
     })
     .addNode("publish", (state) => {
       diagnostic("graph.node", { node: "publish" })
       return { result: session.finish(state.reply) }
     })
-    .addNode("exhausted", () => {
+    .addNode("exhausted", (state) => {
       diagnostic("graph.node", { node: "exhausted" })
-      if (session.saveError) throw new Error(session.saveError)
+      if (session.saveError) throw new TutorPublicationError(session.saveError)
       throw exhausted()
     })
     .addEdge(START, "model")
@@ -122,7 +128,10 @@ export function createTutorGraph({ session, model, consumeTools, recover, maxAtt
 
 export async function runTutorGraph(options: Parameters<typeof createTutorGraph>[0]) {
   const graph = createTutorGraph(options)
-  const state = await graph.invoke({}, { recursionLimit: options.maxAttempts * 4 + 2 })
+  const invoke = () => graph.invoke({}, { recursionLimit: options.maxAttempts * 4 + 2 })
+  let state
+  if (options.telemetry) state = await options.telemetry.span("tutor.graph", "CHAIN", invoke)
+  else state = await invoke()
   if (!state.result) throw new Error("The tutoring graph ended without a validated reply.")
   return state.result
 }

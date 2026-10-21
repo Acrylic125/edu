@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import { ChatSchema, MessageSchema, WorkspaceSchema, type Workspace } from "../shared/contracts"
+import { StoredWorkspaceSchema } from "./workspace-migrations"
 
 const ChatStateSchema = ChatSchema.omit({ messages: true })
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true })
@@ -62,7 +63,8 @@ export class ChatDatabase {
       const topics = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'topics'").get())
       const pending = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'files_pending'").get())
       return {
-        state: WorkspaceSchema.parse({ version: 2, ...settings, chats, topics: JSON.parse(topics.payload) }),
+        state: StoredWorkspaceSchema.parse({ version: 2, ...settings, chats, topics: JSON.parse(topics.payload) }),
+        needsMigration: !WorkspaceSchema.shape.topics.safeParse(JSON.parse(topics.payload)).success,
         filesPending: pending.payload === "true",
         removedFiles: RemovedFilesSchema.parse(JSON.parse(JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'removed_files'").get()).payload)),
       }
@@ -81,7 +83,7 @@ export class ChatDatabase {
       const now = new Date().toISOString()
       const oldTopicsRow = database.prepare("SELECT payload FROM metadata WHERE key = 'topics'").get()
       let oldTopics: Workspace["topics"] = []
-      if (oldTopicsRow) oldTopics = WorkspaceSchema.shape.topics.parse(JSON.parse(JsonRowSchema.parse(oldTopicsRow).payload))
+      if (oldTopicsRow) oldTopics = StoredWorkspaceSchema.shape.topics.parse(JSON.parse(JsonRowSchema.parse(oldTopicsRow).payload))
       const removedFiles = RemovedFilesSchema.parse({ topics: oldTopics.filter((topic) => !validated.topics.some((item) => item.id === topic.id)).map((topic) => topic.id), chats: [] })
       for (const chat of validated.chats) {
         const existing = database.prepare("SELECT payload FROM chats WHERE id = ?").get(chat.id)

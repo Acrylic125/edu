@@ -1,3 +1,4 @@
+import { TopicStateSchema } from "../src/shared/topic-state"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -42,21 +43,21 @@ test("a structured lecture text reference copies its asset and survives reload w
   const service = new StateService(repository, chat.id)
   const content = ["4a", "4c"].map((section) => ({
     id: `tp-${section}`, name: section.toUpperCase(), references: [],
-    goals: { id: `tpg-${section}`, objective: "Trace the code", understoodWhen: ["Explain the output"] }, mistakes: [],
+    goals: [{ objective: "Trace the code", understoodWhen: ["Explain the output"] }], mistakes: [],
   }))
   await service.updateTopic(topic.id, { content })
   await service.activatePart(topic.id, "tp-4c")
-  await service.complete(topic.id, "tp-4c", false)
+  await service.complete(topic.id, "tp-4c")
   await service.updateTopic(topic.id, {
     materialIds: [material.id],
-    content: [{ ...content[0], references: [{ type: "text", path: `assets/${name}` }] }, content[1]],
+    content: [{ ...content[0], references: [{ type: "other-file", path: `assets/${name}` }] }, content[1]],
   })
   const reloaded = new WorkspaceRepository(repository.directory)
   await reloaded.load()
   const saved = reloaded.topic(topic.id)
-  expect(saved.state?.content[0].references).toEqual([{ type: "text", path: "assets/Lecture 4 - Code used in lecture.txt" }])
-  expect(saved.state?.threadTutors).toEqual([{ id: chat.id, progress: { "tp-4c": { status: "covered", steps: [] } } }])
-  expect(await readFile(join(repository.directory, "topics", topic.id, "assets", name), "utf8")).toBe("Useful study material")
+  expect(TopicStateSchema.parse(saved.state).content[0].references).toEqual([{ type: "other-file", path: "assets/Lecture 4 - Code used in lecture.txt" }])
+  expect(TopicStateSchema.parse(saved.state).threadTutors).toEqual([{ id: chat.id, progress: { "tp-4c": { status: "completed", steps: [] } } }])
+  expect(await readFile(join(repository.directory, "scratchpads", topic.id, "assets", name), "utf8")).toBe("Useful study material")
   const citation = parseTopicDirectory(saved.learning.notes).directory?.items[0].sources[0]
   expect(citation).toEqual({ label: "Lecture 4.txt", href: "assets/Lecture 4 - Code used in lecture.txt" })
   expect(resolveMaterialLink(citation?.href ?? "", saved.materials)).toEqual({ id: material.id, page: 1 })

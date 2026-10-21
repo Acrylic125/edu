@@ -3,14 +3,9 @@ import { Image, getImage } from "astro:assets";
 import appIcon from "../../../desktop/src/renderer/assets/app-icon.png";
 import LearningDemo from "../components/demo/LearningDemo.astro";
 import DownloadSection from "../components/download/DownloadSection.astro";
-import HeroArtwork from "../components/hero/HeroArtwork.astro";
-import { links } from "../links";
+import TransformationHero from "../components/hero/TransformationHero.astro";
 import "../styles.css";
 
-const actions = [
-  { label: "Download", href: links.download, primary: true },
-  { label: "Use Skill", href: links.skill, primary: false },
-];
 const favicon = await getImage({ src: appIcon, width: 64, height: 64, format: "png" });
 const title = "EdU — Your personal AI tutor";
 const description = "EdU is your personal AI tutor. Learn from your slides, practise what you know, and keep revision notes as you go.";
@@ -63,44 +58,7 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
       </header>
 
       <main>
-        <section aria-labelledby="intro" class="mb-12 flex flex-col items-center justify-between gap-6 pt-3 sm:mb-16 sm:flex-row sm:gap-8 sm:pt-10">
-          <div class="w-full min-w-0 max-w-xl sm:w-auto sm:flex-1">
-            <h1 id="intro" class="text-[clamp(3.4rem,15vw,5.5rem)] font-semibold leading-[0.98] tracking-[-0.065em] sm:text-6xl sm:leading-[1.06] sm:tracking-[-0.045em] lg:text-[4.25rem]">
-              Your personal<br />AI tutor.
-            </h1>
-            <p class="mt-3 max-w-md text-base leading-7 text-muted-foreground sm:mt-5">
-              Turn your slides, notes, and questions into lessons, practice, and revision notes.
-            </p>
-            <div class="mt-6 flex flex-wrap gap-3 sm:mt-7">
-              {actions.map((action) => {
-                let Tag: "a" | "button" = "button";
-                if (action.href) Tag = "a";
-
-                return (
-                  <Tag
-                    class:list={["action", { "action-primary": action.primary }]}
-                    href={action.href || undefined}
-                    download={action.primary && !!action.href}
-                    disabled={!action.href}
-                    title={!action.href ? `${action.label} link coming soon` : undefined}
-                  >
-                    {action.primary ? (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M12 3v12m-5-5 5 5 5-5M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="m5 6 5 6-5 6m9 0h5" />
-                      </svg>
-                    )}
-                    {action.label}
-                  </Tag>
-                );
-              })}
-            </div>
-          </div>
-          <HeroArtwork />
-        </section>
+        <TransformationHero />
 
         <LearningDemo />
         <DownloadSection />

@@ -1,5 +1,6 @@
 import { z } from "zod"
-import { TopicStateSchema, TopicMutationSchema, TopicPartSchema } from "./topic-state"
+import { TopicPartSchema } from "./topic-state"
+import { ScratchpadStateSchema, ScratchpadMutationSchema } from "./scratchpad-state"
 
 export const IdSchema = z.string().uuid()
 export const ProviderIdSchema = z.enum(["codex", "claude", "antigravity"])
@@ -105,6 +106,11 @@ export const LearningStateSchema = z
     outline: z.array(TopicPartSchema.shape.name).max(100),
     currentSection: z.string().max(1000),
     pendingQuestion: z.string().max(20_000),
+    pendingCheck: z.object({
+      topicId: IdSchema,
+      topicPartId: TopicPartSchema.shape.id,
+      stepIndex: z.number().int().nonnegative(),
+    }).optional(),
     privateAnswerKey: z.string().max(20_000),
     responseQuestion: ResponseQuestionSchema.optional().describe("Multiple-choice response UI for the current reply. Supply its prompt and options when offering a choice; omit when no choice is pending. This is learner-visible and must contain no answer key."),
     nextAction: z.string().max(10_000),
@@ -124,7 +130,7 @@ export const LearningStateSchema = z
     }
   })
 export const TopicSchema = z.object({
-  state: TopicStateSchema.optional(),
+  state: ScratchpadStateSchema.optional(),
   id: IdSchema,
   archived: z.boolean().default(false),
   title: z.string().max(150),
@@ -144,6 +150,7 @@ export const ProviderSessionSchema = z.object({
 })
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
   runnerId: IdSchema,
+  scratchpadRequested: z.boolean().default(false),
   messages: z.array(MessageSchema),
   topicHandles: z.array(IdSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
@@ -215,6 +222,7 @@ export const PublicChatSchema = ChatSchema.omit({
   learning: true,
   materials: true,
 }).extend({
+  phase: LearningStateSchema.shape.phase,
   materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
 })
 export const SnapshotSchema = z.object({
@@ -229,12 +237,12 @@ export const CreateTopicSchema = z.object({
   title: z.string().trim().min(1).max(30_000),
   runnerId: IdSchema.optional(),
 })
-export const CreateChatSchema = z.object({ runnerId: IdSchema })
+export const CreateChatSchema = z.object({ runnerId: IdSchema, scratchpadRequested: z.boolean().optional() })
 export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
   materialIds: z.array(IdSchema).optional(),
-  content: z.string().trim().min(1).max(30_000),
+  content: z.string().max(30_000).refine((content) => content.trim().length > 0, "Message cannot be empty."),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
 })
@@ -281,7 +289,9 @@ export const WorkerJobSchema = z.object({
   topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
   workspaceTopics: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
     notes: LearningStateSchema.shape.notes,
-    state: TopicStateSchema.optional(),
+    materials: z.array(MaterialSchema).optional(),
+    assetDirectory: z.string().optional(),
+    state: ScratchpadStateSchema.optional(),
   })).default([]),
   runner: RunnerSchema,
   apiKey: z.string().default(""),
@@ -310,7 +320,7 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
     reply: z.string().min(1).max(200_000),
     learning: LearningStateSchema,
     topicUpdates: z.array(TopicUpdateSchema).default([]),
-    topicMutations: z.array(TopicMutationSchema).default([]),
+    topicMutations: z.array(ScratchpadMutationSchema).default([]),
     providerSession: ProviderSessionSchema.optional(),
   }),
   z.object({ type: z.literal("error"), error: z.string() }),
@@ -369,7 +379,7 @@ export type DesktopBridge = {
   removeRunner: (id: string) => Promise<void>
   startRunner: (id: string) => Promise<void>
   stopRunner: (id: string, chatId?: string) => Promise<void>
-  createTopic: (input: z.infer<typeof CreateTopicSchema>) => Promise<string>
+  createTopic: (input: z.input<typeof CreateTopicSchema>) => Promise<string>
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
   archiveTopic: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>

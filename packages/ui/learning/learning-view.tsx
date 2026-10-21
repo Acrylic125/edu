@@ -1,9 +1,9 @@
 import type { ReactNode } from "react"
 import {
   ArrowRightIcon,
-  BookOpenIcon,
-  CalculatorIcon,
-  CodeIcon,
+  ClipboardCheckIcon,
+  GraduationCapIcon,
+  MessageCircleIcon,
 } from "lucide-react"
 
 import { LearningBooks } from "./learning-books"
@@ -13,26 +13,29 @@ import { cn } from "../utils"
 
 const learningSuggestions = [
   {
+    type: "topic",
     label: "Learn calculus",
     description: "Limits, derivatives and integrals",
     prompt:
-      "Help me learn calculus, starting with limits, derivatives and integrals.",
-    icon: CalculatorIcon,
+      "/new-topic Help me learn calculus, starting with limits, derivatives and integrals.",
+    icon: GraduationCapIcon,
     color: "bg-learning-yellow",
   },
   {
-    label: "Explore automata",
-    description: "From finite states to languages",
+    type: "test",
+    label: "Test Me on ...",
+    description: "Put your understanding to the test",
     prompt:
-      "Help me learn automata and formal languages, starting with finite automata.",
-    icon: CodeIcon,
+      "/new-test Test me on ...",
+    icon: ClipboardCheckIcon,
     color: "bg-learning-sage",
   },
   {
-    label: "Prepare for an exam",
-    description: "Turn your papers into practice",
-    prompt: "Help me prepare for my exam using my slides and past year papers.",
-    icon: BookOpenIcon,
+    type: "generic",
+    label: "What is a State Machine?",
+    description: "Explore a question with free notes",
+    prompt: "/new-generic What is a state machine?",
+    icon: MessageCircleIcon,
     color: "bg-learning-blue",
   },
 ]
@@ -40,23 +43,31 @@ const learningSuggestions = [
 export function LearningSuggestions({
   disabled = false,
   onSelect,
+  testTopic,
 }: {
   disabled?: boolean
+  testTopic?: { title: string; mention: string }
   onSelect: (prompt: string) => void
 }) {
+  const suggestions = learningSuggestions.map((suggestion) => {
+    if (suggestion.type !== "test" || !testTopic) return suggestion
+    return { ...suggestion, label: `Test Me on @${testTopic.title}`, prompt: `/new-test Test me on ${testTopic.mention}` }
+  })
   return (
     <div
       className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3"
       aria-label="Learning suggestions"
     >
-      {learningSuggestions.map((suggestion) => (
+      {suggestions.map((suggestion) => (
         <Button
-          key={suggestion.label}
+          key={suggestion.type}
+          aria-label={suggestion.label}
+          title={suggestion.label}
           variant="plain"
           size="auto"
           disabled={disabled}
           className={cn(
-            "group relative flex min-h-24 flex-row items-center gap-4 overflow-hidden rounded-[1.75rem] px-5 py-5 text-left text-learning-ink transition-shadow hover:ring-2 hover:ring-primary/30 disabled:cursor-not-allowed motion-reduce:transition-none sm:min-h-44 sm:flex-col sm:items-start sm:gap-5",
+            "group relative flex min-h-24 min-w-0 flex-row items-center gap-4 overflow-hidden rounded-[1.75rem] px-5 py-5 text-left text-learning-ink transition-shadow hover:ring-2 hover:ring-primary/30 disabled:cursor-not-allowed motion-reduce:transition-none sm:min-h-44 sm:flex-col sm:items-start sm:gap-5",
             suggestion.color,
           )}
           onClick={() => onSelect(suggestion.prompt)}
@@ -64,8 +75,8 @@ export function LearningSuggestions({
           <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-learning-circle">
             <suggestion.icon className="size-5" aria-hidden="true" />
           </span>
-          <span>
-            <span className="block text-sm font-semibold">
+          <span className="min-w-0 flex-1 sm:w-full sm:flex-none">
+            <span className="line-clamp-2 text-base font-semibold leading-6 [overflow-wrap:anywhere]">
               {suggestion.label}
             </span>
             <span className="mt-1 block text-xs leading-5 text-learning-subtle">

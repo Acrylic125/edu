@@ -10,7 +10,7 @@ import { StateService } from "../src/main/state-service"
 
 const part = (id = "tp-limits", name = "Limits") => ({
   id, name, references: [],
-  goals: { id: `tpg-${id}`, objective: `Explain ${name}`, understoodWhen: ["Justify the reasoning"] },
+  goals: [{ objective: `Explain ${name}`, understoodWhen: ["Justify the reasoning"] }],
   mistakes: [],
 })
 
@@ -27,7 +27,7 @@ async function workspace() {
 }
 
 test("structured state validates references and rejects duplicate parts and reversed pages", () => {
-  const state = { version: "11-10-2026", createdAt: new Date().toISOString(), name: "Limits", content: [part()], threadTutors: [] }
+  const state = { type: "topic", version: "11-10-2026", createdAt: new Date().toISOString(), name: "Limits", content: [part()], threadTutors: [] }
   expect(TopicStateSchema.parse(state).content[0].id).toBe("tp-limits")
   expect(TopicStateSchema.safeParse({ ...state, content: [part(), part()] }).success).toBe(false)
   for (const path of ["/etc/passwd", "../outside.pdf", "assets/../../outside.pdf", "C:\\secret.pdf"]) {
@@ -46,7 +46,7 @@ test("reads do not register threads and continuation returns all active threads 
     await reader.whatIsNext(topic.id)
     await reader.getQuestions(topic.id, "tp-limits")
     await reader.getMistakesForTopic(null)
-    expect(repository.topic(topic.id).state?.threadTutors.map((thread) => thread.id)).toEqual([threadId])
+    expect(TopicStateSchema.parse(repository.topic(topic.id).state).threadTutors.map((thread) => thread.id)).toEqual([threadId])
     await service.activatePart(topic.id, "tp-limits")
     await service.recordQuestion(topic.id, "tp-limits", "Why does the limit exist?")
     await reader.activatePart(topic.id, "tp-limits")
@@ -64,7 +64,7 @@ test("concurrent writers preserve each thread, answers, and mistakes across relo
   const setup = await workspace()
   try {
     const { repository, topic, service } = setup
-    const original = await readFile(join(setup.directory, "topics", topic.id, "topic.md"), "utf8")
+    const original = await readFile(join(setup.directory, "scratchpads", topic.id, "scratchpad.md"), "utf8")
     const other = new StateService(repository, randomUUID())
     await Promise.all([service.activatePart(topic.id, "tp-limits"), other.activatePart(topic.id, "tp-derivatives")])
     await service.recordQuestion(topic.id, "tp-limits", "What is a limit?")
@@ -75,12 +75,12 @@ test("concurrent writers preserve each thread, answers, and mistakes across relo
     ])
     const reloaded = new WorkspaceRepository(setup.directory)
     await reloaded.load()
-    const state = reloaded.topic(topic.id).state
+    const state = TopicStateSchema.parse(reloaded.topic(topic.id).state)
     expect(state?.threadTutors).toHaveLength(2)
     expect(state?.threadTutors[0].progress["tp-limits"].steps).toEqual([{ question: "What is a limit?", answerFromUser: "An approached value" }])
     expect(await new StateService(reloaded, randomUUID()).getMistakesForTopic(null)).toHaveLength(2)
-    expect(await readFile(join(setup.directory, "topics", topic.id, "topic.md"), "utf8")).toBe(original)
-    expect(TopicStateSchema.parse(JSON.parse(await readFile(join(setup.directory, "topics", topic.id, "topic.state.json"), "utf8"))).threadTutors).toHaveLength(2)
+    expect(await readFile(join(setup.directory, "scratchpads", topic.id, "scratchpad.md"), "utf8")).toBe(original)
+    expect(TopicStateSchema.parse(JSON.parse(await readFile(join(setup.directory, "scratchpads", topic.id, "scratchpad.state.json"), "utf8"))).threadTutors).toHaveLength(2)
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -92,26 +92,26 @@ test("a fresh thread sees walkthrough coverage without treating it as mastery or
     for (const id of ["tp-limits", "tp-derivatives"]) {
       await service.activatePart(topic.id, id)
       await service.recordQuestion(topic.id, id, "Explain this example.")
-      await service.recordAnswer(topic.id, id, "Walkthrough demonstration; owner mastery unverified.")
-      await service.complete(topic.id, id, false)
+      await service.recordAnswer(topic.id, id, "The limit depends on nearby values; the point itself can be undefined.")
+      await service.complete(topic.id, id)
     }
     const reloaded = new WorkspaceRepository(setup.directory)
     await reloaded.load()
     const reader = new StateService(reloaded, randomUUID())
     expect(await reader.whereAmI(topic.id)).toEqual([])
-    expect(reloaded.topic(topic.id).state?.threadTutors[0].progress["tp-limits"].status).toBe("covered")
+    expect(TopicStateSchema.parse(reloaded.topic(topic.id).state).threadTutors[0].progress["tp-limits"].status).toBe("completed")
     expect(await reader.getTopicProgress(topic.id)).toMatchObject([
-      { part: { id: "tp-limits" }, threads: [{ threadId, progress: { status: "covered" } }] },
-      { part: { id: "tp-derivatives" }, threads: [{ threadId, progress: { status: "covered" } }] },
+      { part: { id: "tp-limits" }, threads: [{ threadId, progress: { status: "completed" } }] },
+      { part: { id: "tp-derivatives" }, threads: [{ threadId, progress: { status: "completed" } }] },
       { part: { id: "tp-integrals" }, threads: [] },
     ])
     expect((await reader.whatIsNext(topic.id)).map((choice) => choice.part.id)).toEqual(["tp-integrals"])
-    expect(reloaded.topic(topic.id).state?.threadTutors).toHaveLength(1)
-    expect((await reader.getQuestions(topic.id, "tp-limits"))[0].answerFromUser).toContain("mastery unverified")
+    expect(TopicStateSchema.parse(reloaded.topic(topic.id).state).threadTutors).toHaveLength(1)
+    expect((await reader.getQuestions(topic.id, "tp-limits"))[0].answerFromUser).toContain("nearby values")
     await service.activatePart(topic.id, "tp-limits")
     expect((await service.whereAmI(topic.id))[0].progress.status).toBe("active")
     await service.complete(topic.id, "tp-limits")
-    expect(repository.topic(topic.id).state?.threadTutors[0].progress["tp-limits"].status).toBe("completed")
+    expect(TopicStateSchema.parse(repository.topic(topic.id).state).threadTutors[0].progress["tp-limits"].status).toBe("completed")
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -130,13 +130,13 @@ test("invalid writes are atomic and unvisited parts cannot be completed", async 
 test("topic creation registers only its writer and creates the summary, state and assets", async () => {
   const setup = await workspace()
   try {
-    const id = await setup.service.createTopic({ version: "11-10-2026", name: "Prerequisite", content: [part("tp-algebra", "Algebra")] })
+    const id = await setup.service.createTopic({ type: "topic", version: "11-10-2026", name: "Prerequisite", content: [part("tp-algebra", "Algebra")] })
     const topic = setup.repository.topic(id)
-    expect(topic.state?.threadTutors).toEqual([{ id: setup.threadId, progress: {} }])
-    expect(await readFile(join(setup.directory, "topics", id, "topic.md"), "utf8")).toContain('"title":"Algebra"')
+    expect(TopicStateSchema.parse(topic.state).threadTutors).toEqual([{ id: setup.threadId, progress: {} }])
+    expect(await readFile(join(setup.directory, "scratchpads", id, "scratchpad.md"), "utf8")).toContain('"title":"Algebra"')
     const { stat } = await import("node:fs/promises")
-    expect((await stat(join(setup.directory, "topics", id, "assets"))).isDirectory()).toBe(true)
-    expect(JSON.parse(await readFile(join(setup.directory, "topics", id, "topic.state.json"), "utf8"))).toMatchObject({ name: "Prerequisite", version: "11-10-2026" })
+    expect((await stat(join(setup.directory, "scratchpads", id, "assets"))).isDirectory()).toBe(true)
+    expect(JSON.parse(await readFile(join(setup.directory, "scratchpads", id, "scratchpad.state.json"), "utf8"))).toMatchObject({ name: "Prerequisite", type: "topic", version: "11-10-2026" })
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -145,16 +145,16 @@ test("existing Markdown topics start structured progress fresh and keep their le
   try {
     const { mkdir, writeFile } = await import("node:fs/promises")
     const id = randomUUID()
-    const root = join(directory, "topics", id)
+    const root = join(directory, "scratchpads", id)
     await mkdir(root, { recursive: true })
     const notes = "# Old topic\n\n## Past Mistakes\nLegacy mistake and question evidence."
     const workpad = "Legacy pending question and checked key."
-    await writeFile(join(root, "topic.md"), notes)
+    await writeFile(join(root, "scratchpad.md"), notes)
     await writeFile(join(root, "agent.workpad.md"), workpad)
     const repository = new WorkspaceRepository(directory)
     await repository.load()
     expect(repository.topic(id).state).toMatchObject({ content: [], threadTutors: [] })
-    expect(await readFile(join(root, "topic.md"), "utf8")).toBe(notes)
+    expect(await readFile(join(root, "scratchpad.md"), "utf8")).toBe(notes)
     expect(await readFile(join(root, "agent.workpad.md"), "utf8")).toBe(workpad)
     expect(await new StateService(repository, randomUUID()).getMistakesForTopic(null)).toEqual([])
   } finally { await rm(directory, { recursive: true, force: true }) }
@@ -167,9 +167,9 @@ test("curriculum edits preserve recorded mistakes and cannot remove referenced p
     await service.activatePart(topic.id, "tp-limits")
     await service.documentMistake(topic.id, "tp-limits", "Original attempt", "Original error")
     await service.updateTopic(topic.id, { content: [part()] })
-    expect(repository.topic(topic.id).state?.content[0].mistakes).toEqual([{ context: "Original attempt", issue: "Original error" }])
+    expect(TopicStateSchema.parse(repository.topic(topic.id).state).content[0].mistakes).toEqual([{ context: "Original attempt", issue: "Original error" }])
     await expect(service.updateTopic(topic.id, { content: [] })).rejects.toThrow(/mistakes|missing part/i)
-    expect(repository.topic(topic.id).state?.content).toHaveLength(1)
+    expect(TopicStateSchema.parse(repository.topic(topic.id).state).content).toHaveLength(1)
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -177,19 +177,19 @@ test("corrupt structured state is rejected without replacing it or its summary",
   const setup = await workspace()
   try {
     const { writeFile } = await import("node:fs/promises")
-    const path = join(setup.directory, "topics", setup.topic.id, "topic.state.json")
-    const summary = await readFile(join(setup.directory, "topics", setup.topic.id, "topic.md"), "utf8")
+    const path = join(setup.directory, "scratchpads", setup.topic.id, "scratchpad.state.json")
+    const summary = await readFile(join(setup.directory, "scratchpads", setup.topic.id, "scratchpad.md"), "utf8")
     await writeFile(path, '{"version":"future-version"}')
     await expect(new WorkspaceRepository(setup.directory).load()).rejects.toThrow()
     expect(await readFile(path, "utf8")).toBe('{"version":"future-version"}')
-    expect(await readFile(join(setup.directory, "topics", setup.topic.id, "topic.md"), "utf8")).toBe(summary)
+    expect(await readFile(join(setup.directory, "scratchpads", setup.topic.id, "scratchpad.md"), "utf8")).toBe(summary)
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
 test("curriculum revisions and renames retain a conceptual summary unless explicitly replaced", async () => {
   const setup = await workspace()
   try {
-    await setup.service.updateTopic(setup.topic.id, { summary: "Useful source explanation." })
+    await setup.service.write({ type: "editTopicContent", topicId: setup.topic.id, changes: [{ action: "add", block: { type: "markdown", id: "example", sectionId: "tp-limits", content: ["Useful source explanation."] } }] })
     await setup.service.updateTopic(setup.topic.id, { content: [part()] })
     await setup.service.updateTopic(setup.topic.id, { name: "Calculus review" })
     expect(setup.repository.topic(setup.topic.id).learning.notes).toMatch(/^# Calculus review\n/ )
@@ -202,7 +202,7 @@ test("a committed plan confirmation survives interrupted file mirrors without re
   const setup = await workspace()
   try {
     const { ChatDatabase } = await import("../src/main/chat-database")
-    const workpadPath = join(setup.directory, "topics", setup.topic.id, "agent.workpad.md")
+    const workpadPath = join(setup.directory, "scratchpads", setup.topic.id, "agent.workpad.md")
     const legacy = "Unused legacy handoff."
     const { writeFile } = await import("node:fs/promises")
     await writeFile(workpadPath, legacy)
@@ -240,9 +240,23 @@ test("new curricula scaffold a navigable summary without presenting goals as tau
     const notes = setup.repository.topic(setup.topic.id).learning.notes
     expect(parseTopicDirectory(notes).directory?.items.map((entry) => entry.title)).toEqual(["Limits", "Derivatives"])
     expect(notes).toContain("## Topic terminology")
-    expect(notes).toContain("## Materials")
+    expect(notes).not.toContain("## Materials")
     expect(notes).not.toContain("Explain Limits")
     expect(notes).not.toContain("## Limits")
+  } finally { await rm(setup.directory, { recursive: true, force: true }) }
+})
+
+test("structured terminology is rendered after explanations", async () => {
+  const setup = await workspace()
+  try {
+    await setup.service.write({ type: "editTopicContent", topicId: setup.topic.id, changes: [
+      { action: "add", block: { type: "term", id: "limit-term", term: "Limit", meaning: "The value approached by nearby positions." } },
+      { action: "add", block: { type: "markdown", id: "example", sectionId: "tp-limits", content: ["## Following a moving car", "", "As the car approaches a junction, its position approaches a value."] } },
+    ] })
+    const notes = setup.repository.topic(setup.topic.id).learning.notes
+    expect(notes).toContain("Following a moving car")
+    expect(notes.trim().endsWith("| Limit | The value approached by nearby positions. |")).toBe(true)
+    expect(parseTopicDirectory(notes).directory?.items[0]).toMatchObject({ title: "Limits", anchor: "tp-limits" })
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -250,7 +264,7 @@ test("stale topic workpads cannot restore progress or prevent JSON state loading
   const setup = await workspace()
   try {
     const { writeFile } = await import("node:fs/promises")
-    const root = join(setup.directory, "topics", setup.topic.id)
+    const root = join(setup.directory, "scratchpads", setup.topic.id)
     await writeFile(join(root, "agent.workpad.md"), "## Handoff\nPhase: invalid\nLegacy secret answer")
     await writeFile(join(root, "topic.workpad.md"), "Legacy pending question")
     await setup.service.activatePart(setup.topic.id, "tp-limits")
@@ -266,7 +280,7 @@ test("stale topic workpads cannot restore progress or prevent JSON state loading
 test("topic writes and recovery do not create per-topic workpads", async () => {
   const setup = await workspace()
   try {
-    const root = join(setup.directory, "topics", setup.topic.id)
+    const root = join(setup.directory, "scratchpads", setup.topic.id)
     await setup.service.activatePart(setup.topic.id, "tp-limits")
     await new WorkspaceRepository(setup.directory).load()
     await expect(readFile(join(root, "agent.workpad.md"))).rejects.toThrow(/ENOENT/)
@@ -275,30 +289,19 @@ test("topic writes and recovery do not create per-topic workpads", async () => {
 })
 
 
-test("curriculum edits refresh the directory while retaining taught explanations and anchors", async () => {
+test("curriculum edits derive hierarchy and stable anchors while retaining explanation blocks", async () => {
   const setup = await workspace()
   try {
     const first = part()
-    await setup.service.updateTopic(setup.topic.id, { summary: `# Calculus
-
-<topic-directory heading="Topic directory" items='[{"title":"Limits","anchor":"limits"},{"title":"Derivatives"}]' />
-
-<a id="limits"></a>
-## Limits
-
-A limit describes the value approached, which can differ from the function value.` })
-    await setup.service.updateTopic(setup.topic.id, { content: [first, { ...part("tp-one-sided", "One-sided limits"), parent: first }] })
-    const notes = setup.repository.topic(setup.topic.id).learning.notes
-    expect(parseTopicDirectory(notes).directory?.items).toMatchObject([
-      { title: "Limits", anchor: "limits", children: [{ title: "One-sided limits" }] },
+    await setup.service.write({ type: "editTopicContent", topicId: setup.topic.id, changes: [{ action: "add", block: { type: "markdown", id: "example", sectionId: first.id, content: ["A limit describes the approached value."] } }] })
+    await setup.service.updateTopic(setup.topic.id, { content: [first, { ...part("tp-one-sided", "One-sided limits"), parent: { id: first.id } }] })
+    expect(parseTopicDirectory(setup.repository.topic(setup.topic.id).learning.notes).directory?.items).toMatchObject([
+      { title: "Limits", anchor: "tp-limits", children: [{ title: "One-sided limits" }] },
     ])
-    expect(parseTopicDirectory(notes).directory?.items).toHaveLength(1)
-    expect(notes).toContain("A limit describes the value approached, which can differ from the function value.")
-    expect(notes).not.toContain("Derivatives")
     await setup.service.updateTopic(setup.topic.id, { content: [{ ...first, name: "Limits of functions" }] })
-    expect(parseTopicDirectory(setup.repository.topic(setup.topic.id).learning.notes).directory?.items[0]).toMatchObject({ title: "Limits of functions", anchor: "limits" })
-    await setup.service.updateTopic(setup.topic.id, { content: [{ ...first, name: "Approaching limits" }], summary: notes.replaceAll("Limits", "Approaching limits") })
-    expect(parseTopicDirectory(setup.repository.topic(setup.topic.id).learning.notes).directory?.items[0]).toMatchObject({ title: "Approaching limits", anchor: "limits" })
+    const notes = setup.repository.topic(setup.topic.id).learning.notes
+    expect(parseTopicDirectory(notes).directory?.items[0]).toMatchObject({ title: "Limits of functions", anchor: "tp-limits" })
+    expect(notes).toContain("A limit describes the approached value.")
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })
 
@@ -317,5 +320,18 @@ test("the summary directory renders curricula accepted by the structured topic s
     expect(parsed.directory?.items).toHaveLength(101)
     expect(parsed.directory?.items[0].title).toBe(name)
     expect(parsed.directory?.items[0].sources).toHaveLength(11)
+  } finally { await rm(setup.directory, { recursive: true, force: true }) }
+})
+
+
+test("editing an explanation cannot drop its generated navigation target", async () => {
+  const setup = await workspace()
+  try {
+    await setup.service.write({ type: "editTopicContent", topicId: setup.topic.id, changes: [{ action: "add", block: { type: "markdown", id: "example", sectionId: "tp-limits", content: ["## Following a moving car", "", "Nearby positions approach the junction."] } }] })
+    await setup.service.write({ type: "editTopicContent", topicId: setup.topic.id, changes: [{ action: "edit", block: { type: "markdown", id: "example", sectionId: "tp-limits", content: ["## Following a moving cyclist", "", "A different explanation without any HTML anchors."] } }] })
+    const reloaded = new WorkspaceRepository(setup.directory)
+    await reloaded.load()
+    expect(parseTopicDirectory(reloaded.topic(setup.topic.id).learning.notes).directory?.items[0].anchor).toBe("tp-limits")
+    expect(reloaded.topic(setup.topic.id).learning.notes).toContain("different explanation")
   } finally { await rm(setup.directory, { recursive: true, force: true }) }
 })

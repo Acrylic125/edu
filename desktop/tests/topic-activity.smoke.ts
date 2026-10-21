@@ -65,7 +65,7 @@ test("topic loading follows the current turn instead of earlier chat tags", asyn
     await app.evaluate(({ BrowserWindow }, snapshot) => {
       BrowserWindow.getAllWindows()[0].webContents.send("prune:update", snapshot)
     }, snapshot)
-    const navigation = page.getByRole("navigation", { name: "Your topics" })
+    const navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     const automata = navigation.getByRole("button", { name: /^Automata/ })
     const calculus = navigation.getByRole("button", { name: /^Calculus/ })
     await automata.click()

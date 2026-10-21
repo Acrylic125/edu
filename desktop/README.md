@@ -47,13 +47,12 @@ readers, PDF renderer, and persistence. Users do not install Node, Python, or
 a skill. ChatGPT includes its runtime; Claude and Antigravity
 require the provider CLI described above.
 
-Create a topic by describing your goal or attaching PDF, PowerPoint (`.pptx`), image, text, or code
-materials. The tutor proposes a plan; **Confirm plan & begin** authorizes teaching.
-Attachments count as content, so Send works without typed text. Chat requests
-include the currently open topic's notes and saved progress; explicit topic tags
-can direct a request to another topic. Reopening EdU restores the most recently
-viewed topic from its view history, independently of the selected chat.
-It explains the material, asks Checks and Tests, and maintains revision notes.
+Choose **New scratchpad** and describe your goal or attach PDF, PowerPoint (`.pptx`), image, text, or code materials. The tutor infers Topic, Test, or Generic from the chat and creates it with the matching role tool. No type is selected or precreated by the composer.
+Topic scratchpads contain a source-linked curriculum and a story summary. **Confirm plan & begin** authorizes teaching.
+Test scratchpads source questions one at a time and retain each question and learner answer.
+Generic scratchpads contain free markdown and source references.
+Attachments count as content, so Send works without typed text. Chat requests include the open scratchpad and saved progress; explicit tags can direct a request to another scratchpad.
+Reopening EdU restores the most recently viewed scratchpad independently of the selected chat.
 Use the provider/model picker beside the paperclip to choose your provider and model.
 Codex models and reasoning options come from the bundled runtime’s model catalog;
 new selections use GPT 6 Luna for Codex, Haiku 5.5 for Claude Code, and Gemini 3.8 Flash
@@ -78,67 +77,29 @@ original deck. Attach a PDF export when the tutor needs to inspect slide visuals
 
 ## Tutor memory
 
-EdU uses `topics/<topic-id>/topic.md` for incremental conceptual summaries and
-`topic.state.json` for curriculum parts, references, goals, mistakes, and progress.
-Summaries use the special `<topic-directory />` marker, explanations under taught
-part headings, Topic terminology, and Materials. Teaching fills gaps and clarifies
-confusing phrasing in place. Each writer chat has its own active/completed parts and exact question/answer
-steps. Read-only topic references do not register that chat as a tutor.
+Each document lives in `scratchpads/<id>/` with `scratchpad.md`, `scratchpad.state.json`, and `assets/`.
+The state has an explicit `topic`, `test`, or `generic` discriminator and is validated with Zod.
+Topic goals are arrays; per-thread part progress is active or completed. Test questions store one answer and the threads that wrote that question. Generic state has no writer list.
+The older topic file layout is not migrated.
 
-Tutor tools identify topics using short `topic_N` handles saved with each chat.
-Handles stay stable across turns and restarts, including when the topic directory
-changes. A thread can read several topics for reference and write its tagged/open
-topics and topics created during the turn. The shared tool boundary validates
-access and resolves handles to UUIDs for storage. Invalid-target errors list the
-allowed handles; retrying the same tool with a valid target repairs the failure.
+The supplied management skills and templates are bundled verbatim under `resources/tutor-me/skills/` and `resources/tutor-me/scratchpad_templates/`.
+The agent applies the matching management skill to every scratchpad it reads. A turn can use several scratchpad types simultaneously.
+Model tools have role prefixes, such as `topic_getQuestions`, `test_getQuestions`, and `generic_getReferences`. Every call validates its target type, access, and thread identity.
+`test_getMistakesForTopic` can read topic mistakes when preparing a test. Reads never register writers; topic writes register the current tutor thread, and test question writes register the current thread on the affected question.
 
-Tutor turns run through a compiled LangGraph `StateGraph` in
-`src/runners/graph.ts`: runner → tools → validation → recovery or completion.
-Claude, Antigravity, and Codex share that graph. Codex native tool
-callbacks execute serially inside the native agent runner. Provider adapters translate
-protocol messages and source images; graph nodes control retries and whether a
-reply can be published. Diagnostics record node transitions as `graph.node`.
-Graph state lasts for one turn. SQLite and StateService remain the durable
-storage boundary, avoiding a second checkpoint store for topic writes.
+Tools identify documents with stable `scratchpad_N` handles saved with each chat. `read_scratchpad` returns the state, role skill, and paginated markdown, including archived documents.
+Tagged/open scratchpads and documents created in the current turn are writable. Archived scratchpads are read-only, including when a chat tagged them before they were archived.
+Sources can be read from all accessible scratchpads. Private chat handoffs and checked assessment keys remain separate from public scratchpad documents.
 
-The tutor uses StateService tools to locate its current part, offer active
-continuations from other threads plus the next untouched part, retrieve prior
-questions, and record confirmed mistakes after deliberation. When several
-continuations exist, it asks the learner to choose. Evaluation questions draw
-from attached practice assets and then internet sources when available; practice
-ends when no suitable source remains. New curricula start with web research of
-existing textbook, article, course-note, or tutorial walkthroughs. The tutor
-presents the source links and proposed sequence and waits for **Confirm plan &
-begin** before teaching. The same action appears beneath the latest chat reply
-and in the topic document. Every draft curriculum part requires source references. If
-lookup fails or finds no suitable walkthrough, it asks for source material or a
-narrower subject instead of inventing a curriculum.
+`src/runners/tutor-graph.ts` coordinates tool execution, validation, recovery, and publication for structured-output adapters. Codex retains its native model loop and executes callbacks through the same tool graph.
+Tools execute in order so dependent writes remain deterministic. Read results must reach the next model request before a reply publishes.
+A complete private chat handoff is required before publication. Scratchpad writes, the handoff, and the reply commit together through the repository mutex and SQLite transaction.
+Concurrent independent changes merge; stale replacements and attempts to overwrite an existing test answer are rejected. A later attempt is a new test question.
+SQLite recovery restores committed scratchpad files after an interrupted write.
 
-Codex uses live web search; Claude and Antigravity expose their native web search
-and URL-reading tools. Provider account access and web permissions still
-apply; unavailable lookup must be reported to the learner. Antigravity headless
-URL reads require the user's CLI `read_url` permissions.
-
-Pasted screenshots are sent directly as image inputs to Codex,
-including when Codex resumes a chat. The tutor reads recognizable text, notation,
-and diagrams even without extracted text, states uncertainty, and asks only
-about details that affect the explanation. Codex's code-mode guidance also emits
-images returned by `read_material` through the image helper rather than printing
-their encoded bytes as text. Older images outside the active topic context do
-not block subsequent turns; missing current attachments are reported.
-
-Cross-topic mistake retrieval includes archived topics when requested. It leaves
-those topics unchanged. Conceptual summaries and preserved legacy notes remain
-available through paginated `read_topic_notes`; private chat handoffs and checked
-answer keys stay private.
-
-Existing topics start structured progress fresh. Their notes remain intact;
-per-topic workpads are neither read nor written. Topic state comes from JSON. State
-writes, the private chat handoff, and the reply commit together before the reply
-appears. Mutations replay under the repository's serialized transaction, merging
-independent thread progress. Stale curriculum/summary replacements are rejected.
-SQLite recovery restores committed files after an interrupted write. The tutor
-model evaluates goal satisfaction and whether a mistake has been confirmed.
+Topic teaching waits for learner plan confirmation. The tutor model evaluates goal satisfaction and confirmed mistakes using the supplied skills.
+Provider web search and URL-reading capabilities remain available, subject to provider permissions. Unavailable lookup must be reported to the learner.
+Pasted screenshots reach Codex as image inputs. CLI adapters support extracted source text and report unsupported image reads.
 
 ## Development
 
@@ -176,8 +137,8 @@ runner operations require Electron.
 
 ## Harness boundaries
 
-LangGraph coordinates the tutoring turn through `agent`, `tools`, `validate`,
-`recover`, and `finish` nodes. Codex, Claude Code, and Antigravity remain the
+LangGraph coordinates structured tutoring turns through `model`, `tools`, `validate`,
+`recover`, and `publish` nodes. Codex, Claude Code, and Antigravity remain the
 underlying agent runners; LangGraph does not replace them with a chat model.
 Codex retains its native tool loop and resumable threads. CLI adapters retain
 their structured EdU tool protocol.
@@ -230,16 +191,15 @@ See [Phoenix Exporter](../phoenix/README.md) for manual upload and local Docker 
 - Codex tutoring turns run from `workspace/chats/<chat-id>/`. Topic summaries, structured state, and source assets belong to their topic.
   Private handoffs belong to each chat. Codex's
   private account home remains in `workspace/providers/codex/`.
-- Topic creation generates a title from the suggested subject before saving it,
-  using the selected provider. Chat titles do not rename tagged topics.
+- The tutor names and creates scratchpads from the chat. Chat titles do not rename tagged scratchpads.
 - Storage lives under Electron’s `userData` in `workspace/`. Local SQLite
   `state.sqlite` stores chats, ordered messages, private chat handoffs, provider
   session bindings, runner configuration, and provider settings. A sequenced
   event log records changes in the same transaction as the current state.
   WAL mode, full synchronous commits, and serialized writes protect committed
   conversations. Replies become visible after the transaction commits.
-- Topics contain `topic.md` (conceptual summary), `topic.state.json`
-  (versioned curriculum and per-thread progress), and `assets/` (original
+- Scratchpads contain `scratchpad.md` (public markdown), `scratchpad.state.json`
+  (versioned role-specific state), and `assets/` (original
   materials and prepared manifests under `assets/cache/prepared/`). Legacy
   workpad files are ignored; older notes remain intact. Private current
   keys and session logistics belong to the chat handoff in SQLite. Topics are
@@ -258,8 +218,8 @@ See [Phoenix Exporter](../phoenix/README.md) for manual upload and local Docker 
 - Every successful turn requires a complete saved learning state. Draft plans
   cannot advance without explicit learner confirmation. If Codex completes without
   a valid save or visible reply, the harness continues the same thread with up to
-  two correction attempts; rejected saves include validation feedback. Exact private pending
-  keys are checked against outgoing notes/replies. Semantic adherence still
+  two correction attempts; rejected saves include validation feedback. Private fields are
+  excluded from public state. Semantic adherence still
   depends on the selected model; the full skill and private handoff are supplied
   each turn. Public snapshots and learner exports omit the private handoff/key.
 - Per-turn JSONL diagnostics are saved in `workspace/chats/<chat-id>/diagnostics/`.
@@ -268,14 +228,11 @@ See [Phoenix Exporter](../phoenix/README.md) for manual upload and local Docker 
   hidden. The document's folder button opens the topic workspace in Finder. Logs omit prompts, tool arguments,
   replies, private learning state, and account credentials; token-like error text
   is redacted.
-- Tutor Me is vendored in `resources/tutor-me/`. Its shell/Python bookkeeping
-  instructions map to `read_material`, `revise_topic_state`, `save_topic_state`,
-  `read_topic_notes`, and the verified save transaction. Source text is
-  extracted during import; unchanged page images are reused across turns, while
-  missing, corrupt, or older images are rendered again. Pending clarification and
-  contested assessments retain their question and checked key like active Checks.
-  Web search and subagents are not exposed; when no supplied Test fits, the tutor
-  labels an authored exercise. These capabilities can be added as runner tools.
+- Scratchpad management skills are vendored unchanged in `resources/tutor-me/skills/`.
+  `read_skill` loads their supporting references and the supplied schemas, tool descriptions, and markdown templates.
+  Imported source text and cached page images are shared with the role-aware study tools.
+  Native shell and subagents are not exposed to the tutor.
+
 
 Unit tests exercise persistence, concurrent runners, stop/restart/crash behavior,
 plan confirmation, private assessment state, and PKCE callbacks. Native smoke
@@ -309,3 +266,18 @@ CLI adapter references: [Claude Code CLI](https://code.claude.com/docs/en/cli-re
 Live Claude/Antigravity checks require installed provider CLIs and signed-in
 accounts; automated tests use executable protocol fixtures and make no account
 requests.
+
+## Structured scratchpad content
+
+Topic and test `scratchpad.state.json` owns the document and learning evidence.
+`document.blocks` contains stable IDs for Markdown, sources and terminology.
+Role edit tools apply ordered add/edit/delete changes atomically, with optimistic
+revision checks. `present` selects saved blocks for the chat reply; questions are
+rendered from recorded steps. Markdown, directory links and section anchors are
+projections generated by the app. Generic scratchpads retain free Markdown.
+
+Legacy content is imported once on startup. The original Markdown is retained as
+`scratchpad.legacy.md`. Once imported, external edits to generated Markdown are
+replaced by the JSON projection. Existing progress and question history remain.
+The repository transaction commits scratchpad mutations and the chat reply together;
+its existing durable journal recovers interrupted file projection writes.
