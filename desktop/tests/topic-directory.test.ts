@@ -1,3 +1,6 @@
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { TopicDirectory } from "../src/renderer/topic-directory"
 import { expect, test } from "vitest"
 import {
   parseTopicDirectory,
@@ -60,4 +63,26 @@ test("exports the directory as the skill's markdown list", () => {
   - 2.1 Inertia
 
 ## 2. Newton's laws`)
+})
+
+
+test("directory distinguishes opaque files with compact labels and preserves page ranges", () => {
+  const materials = [
+    { id: "12345678-1234-4234-8234-123456789abc", name: "c3e312d6-5a40-42a6-893a-559bfa0fd7d9-pdf.pdf", kind: "pdf" as const },
+    { id: "22345678-1234-4234-8234-123456789abc", name: "b29c1ab5-88d4-4a6a-988a-1ee55fafeb31-pdf.pdf", kind: "pdf" as const },
+    { id: "32345678-1234-4234-8234-123456789abc", name: "c3e312d6-5a40-42a6-893a-559bfa0fd7d9-pptx.pptx", kind: "text" as const },
+  ]
+  const html = renderToStaticMarkup(createElement(TopicDirectory, {
+    heading: "Topic directory",
+    currentSection: "Registers",
+    materials,
+    onOpenMaterial: () => {},
+    items: [{ title: "Registers", children: [], sources: materials.map((material) => ({
+      label: `${material.name}, pg. 7-8`, href: `assets/${material.name}#page=7`,
+    })) }],
+  }))
+  expect(html).toContain('>Document 1.pdf, pg. 7-8</a>')
+  expect(html).toContain('>Document 2.pdf, pg. 7-8</a>')
+  expect(html).toContain('>Slides.pptx, pg. 7-8</a>')
+  expect(html).toContain(`href="edu-material://${materials[1].id}/7"`)
 })

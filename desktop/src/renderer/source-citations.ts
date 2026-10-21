@@ -1,5 +1,5 @@
 import type { Snapshot } from "../shared/contracts"
-import { materialCitationNames } from "../shared/material-links"
+import { materialCitationNames, resolveMaterialLink } from "../shared/material-links"
 
 export function linkSourceCitations(text: string, materials: Snapshot["topics"][number]["materials"]) {
   const unique = materials.filter((material, index) =>
@@ -12,7 +12,9 @@ export function linkSourceCitations(text: string, materials: Snapshot["topics"][
   if (!names.length) return text
   const filenames = names.map((material) => material.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
   const references = new RegExp(`\\x60+[^\\x60]*\\x60+|\\[[^\\]\\n]*\\]\\([^\\n]*?\\)|(${filenames})(,\\s*pg\\.\\s*(\\d+)(?:\\s*[-–]\\s*\\d+)?)?`, "g")
-  const tokens = /^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)|(`+)|(^ {4,}[^\r\n]*(?:\r?\n|$))|Sourced from:[^\r\n]*/gm
+  const assetLinks = new RegExp(`\\]\\((assets\\/(?:${filenames})(?:#page=\\d+)?)\\)`, "g")
+  const codeAndCitations = /^ {0,3}(`{3,}|~{3,})[^\r\n]*(?:\r?\n|$)|(`+)|(^ {4,}[^\r\n]*(?:\r?\n|$))|Sourced from:[^\r\n]*/
+  const tokens = new RegExp(`${codeAndCitations.source}|${assetLinks.source}`, "gm")
   const parts: string[] = []
   let cursor = 0
   let match = tokens.exec(text)
@@ -31,7 +33,17 @@ export function linkSourceCitations(text: string, materials: Snapshot["topics"][
       else if (fence) tokens.lastIndex = text.length
       parts.push(text.slice(match.index, tokens.lastIndex))
     } else {
-      parts.push(match[0].replace(references, (label: string, name: string | undefined, pages: string | undefined, page: string | undefined) => {
+      const linked = match[0].replace(assetLinks, (original, href: string) => {
+        if (!resolveMaterialLink(href, unique)) return original
+        return `](<${href}>)`
+      })
+      if (match[4]) {
+        parts.push(linked)
+        cursor = tokens.lastIndex
+        match = tokens.exec(text)
+        continue
+      }
+      parts.push(linked.replace(references, (label: string, name: string | undefined, pages: string | undefined, page: string | undefined) => {
         if (!name) return label
         const material = names.find((item) => item.label === name)
         if (!material) return label

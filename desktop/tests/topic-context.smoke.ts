@@ -1,3 +1,4 @@
+import { TopicStateSchema } from "../src/shared/topic-state"
 import { randomUUID } from "node:crypto"
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -5,6 +6,7 @@ import { join, resolve } from "node:path"
 import { _electron, expect, test } from "@playwright/test"
 import { z } from "zod"
 import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
+import { StateService } from "../src/main/state-service"
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "edu-topic-context-"))
@@ -36,12 +38,47 @@ async function fixture() {
   return { directory, launch, calculus, automata }
 }
 
+test("topic directory indents curriculum children and grandchildren after reload", async ({}, testInfo) => {
+  const { directory, launch, calculus } = await fixture()
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  const root = { id: "tp-r-format", name: "5. R-Format", references: [], goals: [], mistakes: [] }
+  const child = { ...root, id: "tp-example", name: "5.1 R-Format: Example", parent: root }
+  const grandchild = { ...root, id: "tp-fields", name: "5.1.1 Encoding fields", parent: child }
+  await new StateService(repository, "directory-test").updateTopic(calculus.id, {
+    content: [root, child, grandchild, { ...root, id: "tp-i-format", name: "6. I-Format" }],
+  })
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: calculus.title, exact: true }).click()
+    for (const reload of [false, true]) {
+      if (reload) await page.reload()
+      const directory = page.getByRole("navigation", { name: "Topic directory", exact: true })
+      const parent = directory.getByText("5. R-Format", { exact: true })
+      await expect(parent).toBeVisible()
+      const parentBox = await parent.boundingBox()
+      const childBox = await directory.getByText("5.1 R-Format: Example", { exact: true }).boundingBox()
+      const grandchildBox = await directory.getByText("5.1.1 Encoding fields", { exact: true }).boundingBox()
+      const siblingBox = await directory.getByText("6. I-Format", { exact: true }).boundingBox()
+      if (!parentBox || !childBox || !grandchildBox || !siblingBox) throw new Error("Missing directory part")
+      expect(childBox.x).toBeGreaterThan(parentBox.x + 10)
+      expect(grandchildBox.x).toBeGreaterThan(childBox.x + 10)
+      expect(siblingBox.x).toBe(parentBox.x)
+    }
+    await page.screenshot({ path: testInfo.outputPath("nested-directory.png") })
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test("chat sends include the currently open topic as context without changing the typed message", async () => {
   const { directory, launch, calculus, automata } = await fixture()
   const app = await launch()
   try {
     const page = await app.firstWindow()
-    const navigation = page.getByRole("navigation", { name: "Your topics" })
+    const navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     for (const topic of [automata, calculus]) {
       await navigation.getByRole("button", { name: topic.title, exact: true }).click()
       await page.getByRole("textbox", { name: "Message this chat" }).fill("What is next?")
@@ -66,7 +103,7 @@ test("topic context menus tag drafts and persist archive and unarchive actions",
   let app = await launch()
   try {
     let page = await app.firstWindow()
-    let topics = page.getByRole("navigation", { name: "Your topics" })
+    let topics = page.getByRole("navigation", { name: "Your scratchpads" })
     await topics.getByRole("button", { name: "Calculus", exact: true }).click()
     const input = page.getByRole("textbox", { name: "Message this chat" })
     await input.fill("Explain this")
@@ -81,11 +118,12 @@ test("topic context menus tag drafts and persist archive and unarchive actions",
     await expect(input).toContainText("Explain this @Automata @Automata")
     await expect(input).toBeFocused()
     await topics.getByRole("button", { name: "Automata", exact: true }).click({ button: "right" })
-    await page.getByRole("menuitem", { name: "Archive Chat", exact: true }).click()
+    await page.getByRole("menuitem", { name: "Archive scratchpad", exact: true }).click()
     await expect(topics.getByRole("button", { name: "Automata", exact: true })).toHaveCount(0)
-    await expect(page.getByRole("navigation", { name: "Archived chats" }).getByRole("button", { name: "Automata", exact: true })).toBeVisible()
+    await page.getByRole("button", { name: /^Archived scratchpads/ }).click()
+    await expect(page.getByRole("navigation", { name: "Archived scratchpads" }).getByRole("button", { name: "Automata", exact: true })).toBeVisible()
     await input.fill("@")
-    const suggestions = page.getByRole("listbox", { name: "Topics", exact: true }).getByRole("option")
+    const suggestions = page.getByRole("listbox", { name: "Scratchpads", exact: true }).getByRole("option")
     await expect(suggestions).toHaveText(["Calculus", "Automata"])
     await input.fill("@Auto")
     await expect(suggestions).toHaveText(["Automata"])
@@ -94,16 +132,17 @@ test("topic context menus tag drafts and persist archive and unarchive actions",
     await app.close()
     app = await launch()
     page = await app.firstWindow()
-    const archived = page.getByRole("navigation", { name: "Archived chats" })
+    await page.getByRole("button", { name: /^Archived scratchpads/ }).click()
+    const archived = page.getByRole("navigation", { name: "Archived scratchpads" })
     await archived.getByRole("button", { name: "Automata", exact: true }).click({ button: "right" })
-    await page.getByRole("menuitem", { name: "Unarchive Chat", exact: true }).click()
-    topics = page.getByRole("navigation", { name: "Your topics" })
+    await page.getByRole("menuitem", { name: "Unarchive scratchpad", exact: true }).click()
+    topics = page.getByRole("navigation", { name: "Your scratchpads" })
     await expect(topics.getByRole("button", { name: "Automata", exact: true })).toBeVisible()
     await expect(archived).toHaveCount(0)
     await app.close()
     app = await launch()
     page = await app.firstWindow()
-    await expect(page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Automata", exact: true })).toBeVisible()
+    await expect(page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Automata", exact: true })).toBeVisible()
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })
@@ -122,7 +161,7 @@ test("chat assets stay available without composer chips even when their IDs diff
   const app = await launch()
   try {
     const page = await app.firstWindow()
-    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Calculus", exact: true }).click()
     const composer = page.getByRole("form", { name: "Chat composer" })
     await expect(composer.getByText("Lecture 4.pdf", { exact: true })).toHaveCount(0)
     const snapshot = await page.evaluate(() => window.prune?.snapshot())
@@ -169,31 +208,34 @@ test("reopening restores the most recently viewed topic independently of chat se
   let app = await launch()
   try {
     let page = await app.firstWindow()
-    let navigation = page.getByRole("navigation", { name: "Your topics" })
+    let navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     await navigation.getByRole("button", { name: "Automata", exact: true }).click()
     await navigation.getByRole("button", { name: "Calculus", exact: true }).click()
+    await expect(navigation.getByRole("button", { name: "Calculus", exact: true })).toHaveAttribute("aria-current", "page")
+    await navigation.getByRole("button", { name: "Calculus", exact: true }).focus()
     await page.keyboard.press("Control+Tab")
     await expect(navigation.getByRole("button", { name: "Automata", exact: true })).toHaveAttribute("aria-current", "page")
+    await navigation.getByRole("button", { name: "Automata", exact: true }).focus()
     await page.keyboard.press("Control+Tab")
     await expect(navigation.getByRole("button", { name: "Calculus", exact: true })).toHaveAttribute("aria-current", "page")
     await page.getByRole("button", { name: "New chat", exact: true }).click()
     await app.close()
     app = await launch()
     page = await app.firstWindow()
-    navigation = page.getByRole("navigation", { name: "Your topics" })
+    navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     await expect(navigation.getByRole("button", { name: "Calculus", exact: true })).toHaveAttribute("aria-current", "page", { timeout: 3000 })
     await navigation.getByRole("button", { name: "Automata", exact: true }).click()
     await app.close()
     app = await launch()
     page = await app.firstWindow()
-    navigation = page.getByRole("navigation", { name: "Your topics" })
+    navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     await expect(navigation.getByRole("button", { name: "Automata", exact: true })).toHaveAttribute("aria-current", "page")
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(page.getByRole("textbox", { name: "Message your tutor" })).toBeVisible()
     await app.close()
     app = await launch()
     page = await app.firstWindow()
-    navigation = page.getByRole("navigation", { name: "Your topics" })
+    navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     await expect(navigation.getByRole("button", { name: "Automata", exact: true })).toHaveAttribute("aria-current", "page")
   } finally {
     await app.close()
@@ -206,17 +248,18 @@ test("structured curriculum confirmation records the asking thread and keeps que
   const app = await launch()
   try {
     const page = await app.firstWindow()
-    await page.getByRole("navigation", { name: "Your topics" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Calculus", exact: true }).click()
     const composer = page.getByRole("form", { name: "Chat composer" })
     await page.getByRole("textbox", { name: "Message this chat" }).fill("Plan structured Limits curriculum.")
     await composer.getByRole("button", { name: "Send message" }).click()
-    await expect(page.getByRole("button", { name: "Confirm plan & begin" })).toBeVisible()
-    await page.getByRole("button", { name: "Confirm plan & begin" }).click()
+    const documentConfirmation = page.getByRole("group", { name: "Topic plan confirmation", exact: true })
+    await expect(documentConfirmation.getByRole("button", { name: "Confirm plan & begin" })).toBeVisible()
+    await documentConfirmation.getByRole("button", { name: "Confirm plan & begin" }).click()
     await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
     const snapshot = await page.evaluate(() => window.prune?.snapshot())
     const topic = snapshot?.topics.find((topic) => topic.id === calculus.id)
     const threadId = snapshot?.chats[0].id
-    expect(topic?.state?.threadTutors).toEqual([{ id: threadId, progress: { "tp-structured-limits": { status: "active", steps: [{ question: "Why can a limit exist where the function is undefined?" }] } } }])
+    expect(TopicStateSchema.parse(topic?.state).threadTutors).toEqual([{ id: threadId, progress: { "tp-structured-limits": { status: "active", steps: [{ question: "Why can a limit exist where the function is undefined?" }] } } }])
     expect(topic?.learning.notes).toContain("A function's limit describes its nearby behavior")
     expect(topic?.learning.notes).not.toContain("Distinguish a limit from a function value")
     await expect(page.getByRole("navigation", { name: "Topic directory", exact: true })).toBeVisible()
@@ -225,12 +268,140 @@ test("structured curriculum confirmation records the asking thread and keeps que
     expect(topic?.learning.notes).not.toContain("Why can a limit exist")
     const reloaded = new WorkspaceRepository(join(directory, "workspace"))
     await reloaded.load()
-    expect(reloaded.topic(calculus.id).state?.threadTutors).toEqual(topic?.state?.threadTutors)
+    expect(TopicStateSchema.parse(reloaded.topic(calculus.id).state).threadTutors).toEqual(TopicStateSchema.parse(topic?.state).threadTutors)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+test("chat offers the same plan confirmation action while preserving the document button", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    const composer = page.getByRole("textbox", { name: "Message this chat" })
+    await composer.fill("Plan structured Limits curriculum.")
+    await page.getByRole("form", { name: "Chat composer" }).getByRole("button", { name: "Send message" }).click()
+    const chatConfirmation = page.locator('[data-message-role="assistant"]').last().getByRole("button", { name: "Confirm plan & begin", exact: true })
+    await expect(chatConfirmation).toBeVisible()
+    await expect(page.getByRole("group", { name: "Topic plan confirmation", exact: true }).getByRole("button", { name: "Confirm plan & begin", exact: true })).toBeVisible()
+    await composer.fill("Keep this draft while I confirm")
+    await chatConfirmation.click()
+    await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
+    await expect(composer).toHaveText("Keep this draft while I confirm")
+    await expect(page.getByRole("button", { name: "Confirm plan & begin", exact: true })).toHaveCount(0)
+    const snapshot = await page.evaluate(() => window.prune!.snapshot())
+    expect(snapshot.topics.find((topic) => topic.id === calculus.id)?.planConfirmed).toBe(true)
+    expect(snapshot.chats.flatMap((chat) => chat.messages).filter((message) => message.role === "user" && message.content.includes("I confirm this learning plan."))).toHaveLength(1)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("teaching updates the scratchpad story and source links immediately and after reload", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Calculus", exact: true }).click()
+    const composer = page.getByRole("textbox", { name: "Message this chat" })
+    await composer.fill("Plan structured Limits curriculum.")
+    await page.getByRole("form", { name: "Chat composer" }).getByRole("button", { name: "Send message", exact: true }).click()
+    await page.locator('[data-message-role="assistant"]').last().getByRole("button", { name: "Confirm plan & begin", exact: true }).click()
+    await expect(page.getByText("Why can a limit exist where the function is undefined?", { exact: true })).toBeVisible()
+    const answer = "A limit must equal the function value at the point."
+    await composer.fill(answer)
+    await page.getByRole("form", { name: "Chat composer" }).getByRole("button", { name: "Send message", exact: true }).click()
+    const document = page.locator("article")
+    await expect(document).toContainText("Nearby readings can approach one height")
+    await expect(document.getByRole("cell", { name: "Function value", exact: true })).toBeVisible()
+    const source = page.getByRole("navigation", { name: "Topic directory", exact: true }).getByRole("link")
+    await expect(source).toHaveAttribute("href", "https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function")
+    await app.evaluate(({ shell }) => { shell.openExternal = async (url) => { process.env.EDU_TEST_OPENED_LINK = url } })
+    await source.click()
+    await expect.poll(() => app.evaluate(() => process.env.EDU_TEST_OPENED_LINK)).toBe("https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function")
+    const stored = new WorkspaceRepository(join(directory, "workspace"))
+    await stored.load()
+    expect(stored.topic(calculus.id).learning.notes).toContain("Nearby readings can approach one height")
+    const state = TopicStateSchema.parse(stored.topic(calculus.id).state)
+    expect(state.threadTutors[0].progress["tp-structured-limits"].steps).toEqual([
+      { question: "Why can a limit exist where the function is undefined?", answerFromUser: answer },
+      { question: "If the tank sensor has no reading at one instant, can nearby readings still approach one height?" },
+    ])
+    await page.reload()
+    await expect(document).toContainText("Nearby readings can approach one height")
+    await expect(source).toBeVisible()
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("a revised plan retains its chat confirmation when the latest messages have no topic tags", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  await repository.mutate((state) => {
+    const topic = state.topics.find((topic) => topic.id === calculus.id)!
+    topic.learning.outline = ["Limits"]
+    topic.state = TopicStateSchema.parse(topic.state)
+    topic.state.content = [{ id: "tp-limits", name: "Limits", references: [{ type: "website", url: "https://openstax.org/books/calculus-volume-1/pages/2-2-the-limit-of-a-function" }], goals: [{ objective: "Explain limits", understoodWhen: ["Explain approaching a value"] }], mistakes: [] }]
+    const message = { id: randomUUID(), role: "assistant" as const, createdAt: new Date().toISOString(), topicIds: [topic.id], content: "Here is the proposed plan." }
+    state.chats[0].learning.phase = "awaiting_plan_confirmation"
+    state.chats[0].messages = [message,
+      { ...message, id: randomUUID(), role: "user", content: "Make the plan shorter.", topicIds: [] },
+      { ...message, id: randomUUID(), content: "Here is the revised plan.", topicIds: [] },
+    ]
+  })
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("button", { name: "All chats", exact: true }).click()
+    await page.getByRole("dialog", { name: "All chats" }).getByRole("button", { name: "Existing chat", exact: true }).click()
+    await expect(page.locator('[data-message-role="assistant"]').last().getByRole("button", { name: "Confirm plan & begin", exact: true })).toBeVisible()
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+for (const phase of ["awaiting_plan_confirmation", "awaiting_choice"] as const) {
+  test(`draft plan controls use the current chat phase: ${phase}`, async () => {
+    const { directory, launch, calculus } = await fixture()
+    const repository = new WorkspaceRepository(join(directory, "workspace"))
+    await repository.load()
+    await repository.mutate((state) => {
+      const topic = state.topics.find((topic) => topic.id === calculus.id)!
+      topic.state = TopicStateSchema.parse({ ...topic.state, content: [{ id: "tp-limits", name: "Limits", references: [], goals: [{ objective: "Explain limits", understoodWhen: ["Explain nearby behavior"] }], mistakes: [] }] })
+      state.chats[0].learning.phase = phase
+      state.chats[0].messages.push({
+        id: randomUUID(), role: "assistant", content: "Review this plan.", createdAt: new Date().toISOString(), topicIds: [calculus.id],
+        responseQuestion: { prompt: "Use this calculus plan?", options: ["Use this plan", "Change the plan"] },
+      })
+    })
+    const app = await launch()
+    try {
+      const page = await app.firstWindow()
+      await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: "Calculus", exact: true }).click()
+      const reply = page.locator('[data-message-role="assistant"]').last()
+      if (phase === "awaiting_plan_confirmation") {
+        await expect(reply.getByRole("button", { name: "Confirm plan & begin", exact: true })).toBeVisible()
+        await expect(reply.getByRole("group", { name: "Use this calculus plan?", exact: true })).toHaveCount(0)
+        await page.reload()
+        await expect(reply.getByRole("group", { name: "Use this calculus plan?", exact: true })).toHaveCount(0)
+      } else {
+        await expect(reply.getByRole("group", { name: "Use this calculus plan?", exact: true })).toBeVisible()
+        await expect(reply.getByRole("button", { name: "Confirm plan & begin", exact: true })).toHaveCount(0)
+      }
+    } finally {
+      await app.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+}
 
 test("chat renders partial reply snapshots and replaces them with one completed message", async () => {
   const { directory, launch } = await fixture()
@@ -251,6 +422,32 @@ test("chat renders partial reply snapshots and replaces them with one completed 
     snapshot.runtime = [{ runnerId: chat.runnerId, chatId: chat.id, status: "ready", activity: "Ready" }]
     await app.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].webContents.send("prune:update", value), snapshot)
     await expect(page.getByText("A limit describes nearby behavior.", { exact: true })).toHaveCount(1)
+  } finally {
+    await app.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test("archived duplicate plans do not add another confirmation or a type badge", async () => {
+  const { directory, launch, calculus } = await fixture()
+  const repository = new WorkspaceRepository(join(directory, "workspace"))
+  await repository.load()
+  await repository.mutate((state) => {
+    const primary = state.topics.find((topic) => topic.id === calculus.id)!
+    primary.state = TopicStateSchema.parse({ ...primary.state, content: [{ id: "tp-limits", name: "Limits", references: [], goals: [{ objective: "Explain limits", understoodWhen: ["Explain nearby behavior"] }], mistakes: [] }] })
+    const duplicate = newTopic(primary.title)
+    duplicate.state = structuredClone(primary.state)
+    duplicate.archived = true
+    state.topics.push(duplicate)
+    state.chats[0].learning.phase = "awaiting_plan_confirmation"
+    state.chats[0].messages.push({ id: randomUUID(), role: "assistant", content: "Review this plan.", createdAt: new Date().toISOString(), topicIds: [primary.id, duplicate.id] })
+  })
+  const app = await launch()
+  try {
+    const page = await app.firstWindow()
+    await page.getByRole("navigation", { name: "Your scratchpads" }).getByRole("button", { name: calculus.title, exact: true }).click()
+    await expect(page.getByRole("group", { name: `Confirm learning plan for ${calculus.title}`, exact: true })).toHaveCount(1)
+    await expect(page.getByText("topic", { exact: true })).toHaveCount(0)
   } finally {
     await app.close()
     await rm(directory, { recursive: true, force: true })

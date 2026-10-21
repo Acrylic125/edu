@@ -1,3 +1,4 @@
+import { TopicStateSchema } from "../src/shared/topic-state"
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
@@ -213,7 +214,7 @@ test("stale topic summary writes cannot replace newer manual edits or publish a 
   await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Update the summary.` })
   const original = children[0].jobs[0].topics[0].learning.notes
   const manual = original + "\n\nNewer conceptual explanation."
-  await writeFile(join(repository.directory, "topics", topic.id, "topic.md"), manual)
+  await writeFile(join(repository.directory, "scratchpads", topic.id, "scratchpad.md"), manual)
   children[0].emit("message", {
     type: "result", reply: "Updated.", learning: first.learning,
     topicMutations: [{ type: "updateTopic", topicId: topic.id, expectedSummary: original, summary: "Stale summary." }],
@@ -249,7 +250,7 @@ test("concurrent chats sharing a runner merge per-thread progress and mistakes i
     const chat = state.chats.find((chat) => chat.id === second.id)
     if (chat) chat.runnerId = first.runnerId
   })
-  await new StateService(repository, first.id).updateTopic(topic.id, { content: [{ id: "tp-limits", name: "Limits", references: [], goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Explain approaching"] }, mistakes: [] }] })
+  await new StateService(repository, first.id).updateTopic(topic.id, { content: [{ id: "tp-limits", name: "Limits", references: [], goals: [{ objective: "Explain limits", understoodWhen: ["Explain approaching"] }], mistakes: [] }] })
   await repository.mutate((state) => { state.topics[0].planConfirmed = true })
   await Promise.all([
     manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Continue` }),
@@ -268,7 +269,7 @@ test("concurrent chats sharing a runner merge per-thread progress and mistakes i
   await vi.waitFor(() => expect(manager.statuses.filter((status) => status.runnerId === first.runnerId).every((status) => status.status === "ready")).toBe(true), { timeout: 5_000 })
   const reloaded = new WorkspaceRepository(repository.directory)
   await reloaded.load()
-  const state = reloaded.topic(topic.id).state
+  const state = TopicStateSchema.parse(reloaded.topic(topic.id).state)
   expect(state?.threadTutors).toHaveLength(2)
   expect(state?.content[0].mistakes).toHaveLength(2)
   expect(state?.threadTutors.map((thread) => thread.progress["tp-limits"].steps[0].question).sort()).toEqual(["Question 1?", "Question 2?"])
@@ -289,7 +290,7 @@ test("rejects tags for missing topics and confirms only a drafted plan", async (
   ).rejects.toThrow("no draft plan")
   await new StateService(repository, first.id).updateTopic(topic.id, { content: [{
     id: "tp-limits", name: "Limits", references: [], mistakes: [],
-    goals: { id: "tpg-limits", objective: "Explain limits", understoodWhen: ["Distinguish limit and value"] },
+    goals: [{ objective: "Explain limits", understoodWhen: ["Distinguish limit and value"] }],
   }] })
   await manager.send({ chatId: first.id, content: "Confirm", confirmTopicId: topic.id })
   expect(repository.topic(topic.id).planConfirmed).toBe(true)
@@ -302,7 +303,7 @@ test("passes the open topic and its saved progress to the worker without modifyi
   const service = new StateService(repository, first.id)
   await service.updateTopic(topic.id, { content: [{
     id: "tp-derivatives", name: "Derivatives", references: [], mistakes: [],
-    goals: { id: "tpg-derivatives", objective: "Explain derivatives", understoodWhen: ["Justify the limit"] },
+    goals: [{ objective: "Explain derivatives", understoodWhen: ["Justify the limit"] }],
   }] })
   await service.activatePart(topic.id, "tp-derivatives")
   await service.recordQuestion(topic.id, "tp-derivatives", "What does a derivative measure?")
@@ -310,7 +311,7 @@ test("passes the open topic and its saved progress to the worker without modifyi
   const job = children[0].jobs[0]
   expect(job.openedTopicId).toBe(topic.id)
   expect(job.topics.map((item) => item.id)).toEqual([topic.id])
-  expect(job.topics[0].state?.threadTutors).toEqual([{ id: first.id, progress: { "tp-derivatives": { status: "active", steps: [{ question: "What does a derivative measure?" }] } } }])
+  expect(TopicStateSchema.parse(job.topics[0].state).threadTutors).toEqual([{ id: first.id, progress: { "tp-derivatives": { status: "active", steps: [{ question: "What does a derivative measure?" }] } } }])
   expect(repository.chat(first.id).messages[0].content).toBe("What is next?")
   expect(repository.chat(first.id).messages[0].topicIds).toEqual([topic.id])
   expect(repository.topic(topic.id).planConfirmed).toBe(false)
@@ -423,12 +424,12 @@ test("generates a topic title from the suggestion before persisting it", async (
   expect(repository.stateSnapshot.topics).toHaveLength(2)
   expect(generation).toHaveBeenCalledWith(
     expect.objectContaining({ runner: expect.objectContaining({ id: second.runnerId }) }),
-    suggestion, undefined, expect.any(Function), expect.any(Function),
+    suggestion, expect.any(Function), expect.any(Function),
   )
   finish("Introduction to Calculus")
   const id = await creation
   expect(repository.topic(id)).toMatchObject({ title: "Introduction to Calculus", titleGenerated: true })
-  expect(await readFile(join(repository.directory, "topics", id, "topic.md"), "utf8")).toMatch(/^# Introduction to Calculus\n/)
+  expect(await readFile(join(repository.directory, "scratchpads", id, "scratchpad.md"), "utf8")).toMatch(/^# Introduction to Calculus\n/)
   expect((await new WorkspaceRepository(repository.directory).load()).topics.find((topic) => topic.id === id)?.title).toBe("Introduction to Calculus")
 })
 
@@ -486,11 +487,12 @@ test("retrieves past learner mistakes from untagged topics without exposing thei
   const input = children[0].jobs[0]
   expect(input.topics.map((item) => item.id)).toEqual([topic.id])
   const session = await createTutorSession({ ...input, skillDirectory: resolve("resources/tutor-me") }, () => {})
-  const result = await session.execute("read_topic_notes", { topicId: other.id })
+  const referenceHandle = `scratchpad_${input.chat.topicHandles.indexOf(other.id) + 1}`
+  const result = await session.execute("read_scratchpad", { scratchpadId: referenceHandle })
   expect(result.success).toBe(true)
   expect(result.text).toContain(JSON.stringify(evidence))
   expect(result.text).not.toContain("PRIVATE_UNANSWERED_PHYSICS_KEY")
-  expect(session.instructions).toContain(other.id)
+  expect(session.instructions).toContain(referenceHandle)
   expect(session.instructions).not.toContain(evidence)
   expect((await session.execute("save_topic_state", { topicId: other.id, learning: other.learning })).success).toBe(false)
 })
@@ -501,25 +503,59 @@ test("a topic created by tutor tools stays writable in the originating chat on f
   const topicId = randomUUID()
   children[0].emit("message", {
     type: "result", reply: "Created Algebra.", learning: first.learning,
-    topicMutations: [{ type: "createTopic", topicId, topic: { version: "11-10-2026", name: "Algebra", content: [] } }],
+    topicMutations: [{ type: "createTopic", topicId, topic: { type: "topic", version: "11-10-2026", name: "Algebra", content: [] } }],
   })
   await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
   expect(repository.chat(first.id).messages.at(-1)?.topicIds).toEqual([topicId])
+  expect(repository.chat(first.id).topicHandles).toContain(topicId)
   await manager.send({ chatId: first.id, content: "Add linear equations to its curriculum." })
   expect(children[0].jobs[1].topics.map((topic) => topic.id)).toContain(topicId)
   children[0].emit("message", {
     type: "result", reply: "Added the curriculum.", learning: first.learning,
-    topicMutations: [{ type: "updateTopic", topicId, content: [{ id: "tp-equations", name: "Linear equations", references: [], goals: { id: "tpg-equations", objective: "Solve linear equations", understoodWhen: ["Justify equivalent operations"] }, mistakes: [] }] }],
+    topicMutations: [{ type: "updateTopic", topicId, content: [{ id: "tp-equations", name: "Linear equations", references: [], goals: [{ objective: "Solve linear equations", understoodWhen: ["Justify equivalent operations"] }], mistakes: [] }] }],
   })
   await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
-  expect(repository.topic(topicId).state?.content[0].name).toBe("Linear equations")
+  expect(TopicStateSchema.parse(repository.topic(topicId).state).content[0].name).toBe("Linear equations")
+})
+
+test("topic handles survive reloads and directory reordering as new reference topics appear", async () => {
+  const { manager, repository, first, topic, other } = await fixture()
+  await manager.send({ chatId: first.id, content: topicMention(topic.id, topic.title) })
+  const original = children[0].jobs[0].chat.topicHandles
+  expect(new Set(original)).toEqual(new Set([topic.id, other.id]))
+  children[0].emit("message", { type: "result", reply: "Ready", learning: first.learning })
+  await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
+  const reloaded = new WorkspaceRepository(repository.directory)
+  await reloaded.load()
+  expect(reloaded.chat(first.id).topicHandles).toEqual(original)
+  const extra = newTopic("Geometry")
+  await repository.mutate((state) => { state.topics.reverse(); state.topics.unshift(extra) })
+  await manager.send({ chatId: first.id, content: "Use Geometry as a reference" })
+  expect(children[0].jobs[1].chat.topicHandles).toEqual([...original, extra.id])
+  const session = await createTutorSession({ ...children[0].jobs[1], skillDirectory: resolve("resources/tutor-me") }, () => {})
+  const reference = await session.execute("read_scratchpad", { scratchpadId: `scratchpad_${original.indexOf(other.id) + 1}` })
+  expect(JSON.parse(reference.text)).toMatchObject({ title: other.title })
+})
+
+test("worker topic directories use the same snapshot as persisted handles during concurrent topic creation", async () => {
+  const { manager, repository, first } = await fixture()
+  const concurrent = newTopic("Concurrent reference")
+  const mutate = repository.mutate.bind(repository)
+  vi.spyOn(repository, "mutate").mockImplementationOnce(async (update) => {
+    await mutate(update)
+    await mutate((state) => { state.topics.unshift(concurrent) })
+  })
+  await manager.send({ chatId: first.id, content: "Create a prerequisite topic" })
+  const job = children[0].jobs[0]
+  expect(job.workspaceTopics.every((topic) => job.chat.topicHandles.includes(topic.id))).toBe(true)
+  expect(repository.chat(first.id).topicHandles).toEqual(job.chat.topicHandles)
 })
 
 test.each(["chat", "topic"] as const)("topics created from %s sources retain readable local references in a new chat", async (owner) => {
   const { copyFile, mkdir } = await import("node:fs/promises")
   const { manager, repository, first, topic } = await fixture()
   const material = { id: randomUUID(), name: "limits.pdf", kind: "pdf" as const, text: "Limits source", pages: ["Limits source"] }
-  const sourceDirectory = join(repository.directory, owner === "chat" ? "chats" : "topics", owner === "chat" ? first.id : topic.id, "assets")
+  const sourceDirectory = join(repository.directory, owner === "chat" ? "chats" : "scratchpads", owner === "chat" ? first.id : topic.id, "assets")
   await mkdir(sourceDirectory, { recursive: true })
   await copyFile(resolve("tests/fixtures/limits.pdf"), join(sourceDirectory, material.name))
   await repository.mutate((state) => {
@@ -531,11 +567,11 @@ test.each(["chat", "topic"] as const)("topics created from %s sources retain rea
   const topicId = randomUUID()
   children[0].emit("message", {
     type: "result", reply: "Created Source Limits.", learning: first.learning,
-    topicMutations: [{ type: "createTopic", topicId, topic: { version: "11-10-2026", name: "Source Limits", content: [{ id: "tp-source", name: "Source Limits", references: [{ type: "pdf", path: "assets/limits.pdf", pages: [{ from: 1, to: 1 }] }], goals: { id: "tpg-source", objective: "Explain limits", understoodWhen: ["Explain approaching"] }, mistakes: [] }] } }],
+    topicMutations: [{ type: "createTopic", topicId, topic: { type: "topic", version: "11-10-2026", name: "Source Limits", content: [{ id: "tp-source", name: "Source Limits", references: [{ type: "pdf", path: "assets/limits.pdf", pages: [{ from: 1, to: 1 }] }], goals: [{ objective: "Explain limits", understoodWhen: ["Explain approaching"] }], mistakes: [] }] } }],
   })
   await vi.waitFor(() => expect(manager.statuses[0].status).toBe("ready"))
   expect(repository.topic(topicId).materials).toEqual([material])
-  expect(await readFile(join(repository.directory, "topics", topicId, "assets", material.name))).toEqual(await readFile(resolve("tests/fixtures/limits.pdf")))
+  expect(await readFile(join(repository.directory, "scratchpads", topicId, "assets", material.name))).toEqual(await readFile(resolve("tests/fixtures/limits.pdf")))
   const chat = newChat(first.runnerId)
   await repository.mutate((state) => state.chats.push(chat))
   await manager.send({ chatId: chat.id, content: `${topicMention(topicId, "Source Limits")} Read the source.` })
@@ -601,26 +637,26 @@ test("persists response choices with their assistant message without carrying th
   expect(repository.chat(first.id).messages.at(-1)).not.toHaveProperty("responseQuestion")
 })
 
-test("keeps newly attached images on their user message across reload without repeating them", async () => {
+test("keeps newly attached files on their user message across reload without repeating them", async () => {
   const { manager, repository, first } = await fixture()
-  const firstImage = { id: randomUUID(), name: "first.png", kind: "image" as const, text: "Image source", pages: [] }
-  const secondImage = { ...firstImage, id: randomUUID(), name: "second.png" }
+  const firstImage = { id: randomUUID(), name: "lecture.pdf", kind: "pdf" as const, text: "Lecture source", pages: [] }
+  const secondImage = { ...firstImage, id: randomUUID(), name: "second.pdf" }
   await repository.mutate((state) => state.chats[0].materials.push(firstImage))
-  await manager.send({ chatId: first.id, content: "Explain the first image" })
+  await manager.send({ chatId: first.id, content: "Explain the first file" })
   expect(repository.chat(first.id).messages[0]).toMatchObject({ materialIds: [firstImage.id] })
   manager.stop(first.runnerId, first.id)
   await repository.mutate((state) => state.chats[0].materials.push(secondImage))
-  await manager.send({ chatId: first.id, content: "Now explain the second image" })
+  await manager.send({ chatId: first.id, content: "Now explain the second file" })
   expect(repository.chat(first.id).messages[1]).toMatchObject({ materialIds: [secondImage.id] })
   const restored = new WorkspaceRepository(repository.directory)
   await restored.load()
   expect(restored.chat(first.id).messages.map((message) => message.materialIds)).toEqual([[firstImage.id], [secondImage.id]])
 })
 
-test("preserves explicitly submitted topic images and rejects images outside the chat context", async () => {
+test.each(["image", "pdf", "text"] as const)("preserves explicitly submitted %s attachments and rejects files outside the chat context", async (kind) => {
   const { manager, repository, first, second, topic } = await fixture()
-  const image = { id: randomUUID(), name: "topic.png", kind: "image" as const, text: "Image source", pages: [] }
-  const assets = join(repository.directory, "topics", topic.id, "assets")
+  const image = { id: randomUUID(), name: `topic.${kind}`, kind, text: "Attachment source", pages: [] }
+  const assets = join(repository.directory, "scratchpads", topic.id, "assets")
   await mkdir(assets, { recursive: true })
   await writeFile(join(assets, image.name), await readFile(resolve("src/renderer/assets/app-icon.png")))
   await repository.mutate((state) => state.topics.find((item) => item.id === topic.id)!.materials.push(image))
@@ -630,4 +666,29 @@ test("preserves explicitly submitted topic images and rejects images outside the
   expect(repository.chat(first.id).messages[0]).toMatchObject({ materialIds: [image.id], topicIds: [topic.id] })
   await manager.send({ chatId: second.id, content: `${topicMention(topic.id, topic.title)} Retry the image request` })
   expect(repository.chat(second.id).messages[0]).toMatchObject({ materialIds: [image.id], topicIds: [topic.id] })
+})
+
+test("archiving a scratchpad during a turn rejects its staged writes and reply", async () => {
+  const { manager, repository, first, topic } = await fixture()
+  await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Update these notes.` })
+  await repository.mutate((state) => { state.topics.find((item) => item.id === topic.id)!.archived = true })
+  children[0].emit("message", {
+    type: "result", reply: "Overwritten archived notes.", learning: first.learning,
+    topicMutations: [{ type: "updateTopic", topicId: topic.id, summary: "New notes" }],
+  })
+  await vi.waitFor(() => expect(manager.statuses[0].status).toBe("error"))
+  expect(repository.topic(topic.id).learning.notes).not.toContain("New notes")
+  expect(repository.chat(first.id).messages.at(-1)?.role).toBe("user")
+})
+
+test("commit rejects an attempt to recreate an already tagged scratchpad", async () => {
+  const { manager, repository, first, topic } = await fixture()
+  await manager.send({ chatId: first.id, content: `${topicMention(topic.id, topic.title)} Teach me this.` })
+  children[0].emit("message", {
+    type: "result", reply: "Created another copy.", learning: first.learning,
+    topicMutations: [{ type: "createTopic", topicId: randomUUID(), topic: { type: "topic", version: "11-10-2026", name: topic.title, content: [] } }],
+  })
+  await vi.waitFor(() => expect(manager.statuses[0].status).toBe("error"))
+  expect(repository.stateSnapshot.topics).toHaveLength(2)
+  expect(repository.chat(first.id).messages.at(-1)?.role).toBe("user")
 })

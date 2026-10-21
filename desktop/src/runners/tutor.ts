@@ -1,3 +1,5 @@
+import { parseScratchpadCommand } from "../shared/scratchpad-commands"
+import { visualizationInstructions } from "../shared/visualization"
 import { messageText } from "../shared/message-text"
 import { randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
@@ -9,6 +11,8 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions"
 import { z } from "zod"
+import { unified } from "unified"
+import remarkParse from "remark-parse"
 import {
   LearningStateSchema,
   type WorkerJob,
@@ -16,31 +20,41 @@ import {
   type Diagnostic,
   WorkspaceSchema,
 } from "../shared/contracts"
-import { TopicMutationSchema, TopicToolNames, TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
-import { StateService } from "../main/state-service"
-import { runAgentGraph } from "./graph"
+import { TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
+import { existingScratchpadForCreation, StateService } from "../main/state-service"
+import { runTutorGraph } from "./tutor-graph"
+import { ScratchpadMutationSchema, TestStateSchema } from "../shared/scratchpad-state"
+import { scratchpadToolDefinitions, scratchpadTools } from "./scratchpad-tools"
 import type { TurnTelemetry } from "./telemetry"
 import { readSourceImages } from "../main/source-images"
-import { parseTopicDirectory, validateTopicDirectory, topicDirectoryFormat } from "../shared/topic-directory"
-import { resolveMaterialLink } from "../shared/material-links"
+import { materialSections } from "./material-sections"
+import { importStructuredContent } from "../main/structured-content-migration"
+import { renderContentBlock, scratchpadMarkdown } from "../shared/scratchpad-markdown"
+import { createTopicHandles, mapTopicReferenceIds, TopicHandleSchema } from "./topic-handles"
 
 // Persisted chats may have an empty handoff; tool submissions must be ready to publish.
 const SaveLearningStateSchema = LearningStateSchema.safeExtend({
   workpad: LearningStateSchema.shape.workpad.min(1, "A private handoff and a concrete next action are required.").regex(/\S/, "A private handoff and a concrete next action are required.").describe("Private handoff for the next turn. If no question is pending, record the current status explicitly."),
   nextAction: LearningStateSchema.shape.nextAction.min(1, "A private handoff and a concrete next action are required.").regex(/\S/, "A private handoff and a concrete next action are required.").describe("Concrete next action, including waiting for the learner when appropriate."),
 })
+const SaveLearningStateInputSchema = z.object({
+  ...SaveLearningStateSchema.shape,
+  pendingQuestion: z.string().max(20_000).default(""),
+  question: z.string().max(20_000).optional().describe("Question for a standalone conversation without an active topic. Topic checks come from the recorded step. For a standalone choice, supply its prompt here and its options in responseOptions."),
+  responseOptions: LearningStateSchema.shape.responseQuestion.unwrap().shape.options.optional(),
+  pendingCheck: LearningStateSchema.shape.pendingCheck.unwrap().extend({
+    topicId: TopicHandleSchema,
+  }).optional().describe("Reference an unanswered recorded topic question. May be omitted when exactly one unanswered question exists."),
+})
 
 export const skillFiles = [
-  "references/FILE_STRUCTURE.md",
-  "references/FAST_IO.md",
-  "references/TUTOR_EXPLANATION.md",
-  "references/TUTOR_QUESTIONS_AND_DELIBERATE.md",
-  "references/TUTOR_TESTS.md",
-  "references/WHAT_IS_UNDERSTANDING.md",
-  "references/DIFFICULTY_MEMORY.md",
-  "references/DIFFICULTY_MEMORY_EVALUATION.md",
-  "references/PSEUDOCODE_POC.md",
-  "assets/GUIDE_DOCUMENT_TEMPLATE.md",
+  "skills/MANAGE_TOPIC.md", "skills/MANAGE_TEST.md", "skills/MANAGE_GENERIC.md",
+  "skills/FEEDBACK_AND_DELIBERATE.md", "skills/WHAT_IS_UNDERSTANDING.md",
+  "skills/WRITING_STYLE.md", "skills/UNSLOP.md",
+  ...(["topic", "test", "generic"] as const).flatMap((role) => [
+    `scratchpad_templates/${role}/schema.md`, `scratchpad_templates/${role}/tools.md`,
+    `scratchpad_templates/${role}/scratchpad_${role}.md`,
+  ]),
 ] as const
 
 const ReadMaterialSchema = z.object({
@@ -49,6 +63,7 @@ const ReadMaterialSchema = z.object({
   lastPage: z.number().int().min(1),
   includeVisuals: z.boolean().default(false),
 })
+const replyParser = unified().use(remarkParse)
 const ReadTopicNotesSchema = z.object({
   topicId: z.string().uuid(),
   offset: z.number().int().min(0).default(0),
@@ -57,38 +72,11 @@ const ReadTopicNotesSchema = z.object({
 const TopicReadSchema = z.object({ topicId: z.uuid(), threadId: z.string().optional() })
 const QuestionsSchema = z.object({ topicId: z.uuid(), topicPartId: TopicPartIdSchema })
 const MistakesSchema = z.object({ topics: z.array(z.uuid()).nullable() })
-const stateToolDescriptions = {
-  getMistakesForTopic: "Read structured mistakes for the supplied topics, or all topics including archived topics when topics=null. Call only to create evaluation questions for these topics or when explicitly asked. Read-only.",
-  whereAmI: "Read the current thread's active topic parts and question progress. Reading never registers this thread as a tutor.",
-  getTopicProgress: "Read curriculum-ordered progress across all tutor threads for topic status questions, including covered parts with mastery unverified, completed parts with verified mastery, and untouched parts. Read-only; never registers this thread as a tutor.",
-  whatIsNext: "Read every active continuation across tutor threads and only the very next part untouched by any thread. Call only for a fresh thread, when explicitly asked, or after completing a part or step. Present multiple choices to the learner.",
-  getQuestions: "Read exact questions and learner answers across all tutor threads for a part. Call only when explicitly asked or to deduplicate evaluation questions.",
-  documentMistake: "Record context and issue after an incorrect answer has been deliberated and confirmed. Registers this thread as a writer. Distinguish tutor mistakes in the issue.",
-  complete: "Finish a part for this thread only after its understanding checks are resolved or the learner explicitly skips them. Keep a part with a pending check active. Set masteryVerified=false when its walkthrough is finished but mastery remains unverified; this records covered status. Set masteryVerified=true only when the learner's reasoning satisfies every goal and understoodWhen criterion; this records completed status. Registers this thread as a writer.",
-  activatePart: "Mark a part active when this thread visits it. Completed parts can be reactivated. Registers this thread as a writer.",
-  createTopic: "Create a topic folder, topic summary, topic.state.json and assets only when explicitly requested or when a prerequisite topic is necessary. Referenced supplied assets are copied into the new topic; use materialIds to select sources when filenames are ambiguous. Registers this thread as a writer. Returns topicId.",
-  updateTopic: "Set curriculum content, references and goals, or revise the topic summary. Keep summaries conceptual; questions, answers, mistakes and progress belong in structured state. Preserve IDs and existing evidence. Referenced supplied assets are copied into this topic; materialIds selects ambiguous source filenames. Registers this thread as a writer.",
-  recordQuestion: "Append the exact self-contained question to the current thread's active part before asking it. Resume pending questions unless the learner explicitly skips or terminates them; preserve skipped steps without an answer. Keep the checked key in the private chat handoff. Registers this thread as a writer.",
-  recordAnswer: "Save the learner's actual answer at the specified zero-based question stepIndex in this thread. Preserve the original answer; record retries as new follow-up questions. Registers this thread as a writer.",
+class WritePrerequisiteError extends Error {
+  constructor(message: string, readonly prerequisite: "creation" | "confirmation", readonly topicId?: string) {
+    super(message)
+  }
 }
-const mutationTools: ChatCompletionTool[] = TopicMutationSchema.options.map((schema) => {
-  const name = schema.shape.type.value
-  if (name === "createTopic") {
-    return { type: "function", function: { name, description: stateToolDescriptions[name], parameters: z.toJSONSchema(z.object({ topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true }), materialIds: z.array(z.uuid()).optional(), threadId: z.string().optional() })) } }
-  }
-  if (name === "updateTopic") {
-    const update = TopicMutationSchema.options.find((option) => option.shape.type.value === "updateTopic")
-    if (!update || update.shape.type.value !== "updateTopic") throw new Error("Missing topic update schema.")
-    const { type: _type, ...shape } = update.shape
-    const parameters = z.toJSONSchema(z.object(shape))
-    delete parameters.properties?.expectedSummary
-    delete parameters.properties?.expectedContent
-    return { type: "function", function: { name, description: stateToolDescriptions[name], parameters } }
-  }
-  const { type: _type, ...shape } = schema.shape
-  return { type: "function", function: { name, description: stateToolDescriptions[name], parameters: z.toJSONSchema(z.object({ ...shape, threadId: z.string().optional() })) } }
-})
-
 const tools: ChatCompletionTool[] = [
   {
     type: "function",
@@ -103,32 +91,35 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "read_material",
       description:
-        "Read a chat or tagged-topic source. Pages are 1-based. Set includeVisuals=true for slides, diagrams, scanned PDFs, or image sources; images are provided after the tool results. Read up to 15 text pages or 3 visual pages at a time. Embed discussed source images using the returned prune-source URL.",
+        "Read an accessible chat or scratchpad source. Pages are 1-based. Set includeVisuals=true to inspect a PDF slide or diagram. Limit: 15 text pages or 3 visual pages. When quoting or examining the source image itself, display it using ![description](prune-source://id/page). Create original illustrations to explain concepts.",
       parameters: z.toJSONSchema(ReadMaterialSchema),
     },
   },
   {
     type: "function",
     function: {
-      name: "read_topic_notes",
+      name: "read_scratchpad",
       description:
-        "Read conceptual topic summaries and preserved legacy notes from any workspace topic, including archived topics. Use structured tools for new mistakes and question history. Read-only; no private handoffs or answer keys. offset and limit count characters; follow nextOffset until null for a complete review.",
-      parameters: z.toJSONSchema(ReadTopicNotesSchema),
+        "Read a scratchpad, its type, role skill, state and markdown, including archived scratchpads. Excludes private chat handoffs. offset and limit count characters; follow nextOffset until null for a complete review.",
+      parameters: z.toJSONSchema(ReadTopicNotesSchema.omit({ topicId: true }).extend({ scratchpadId: TopicHandleSchema })),
     },
   },
-  ...mutationTools,
-  { type: "function", function: { name: "getMistakesForTopic", description: stateToolDescriptions.getMistakesForTopic, parameters: z.toJSONSchema(MistakesSchema) } },
-  { type: "function", function: { name: "whereAmI", description: stateToolDescriptions.whereAmI, parameters: z.toJSONSchema(TopicReadSchema) } },
-  { type: "function", function: { name: "getTopicProgress", description: stateToolDescriptions.getTopicProgress, parameters: z.toJSONSchema(TopicReadSchema) } },
-  { type: "function", function: { name: "whatIsNext", description: stateToolDescriptions.whatIsNext, parameters: z.toJSONSchema(TopicReadSchema) } },
-  { type: "function", function: { name: "getQuestions", description: stateToolDescriptions.getQuestions, parameters: z.toJSONSchema(QuestionsSchema) } },
+  {
+    type: "function",
+    function: {
+      name: "test_getCoveredTopics",
+      description: "Read taught topic parts across all tutor threads, including older workspace topics. null selects all topics; an explicit list narrows the scope. Partial parts include only their recorded teaching evidence, not their whole planned syllabus.",
+      parameters: z.toJSONSchema(z.object({ topics: z.array(TopicHandleSchema).nullable() })),
+    },
+  },
+  ...scratchpadTools,
   {
     type: "function",
     function: {
       name: "save_learning_state",
       description:
-        "Stage this chat's private handoff. Required on every turn before your final reply. Record a pending cross-topic question here; keep checked keys only in privateAnswerKey/workpad.",
-      parameters: z.toJSONSchema(SaveLearningStateSchema),
+        "Stage this chat's private handoff before every final reply. Include pending cross-topic questions. Keep checked keys only in privateAnswerKey/workpad.",
+      parameters: z.toJSONSchema(SaveLearningStateInputSchema.omit({ pendingQuestion: true, responseQuestion: true })),
     },
   },
 ]
@@ -138,18 +129,12 @@ export async function createTutorSession(
   activity: (message: string) => void,
   telemetry?: TurnTelemetry,
 ) {
-  const guide = await readFile(join(job.skillDirectory, "SKILL.md"), "utf8")
-  const references = await Promise.all(
-    [
-      "TECHNICAL_WRITING.md",
-      "UNSLOP.md",
-      "references/FILE_STRUCTURE.md",
-      "assets/GUIDE_DOCUMENT_TEMPLATE.md",
-    ].map(
-      async (file) =>
-        `${file}\n${await readFile(join(job.skillDirectory, file), "utf8")}`,
-    ),
-  )
+  const request = job.chat.messages.findLast((message) => message.role === "user")
+  const command = parseScratchpadCommand(request?.content ?? "")
+  const scratchpadRequested = job.chat.scratchpadRequested || command !== undefined
+  const topicHandles = createTopicHandles(job)
+  const guides = await Promise.all(skillFiles.filter((file) => file.startsWith("skills/")).map(async (file) =>
+    `${file}\n${await readFile(join(job.skillDirectory, file), "utf8")}`))
   const describe = (materials: WorkerJob["chat"]["materials"]) =>
     materials.map((material) => ({
       id: material.id,
@@ -157,48 +142,138 @@ export async function createTutorSession(
       kind: material.kind,
       pageCount: material.pages.length || 1,
       sourceUrl: `edu-material://${material.id}/1`,
+      numberedSections: materialSections(material),
     }))
-  const instructions = `${guide}\n\n${references.join("\n\n")}\n\nDesktop harness contract:
-Follow the bundled skill. read_material supplies extracted pages and source images. read_skill loads additional guidance. Guidance already included below does not need to be read again. Batch independent source reads and guidance reads together when possible. Native shell access and delegation are unavailable. External web search is unavailable in this harness: after exhausting supplied practice sources, explain the limitation and end practice; never present an authored question as an internet source.
-This is an independent chat. A topic can be taught by several chat threads. Use structured state tools for all topic progress, questions, answers, and mistakes. All writers register the current app chat ID (${job.chat.id}) as a threadTutor. Never supply another thread's id to write its progress. Read-only references never register a tutor. Topic tool changes are staged, then replayed under the repository mutex against current state and committed with the final reply.
-Currently open topic: ${job.openedTopicId ?? "none"}. Explicit topic mentions or instructions take precedence. Initial topic status below supplies whereAmI, topicProgress (getTopicProgress), and whatIsNext results for this turn. Use these supplied results without repeating the same reads; refresh through the tools after staged progress changes or for topics absent from the snapshot. For a topic status question such as 'Which part are we on?', use topicProgress and report the furthest covered/completed part, any active part, and the next untouched part across threads. State when coverage has unverified mastery. An empty whereAmI only means this thread has no active part; it does not mean the topic has no progress. Answer status questions directly without making the learner choose a resumption or activating a part. Use whereAmI for this thread's active work and whatIsNext for a fresh thread or explicit continuation request. Refresh whatIsNext after completing a part or step. When the learner asks to resume and more than one continuation is returned, ask the learner to choose. A continuation in another thread is evidence to resume from, not permission to overwrite that thread. Activate the chosen part for this thread.
-Only tagged/open topics and topics created this turn may be written. Read-only cross-topic reviews include archived topics. getMistakesForTopic retrieves structured mistakes; old Markdown records are legacy evidence and do not establish new structured progress. read_topic_notes reads conceptual summaries and preserved legacy notes.
-A tagged topic with planConfirmed=false needs an approved curriculum before teaching. Use updateTopic to propose its content and goals; keep this chat awaiting_plan_confirmation. Only the Confirm plan action approves a plan. Plan approved on this turn: ${job.confirmTopicId ?? "none"}. Persisted planConfirmed=true remains approval on later turns.
-topic.md is a growing conceptual summary of what has actually been discussed. Use updateTopic.summary to fill gaps incrementally and clarify the relevant explanation when a mistake reveals ambiguous phrasing. Preserve useful existing explanations; do not append a transcript or a learner mistake log. Follow GUIDE_DOCUMENT_TEMPLATE.md: title, one <topic-directory /> element, headings for the topic parts taught so far, Topic terminology, and Materials. Explain each part using references/TUTOR_EXPLANATION.md. The directory follows the curriculum hierarchy; link a part only once its notes exist. Use single-quoted JSON items and encode apostrophes as \\u0027. Example:
-${topicDirectoryFormat}
-Use updateTopic.summary only for subject explanations, worked examples, terminology and source references. Use recordQuestion and recordAnswer for exact questions and actual learner answers. Use documentMistake for confirmed mistakes after deliberation. Follow the bundled skill's walkthrough questions, own-words summary, and goal-based follow-ups. Offer the permitted choices at part boundaries; choosing to continue does not demonstrate mastery. After those checks are resolved or explicitly skipped, call complete with masteryVerified=false if mastery is unverified. Use masteryVerified=true only when all part goals are satisfied by the learner’s reasoning. Keep answer keys, temporary remediation and session logistics in this chat's private handoff. Topic workpads are unused. Read all topic curriculum, progress, questions, answers and mistakes through the structured state tools backed by topic.state.json.
-Call save_learning_state once after completing the other state writes and before the final reply. Both workpad and nextAction must contain non-whitespace text, even for status requests or when waiting for confirmation. Its notes field is private chat context, not the topic summary. Keep checked keys only in privateAnswerKey/workpad. Repair rejected state writes with the same tool and target before publishing. Provide the learner-facing explanation, question or choice in the final reply.
-In chat, cite sources as Sourced from: [Lecture.pdf, pg. 6-7](edu-material://<material-id>/6). For visuals call read_material with includeVisuals=true and embed ![Description](prune-source://<material-id>/<page>). For summaries, including Materials, use the local Markdown link syntax in references/FILE_STRUCTURE.md: [Lecture.pdf](<assets/Lecture.pdf#page=1>), retaining the exact supplied filename inside angle brackets. Structured reference paths remain relative to topic.state.json. A source reference type is pdf, ppt, image, text or website. Use text for plain-text, Markdown and source-code attachments, for example {"type":"text","path":"assets/Lecture 4 - Code used in lecture.txt"}; text and image references have no page ranges. PDF and PPT ranges are 1-based and inclusive.
+  const instructions = `Tutor the learner using the supplied scratchpad management skills.
+
+${guides.join("\n\n")}
+
+## Showing references in chat
+
+- Cite selectively when discussing a specific source claim, example, quotation, or figure. Place the citation and relevant source content beside that explanation, before the understanding check. Do not add a blanket source footer, cite every page read or every active-section reference, or place source material after the check. Routine feedback and original explanations need no automatic citation. This applies to chat replies only; scratchpad references may remain links.
+- Cite each attached page actually used with edu-material://id/page. The chat displays cited PDF/image pages beside the paragraph containing their citation. For text assets, include the relevant excerpt, code, or table directly in your reply. Embed a specific source image with ![descriptive caption](prune-source://id/page) when needed within the explanation. Do not show source pages containing answers to a pending assessment; quote only the relevant non-answer content instead.
+- For web sources, include the relevant short excerpt, code, table, or available screenshot/image and link to its original page. Respect source quotation limits. Use provider page tools to inspect the content first; never invent a screenshot or source excerpt. If content cannot be displayed, state that limitation in the chat.
+- Original diagrams can clarify the explanation, but do not replace showing the source content being referenced.
+
+## Walking through attached materials
+
+- When the learner asks to work through supplied slides, the slides define the lesson sequence. Read every supplied file to its end before planning, in chunks of at most 15 text pages. pageCount is the document length; the tool's chunk limit is not the end of the document.
+- Build one curriculum part per substantive source section heading, including subsections, in source order. Preserve its heading, numbering, page range and learning goals. Do not combine adjacent headings into one part, even if they are related: sections 2 and 3 remain separate, not a part labelled 2–3. Do not replace a deck's multiple sections with one broad part or merge methods into a thematic syllabus. Cover all substantive content; omit only covers, contents pages, and administration.
+- numberedSections is inferred navigation metadata. Verify it against the source; it may miss or misclassify headings. Pages with the same section number belong together. Topic part IDs use only letters, digits and hyphens after tp- (for example tp-section-10-2); dots or underscores are invalid. If a plan write fails, correct its invalid fields without dropping any of its sections.
+- numberedSections is a navigation aid, not an exhaustive content list. Include unnumbered worked-example, code, question and continuation pages within their surrounding source section. Do not trim a section's page range to only the pages that have numbered headings.
+- After confirmation, start at the first source section. Explain that section's actual content, then ask its check. Walk through subsequent sections and their worked examples in order. Introduce later worked examples when their source section is reached.
+- Teach the source's examples, values and code where introduced, using original illustrations to make them clear. Teach the concepts before asking the learner to use them. Keep the current explanation and check within the current section; do not ask for a method from a later section.
+- Make each teaching reply self-contained: explain the concept directly with the code, table, formula or illustration needed before asking the check. Choose citations for the specific source content discussed in the reply; reading a page or having it in the active section does not require citing it. Keep scratchpad citations selective; original illustrations need no separate citation. Distinguish invented inputs from source data. The learner must be able to answer using the chat without opening slides or scratchpad notes.
+- When quoting or examining a specific slide or source figure, call read_material with includeVisuals=true and embed the returned image as ![descriptive caption](prune-source://id/page), with attribution. For explaining concepts, create a suitable diagram, table or plot instead of defaulting to screenshots. If a source image being examined is unavailable, reproduce its necessary text or data and explain the limitation.
+- During planning, keep the scratchpad directory and plan without prewriting the lesson. From the first teaching turn, grow one overarching example through the taught sections using MANAGE_TOPIC.md and the topic template; keep answers to pending checks private.
+- During teaching, call topic_editContent with add/edit/delete changes to stable content blocks. Set present to the IDs to show in this reply; the app renders those stored blocks in chat. Use topic_updateTopic only for curriculum or metadata changes. Preserve the full curriculum.
+- Save the exact source section and page in currentSection and the next source section/page in nextAction. Existing broad parts still contain ordered source sections: use the saved handoff and recorded questions to continue within them. A prewritten summary is not evidence that the learner has covered its content.
+
+## Scratchpad roles and tools
+
+- Only /new-topic, /new-test, and /new-generic at character zero of a learner message followed by whitespace or end of input are commands. Treat the remaining text as the learner instruction and apply the matching MANAGE skill to create that scratchpad type. A command elsewhere is ordinary text. A leading command overrides inferred type and the open scratchpad; tagged scratchpads supply context for the new scratchpad. Commands are optional.
+- Infer the scratchpad type from the learner's request and chat context. Use Topic for guided learning through curriculum parts, Test for assessment/practice questions, and Generic for free notes or other work. Do not ask the learner to select a scratchpad type.
+- When scratchpad creation is requested, read the request and attached sources, choose the matching role, then call topic_createTopic, test_createTest, or generic_createGeneric. Do not assume Topic. If the learner's goal is unclear, ask a focused clarification before creating anything.
+- Attached materials are the primary curriculum. Inspect every attached file with read_material before creating a topic, then read the pages needed to plan its curriculum. Follow their section order, terminology, worked examples and questions when teaching. Use exact assets/<filename> references with the pages actually read. All chat attachments are preserved in the new topic's assets, including files reserved for later practice. Websites can supplement attached sources, but cannot replace them. Use a web walkthrough only when no attached materials are available. If a source cannot be read, explain the gap and ask how to proceed instead of inventing its contents.
+- On each teaching turn, read the current part's cited attachment pages before explaining or asking checks. Keep scratchpad summaries and directory links grounded in those same attachments; distinguish supplementary explanations from source examples.
+- Preserve the source hierarchy in topic.content: subsections such as 5.1 belong to section 5, and 5.1.1 belongs to 5.1. Set each subpart's parent to its immediate parent part; numbering in the name alone does not create a relationship.
+- Reuse a scratchpad already bound to the current learner request. Creation retries return its existing handle. A similarly named scratchpad elsewhere in the workspace is read-only context, not a write target for a new scratchpad request.
+- A new Topic starts as a draft. Present its source-linked plan and save phase awaiting_plan_confirmation. Do not activate parts or record questions until the learner confirms it.
+- Every scratchpad has a type in scratchpad.state.json: topic, test, or generic. Apply its matching MANAGE skill and template.
+- Before creating or renaming any topic, test or generic scratchpad, apply the scratchpad naming guidance in skills/UNSLOP.md to its name.
+- You can read and work with several scratchpads of different types in the same turn. Assume each target's role independently; reading another scratchpad never changes the roles of previous targets.
+- Skill tool names map to role-prefixed tools: topic_getQuestions, test_getQuestions, generic_getReferences. Only use a role's tools for that type. test_getMistakesForTopic reads topic evidence for the test role.
+- read_scratchpad returns the target's type, role skill, structured state, and scratchpad.md. read_skill loads exact supplied skills and templates. The generic schema example's discriminator is a typo; generic state uses type=generic.
+- Read access includes archived workspace scratchpads. Write access is limited to tagged/open scratchpads and those created this turn.
+- IDs are stable scratchpad_N handles scoped to this chat. Use these handles in every target parameter and topic-reference id. Internal UUIDs are not accepted as target handles.
+- Current thread: ${job.chat.id}. Thread identity and writer attribution are enforced by the app.
+- threadTutors is shared coordination state: inspect other threads' per-part status and recorded questions/answers through the initial topicProgress/whatIsNext snapshot and state reads. Preserve their work when writing; the backend registers only writing threads. Test question threadWriters serves the same coordination purpose and is visible in test state reads.
+- Preserve each part's goals, including understoodWhen criteria, and recorded mistakes with context and issue. Test and question goals and mistakes remain part of their saved state. Evaluate answers against understoodWhen and use recorded mistakes to guide follow-ups. Content edits preserve this evidence.
+- Topic plans require learner confirmation before teaching. Propose and edit a source-linked curriculum first. All topic goals must be satisfied before topic_complete.
+- When awaiting plan approval, save phase awaiting_plan_confirmation and omit responseOptions. The app provides the confirmation button; the learner can request changes in chat.
+- The app generates the directory, section anchors and terminology table from JSON. Supply sectionId on lesson blocks, source blocks by materialId/page, and term blocks for terminology.
+- Maintain explanations with topic_editContent. Read existing block IDs before editing. Supply only changed blocks, and use present to select the stored blocks for the current lesson. Learning tools record questions, answers and progress separately. Keep assessment keys in the private handoff. Continue the source order and preserve earlier working.
+- Progress tools update structured evidence; save_learning_state updates only the private chat handoff.
+- Record each check and follow-up once with topic_recordQuestion. In save_learning_state, select it by pendingCheck (topicId, topicPartId, stepIndex); omit the reference only when exactly one unanswered check exists. The app derives the private handoff and displayed question from that recorded step. Do not repeat the question in your final reply or supply a second copy of its text. For a standalone conversation without an active topic, supply question once in save_learning_state.
+- When present selects stored blocks, the app uses them as the explanation. Otherwise write feedback in the final reply. The app renders the recorded question. Do not generate Check callouts. Include needed citations and source content within the explanation blocks selected by present, or within your final reply when no blocks are selected. Use exact material IDs and pages read with read_material.
+- Tool errors and recovery prompts are internal. Repair them, then answer the original learner request with feedback, an explanation, or the pending question. Do not substitute a report about tool calls or retries for the lesson.
+- Test and generic scratchpads have no topic-plan gate. Test questions and answers are maintained by test tools; generic markdown is maintained by generic_updateScratchpad.
+- Each scratchpad folder contains scratchpad.md, scratchpad.state.json, and assets. Tool writes stage in one transaction. Save the private chat handoff with save_learning_state before replying.
+- Native shell and delegation are unavailable. Use provider web search/page tools for online sources. If unavailable, disclose it and keep sources verifiable.
+
+Explicit scratchpad mentions or instructions take precedence over the open scratchpad.
+Scratchpad creation requested: ${scratchpadRequested}.
+Explicit creation command this turn: ${command ? `${command.command}; create a ${command.type} scratchpad. Learner instruction: ${JSON.stringify(command.instruction)}` : "none; infer type from the learner request and context"}.
+Opened scratchpad: ${job.openedTopicId ? topicHandles.handle(job.openedTopicId) : "none"}.
+Plan confirmed this turn: ${job.confirmTopicId ? topicHandles.handle(job.confirmTopicId) : "none"}.
+${visualizationInstructions}
 Chat materials: ${JSON.stringify(describe(job.chat.materials))}
-Chat handoff: ${JSON.stringify(job.chat.learning)}
-Workspace topic directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topic.id, title: topic.title, archived: topic.archived, notesCharacters: topic.notes.length })))}
-Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), state: topic.state ?? freshTopicState(topic.title, topic.createdAt), summary: topic.learning.notes })))}`
+Chat handoff: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.parse(JSON.stringify(job.chat.learning))), topicHandles.referenceHandle))}
+Workspace scratchpad directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topicHandles.handle(topic.id), type: topic.state?.type ?? "topic", title: topic.title, archived: topic.archived, access: job.topics.some((tagged) => tagged.id === topic.id && !tagged.archived) ? "read/write" : "read", notesCharacters: topic.notes.length })))}
+Tagged scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(job.topics.map((topic) => ({ id: topicHandles.handle(topic.id), type: topic.state?.type ?? "topic", title: topic.title, planConfirmed: topic.planConfirmed, materials: describe(topic.materials), state: topic.state ?? freshTopicState(topic.title, topic.createdAt), scratchpad: topic.learning.notes }))), topicHandles.referenceHandle))}`
   const sources = [
     ...job.chat.materials.map((material) => ({
       material,
       directory: job.assetDirectory,
     })),
-    ...job.topics.flatMap((topic) =>
-      topic.materials.map((material) => ({
+    ...[...job.topics, ...job.workspaceTopics].flatMap((topic) =>
+      (topic.materials ?? []).map((material) => ({
         material,
-        directory: topic.assetDirectory,
+        directory: topic.assetDirectory ?? job.assetDirectory,
       })),
     ),
   ]
-  const workspaceTopics = new Map(job.workspaceTopics.map((topic) => [topic.id, topic]))
-  for (const topic of job.topics) {
-    workspaceTopics.set(topic.id, {
-      id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes,
-    })
+  const readPages = new Map<string, Set<number>>()
+  function requireMaterialReview(materials: WorkerJob["chat"]["materials"]) {
+    for (const material of materials) {
+      for (let page = 1; page <= (material.pages.length || 1); page++) {
+        if (!readPages.get(material.id)?.has(page))
+          throw new Error(`Read attached file ${material.name}, page ${page}, with read_material before planning. Read every supplied file to its end so later sections are not omitted.`)
+      }
+    }
+  }
+  function requireMaterialGrounding(parts: z.infer<typeof TopicStateSchema>["content"], materials: WorkerJob["chat"]["materials"], materialIds?: string[]) {
+    const referencedIds = new Set<string>()
+    for (const part of parts) {
+      let attached = false
+      for (const reference of part.references) {
+        if (reference.type === "website" || reference.type === "topic") continue
+        let matches = materials.filter((material) => reference.path === `assets/${material.name}` && (!materialIds || materialIds.includes(material.id)))
+        if (!matches.length) matches = sources.map(({ material }) => material)
+          .filter((material) => reference.path === `assets/${material.name}` && (!materialIds || materialIds.includes(material.id)))
+        const material = matches[0]
+        if (!material || matches.some((match) => match.id !== material.id))
+          throw new Error(`Reference ${reference.path} must identify one attached material for this topic.`)
+        if (materials.some((primary) => primary.id === material.id)) attached = true
+        referencedIds.add(material.id)
+        let ranges = [{ from: 1, to: 1 }]
+        if (reference.type === "pdf" || reference.type === "ppt") ranges = reference.pages
+        for (const range of ranges) {
+          if (range.to > (material.pages.length || 1)) throw new Error(`Reference pages are outside ${material.name}.`)
+          for (let page = range.from; page <= range.to; page++) {
+            if (!readPages.get(material.id)?.has(page))
+              throw new Error(`Read ${material.name}, page ${page}, with read_material before using this part. Cite only pages you have read this turn.`)
+          }
+        }
+      }
+      if (materials.length && !attached)
+        throw new Error(`Part "${part.name}" must reference the attached materials. Websites may supplement them, but cannot replace them.`)
+    }
+    return [...referencedIds]
   }
   let staged = WorkspaceSchema.parse({ version: 2, runners: [job.runner], chats: [job.chat], topics: job.topics })
   for (const topic of job.workspaceTopics) {
     if (!staged.topics.some((item) => item.id === topic.id)) {
-      staged.topics.push({ ...job.topics[0], id: topic.id, title: topic.title, archived: topic.archived, createdAt: topic.state?.createdAt ?? new Date().toISOString(), titleGenerated: false, materials: [], planConfirmed: false, state: topic.state ?? freshTopicState(topic.title, new Date().toISOString()), learning: { ...job.chat.learning, notes: topic.notes } })
+      staged.topics.push({ ...job.topics[0], id: topic.id, title: topic.title, archived: topic.archived, createdAt: topic.state?.createdAt ?? new Date().toISOString(), titleGenerated: false, materials: topic.materials ?? [], planConfirmed: false, state: topic.state ?? freshTopicState(topic.title, new Date().toISOString()), learning: { ...job.chat.learning, notes: topic.notes } })
     }
   }
-  const topicMutations: z.infer<typeof TopicMutationSchema>[] = []
-  const writable = new Set(job.topics.map((topic) => topic.id))
+  for (const topic of staged.topics) {
+    if (!topic.state || topic.state.type === "generic") continue
+    topic.state = importStructuredContent(topic.state, topic.learning.notes)
+    if (topic.state.type !== "generic") topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
+  }
+  const topicMutations: z.infer<typeof ScratchpadMutationSchema>[] = []
+  const writable = new Set(job.topics.filter((topic) => !topic.archived).map((topic) => topic.id))
   let writes = Promise.resolve()
   const stateService = new StateService({
     get stateSnapshot() { return structuredClone(staged) },
@@ -212,30 +287,122 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       return operation
     },
   }, job.chat.id)
+  function coveredTopicEvidence(topicIds: string[] | null) {
+    return staged.topics.flatMap((topic) => {
+      const state = topic.state
+      if (state?.type !== "topic" || (topicIds && !topicIds.includes(topic.id))) return []
+      const parts = state.content.flatMap((part) => {
+        const progress = state.threadTutors.flatMap((thread) => {
+          const entry = thread.progress[part.id]
+          if (!entry) return []
+          return [entry]
+        })
+        const steps = progress.flatMap((entry) => entry.steps)
+        const taughtContent = (state.document?.blocks ?? []).flatMap((block) => {
+          if (block.type !== "markdown" || block.sectionId !== part.id) return []
+          return block.content.filter((line) => line.trim().length > 0)
+        })
+        const completed = progress.some((entry) => entry.status === "completed")
+        if (!completed && !steps.length && !taughtContent.length) return []
+        let coverage = "partial"
+        if (completed) coverage = "completed"
+        return [{ ...part, coverage, steps, taughtContent }]
+      })
+      if (!parts.length) return []
+      return [{ topicId: topicHandles.handle(topic.id), title: topic.title, archived: topic.archived, parts }]
+    })
+  }
   const initialStatus = await Promise.all(job.topics.map(async (topic) => {
-    const current = await stateService.whereAmI(topic.id)
-    const progress = await stateService.getTopicProgress(topic.id)
-    const continuations = await stateService.whatIsNext(topic.id)
+    const type = topic.state?.type ?? "topic"
+    if (type === "test") return { scratchpadId: topicHandles.handle(topic.id), type, whereAmI: await stateService.whereAmIForTest(topic.id) }
+    if (type === "generic") return { scratchpadId: topicHandles.handle(topic.id), type }
     return {
-      topicId: topic.id,
-      whereAmI: current.map(({ part, progress }) => ({
-        topicPartId: part.id, name: part.name, status: progress.status,
-        latestQuestion: progress.steps.at(-1)?.question ?? null,
-      })),
-      topicProgress: progress.map(({ part, threads }) => ({
-        topicPartId: part.id, name: part.name,
-        threads: threads.map(({ threadId, progress }) => ({ threadId, status: progress.status })),
-      })),
-      whatIsNext: continuations.map(({ label, threadId, part, progress }) => ({
-        label, threadId, topicPartId: part.id, name: part.name, status: progress?.status ?? null,
-      })),
+      scratchpadId: topicHandles.handle(topic.id), type,
+      whereAmI: await stateService.whereAmI(topic.id),
+      topicProgress: await stateService.getTopicProgress(topic.id),
+      whatIsNext: await stateService.whatIsNext(topic.id),
     }
   }))
   let saved: LearningState | undefined
   const saveErrors = new Map<string, string>()
+  const writePrerequisites = new Map<string, WritePrerequisiteError>()
+  const pendingPhases = ["awaiting_answer", "awaiting_clarification", "contested"]
+  const questionText = (text: string) => text.replace(/\s+/g, " ").trim()
+  function activeTopicParts() {
+    return staged.topics.flatMap((topic) => {
+      if (!writable.has(topic.id) || topic.archived || !topic.planConfirmed || topic.state?.type !== "topic") return []
+      const progress = topic.state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress ?? {}
+      return Object.entries(progress).filter(([, part]) => part.status === "active")
+        .map(([partId, part]) => ({ topicId: topic.id, partId, ...part }))
+    })
+  }
+  function lessonBody(fallback: string) {
+    const mutation = topicMutations.findLast((mutation) =>
+      (mutation.type === "editTopicContent" || mutation.type === "editTestContent") && mutation.present?.length)
+    if (!mutation || (mutation.type !== "editTopicContent" && mutation.type !== "editTestContent")) return fallback
+    const topic = staged.topics.find((topic) => topic.id === mutation.topicId)
+    if (!topic?.state || topic.state.type === "generic") return fallback
+    return (mutation.present ?? []).map((id) => {
+      const block = topic.state?.type !== "generic" ? topic.state?.document?.blocks.find((block) => block.id === id) : undefined
+      if (!block) throw new Error(`Presented content block not found: ${id}`)
+      return renderContentBlock(block, topic.materials)
+    }).join("\n\n")
+  }
+  function prepareReply(reply: string) {
+    reply = lessonBody(reply)
+    if (!saved || !pendingPhases.includes(saved.phase)) return reply
+    const edits: { start: number; end: number }[] = []
+    for (const node of replyParser.parse(reply).children) {
+      const start = node.position?.start.offset
+      const end = node.position?.end.offset
+      if (start === undefined || end === undefined) continue
+      const raw = reply.slice(start, end)
+      // Older provider sessions may still emit these sections. They are projections owned by the app.
+      const check = node.type === "blockquote" && /^>\s*\[!CHECK\]/.test(raw)
+      const labelledCheck = node.type === "paragraph" && /^\*\*Check:\*\*/i.test(raw)
+      const repeatedQuestion = node.type === "paragraph" && questionText(raw) === questionText(saved.pendingQuestion)
+      if (check || labelledCheck || repeatedQuestion) edits.push({ start, end })
+    }
+    for (const edit of edits.reverse()) reply = reply.slice(0, edit.start) + reply.slice(edit.end)
+    reply = reply.trim()
+    if (saved.pendingQuestion && !saved.responseQuestion)
+      reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
+    return reply.trim()
+  }
+  function learningStateError(state: LearningState) {
+    const active = activeTopicParts()
+    if (pendingPhases.includes(state.phase) && active.length && !active.some((part) => {
+      if (state.pendingCheck?.topicId !== part.topicId || state.pendingCheck.topicPartId !== part.partId) return false
+      const step = part.steps[state.pendingCheck.stepIndex]
+      return step !== undefined && step.answerFromUser === undefined
+    })) {
+      return "Select an unanswered recorded check with pendingCheck (topicId, topicPartId, stepIndex)."
+    }
+  }
   const session = {
-    instructions: `${instructions}\nInitial topic status: ${JSON.stringify(initialStatus)}`,
+    instructions: topicHandles.modelText(`${instructions}\nInitial scratchpad status: ${JSON.stringify(initialStatus)}\nCovered topic evidence: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(coveredTopicEvidence(null)), topicHandles.referenceHandle))}`),
     tools,
+    modelText: topicHandles.modelText,
+    async readMessageImages(message: WorkerJob["chat"]["messages"][number]) {
+      const content: ChatCompletionContentPart[] = []
+      if (message.role !== "user") return content
+      for (const id of message.materialIds ?? []) {
+        const source = sources.find(({ material }) => material.id === id)
+        if (!source) {
+          // Older topic attachments can fall outside the chat's bounded source context.
+          if (message.id !== job.chat.messages.at(-1)?.id) continue
+          throw new Error("An attached image is not available in this chat.")
+        }
+        if (source.material.kind !== "image") continue
+        const [png] = await readSourceImages(source.material, source.directory, 1, 1)
+        content.push(
+          { type: "text", text: `Attached image: ${source.material.name}. Source: prune-source://${id}/1` },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${png.toString("base64")}`, detail: "high" } },
+        )
+        readPages.set(id, new Set([1]))
+      }
+      return content
+    },
     async execute(
       name: string,
       input: Parameters<typeof LearningStateSchema.parse>[0],
@@ -244,28 +411,63 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
       let result: string
       let success = true
       let saveKey: string | undefined
-      const writer = TopicMutationSchema.options.some((schema) => schema.shape.type.value === name)
+      const roleTool = scratchpadToolDefinitions.find((tool) => tool.name === name)
+      const writer = roleTool?.writer ?? false
       if (writer) {
-        const target = z.object({ topicId: z.uuid().optional() }).safeParse(input)
-        saveKey = `${name}:${target.success ? target.data.topicId ?? "new" : "invalid"}`
+        saveKey = `${name}:invalid`
       } else if (name === "save_learning_state") saveKey = name
       try {
+        if (writer || name === "save_learning_state") {
+          const serialized = JSON.stringify(input)
+          if (serialized) input = mapTopicReferenceIds(z.json().parse(JSON.parse(topicHandles.storageText(serialized))), (id) => topicHandles.resolve(id, false))
+        }
+        if (roleTool) {
+          if (roleTool.creation && command && roleTool.role !== command.type)
+            throw new WritePrerequisiteError(`${command.command} requires creating a ${command.type} scratchpad with its matching role tool.`, "creation")
+          const argumentsObject = z.record(z.string(), z.json()).parse(input)
+          const identity = z.object({ threadId: z.string().optional() }).parse(argumentsObject)
+          if (identity.threadId !== undefined && identity.threadId !== job.chat.id) throw new Error("Only the current thread's progress can be accessed or written.")
+          if (roleTool.operation === "getMistakesForTopic") {
+            const { topics } = z.object({ topics: z.array(z.string()).nullable() }).parse(argumentsObject)
+            input = { ...argumentsObject, topics: topics?.map((handle) => topicHandles.resolve(handle, false)) ?? null }
+          } else if (!roleTool.creation) {
+            let topicId
+            try {
+              topicId = topicHandles.resolve(argumentsObject[roleTool.target] ?? null, writer)
+            } catch (error) {
+              if (writer && scratchpadRequested && writable.size === 0 && error instanceof Error)
+                throw new WritePrerequisiteError(error.message, "creation")
+              throw error
+            }
+            const target = staged.topics.find((item) => item.id === topicId)
+            if ((target?.state?.type ?? "topic") !== roleTool.role)
+              throw new Error(`${name} requires a ${roleTool.role} scratchpad. This target is ${target?.state?.type ?? "topic"}.`)
+            input = { ...argumentsObject, topicId }
+            if (writer) saveKey = `${name}:${topicHandles.handle(topicId)}`
+          }
+        }
         if (name === "read_skill") {
           const { path } = z.object({ path: z.enum(skillFiles) }).parse(input)
           activity("Reading tutoring guidance")
           result = await readFile(join(job.skillDirectory, path), "utf8")
-        } else if (name === "read_topic_notes") {
-          const { topicId, offset, limit } = ReadTopicNotesSchema.parse(input)
-          const topic = workspaceTopics.get(topicId)
+        } else if (name === "test_getCoveredTopics") {
+          const { topics } = z.object({ topics: z.array(TopicHandleSchema).nullable() }).parse(input)
+          const topicIds = topics?.map((handle) => topicHandles.resolve(handle, false)) ?? null
+          result = JSON.stringify(coveredTopicEvidence(topicIds))
+        } else if (name === "read_scratchpad") {
+          const argumentsObject = z.object({ scratchpadId: TopicHandleSchema, offset: ReadTopicNotesSchema.shape.offset, limit: ReadTopicNotesSchema.shape.limit }).parse(input)
+          const topicId = topicHandles.resolve(argumentsObject.scratchpadId, false)
+          const { offset, limit } = argumentsObject
+          const topic = staged.topics.find((item) => item.id === topicId)
           if (!topic) throw new Error("Topic not found in this workspace.")
-          const notes = staged.topics.find((item) => item.id === topicId)?.learning.notes ?? topic.notes
+          const notes = topic.learning.notes
           if (offset > notes.length) throw new Error("Offset is outside this topic's notes.")
           const end = Math.min(offset + limit, notes.length)
           let nextOffset: number | null = null
           if (end < notes.length) nextOffset = end
           activity(`Reading ${topic.title} study history`)
           result = JSON.stringify({
-            topicId, title: topic.title, archived: topic.archived,
+            scratchpadId: topicHandles.handle(topicId), type: topic.state?.type ?? "topic", roleSkill: `skills/MANAGE_${(topic.state?.type ?? "topic").toUpperCase()}.md`, state: topic.state, title: topic.title, archived: topic.archived,
             notes: notes.slice(offset, end), offset, nextOffset, totalCharacters: notes.length,
           })
         } else if (name === "read_material") {
@@ -296,7 +498,7 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
             for (let page = firstPage; page <= lastPage; page++) {
               const png = images[page - firstPage]
               const url = `prune-source://${id}/${page}`
-              result += `\nSource image page ${page}: ${url}. Embed this image when discussing its visual content. Exclude answer annotations for pending assessments.`
+              result += `\nSource image page ${page}: ![${material.name}, page ${page}](${url}). Embed this image when quoting or examining the source figure itself. For explaining concepts, create an original illustration. Exclude answer annotations for pending assessments.`
               sourceImages.push(
                 {
                   type: "text",
@@ -311,114 +513,218 @@ Tagged topics: ${JSON.stringify(job.topics.map((topic) => ({ id: topic.id, title
               )
             }
           }
-        } else if (TopicToolNames.some((tool) => tool === name)) {
-          const identity = z.object({ threadId: z.string().optional() }).parse(input)
-          if (identity.threadId !== undefined && identity.threadId !== job.chat.id) throw new Error("Only the current thread's progress can be accessed through whereAmI or written.")
-          if (name === "getMistakesForTopic") {
-            result = JSON.stringify(await stateService.getMistakesForTopic(MistakesSchema.parse(input).topics))
-          } else if (name === "whereAmI") {
-            result = JSON.stringify(await stateService.whereAmI(TopicReadSchema.parse(input).topicId))
-          } else if (name === "getTopicProgress") {
-            result = JSON.stringify(await stateService.getTopicProgress(TopicReadSchema.parse(input).topicId))
-          } else if (name === "whatIsNext") {
-            result = JSON.stringify(await stateService.whatIsNext(TopicReadSchema.parse(input).topicId))
-          } else if (name === "getQuestions") {
-            const { topicId, topicPartId } = QuestionsSchema.parse(input)
-            result = JSON.stringify(await stateService.getQuestions(topicId, topicPartId))
+          const read = readPages.get(id) ?? new Set<number>()
+          for (let page = firstPage; page <= lastPage; page++) read.add(page)
+          readPages.set(id, read)
+        } else if (roleTool) {
+          const operation = roleTool.operation
+          const argumentsObject = z.record(z.string(), z.json()).parse(input)
+          if (operation === "getMistakesForTopic") {
+            const mistakes = await stateService.getMistakesForTopic(MistakesSchema.parse(input).topics)
+            result = JSON.stringify(mistakes.map((mistake) => ({ ...mistake, topicId: topicHandles.handle(mistake.topicId) })))
+          } else if (!roleTool.writer) {
+            const { topicId } = TopicReadSchema.parse(input)
+            if (operation === "whereAmI" && roleTool.role === "topic") result = JSON.stringify(await stateService.whereAmI(topicId))
+            else if (operation === "whereAmI") result = JSON.stringify(await stateService.whereAmIForTest(topicId))
+            else if (operation === "getTopicProgress") result = JSON.stringify(await stateService.getTopicProgress(topicId))
+            else if (operation === "whatIsNext") result = JSON.stringify(await stateService.whatIsNext(topicId))
+            else if (operation === "getQuestions" && roleTool.role === "topic") result = JSON.stringify(await stateService.getQuestions(topicId, QuestionsSchema.parse(input).topicPartId))
+            else if (operation === "getQuestions") result = JSON.stringify(await stateService.getTestQuestions(topicId))
+            else if (operation === "getTestMistakes") result = JSON.stringify(await stateService.getTestMistakes(topicId))
+            else if (operation === "getGenericReferences") result = JSON.stringify(await stateService.getGenericReferences(topicId))
+            else throw new Error("This role tool is not available.")
           } else {
-            const argumentsObject = z.record(z.string(), z.json()).parse(input)
-            const mutation = TopicMutationSchema.parse({ ...argumentsObject, type: name, ...(name === "createTopic" ? { topicId: randomUUID() } : {}) })
-            if (mutation.type !== "createTopic") {
-              if (!writable.has(mutation.topicId)) throw new Error("Only tagged or newly created topics can be written.")
-              const topic = staged.topics.find((topic) => topic.id === mutation.topicId)
-              if (!topic?.planConfirmed && mutation.type !== "updateTopic") throw new Error("Wait for the learner to confirm the proposed plan.")
-              if (mutation.type === "updateTopic" && topic) {
-                if (mutation.summary !== undefined || mutation.content !== undefined || mutation.name !== undefined)
-                  mutation.expectedSummary = topic.learning.notes
-                if (mutation.content !== undefined) mutation.expectedContent = topic.state?.content ?? []
+            const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { topicId: randomUUID() } : {}) })
+            const target = staged.topics.find((topic) => topic.id === mutation.topicId)
+            let draftContent
+            if (mutation.type === "createTopic") draftContent = mutation.topic.content
+            if (mutation.type === "updateTopic" && !target?.planConfirmed) draftContent = mutation.content
+            if (draftContent?.some((part) => !part.references.length))
+              throw new Error("Every draft curriculum part needs source references from an existing walkthrough. Research sources before proposing a plan.")
+            const materials = [...new Map([...job.chat.materials, ...(target?.materials ?? [])].map((material) => [material.id, material])).values()]
+            if (mutation.type === "createTopic") {
+              if (materials.length && !mutation.topic.content.length)
+                throw new Error("Read the attached materials and propose a source-linked curriculum before creating the topic.")
+              const referencedIds = requireMaterialGrounding(mutation.topic.content, materials, mutation.materialIds)
+              const planningMaterials = [...new Map([
+                ...materials,
+                ...sources.map(({ material }) => material).filter((material) => referencedIds.includes(material.id)),
+              ].map((material) => [material.id, material])).values()]
+              requireMaterialReview(planningMaterials)
+              mutation.materialIds = [...new Set([
+                ...referencedIds,
+                ...planningMaterials.map((material) => material.id),
+              ])]
+            }
+            if (mutation.type === "updateTopic" && mutation.content) {
+              const referencedIds = requireMaterialGrounding(mutation.content, materials, mutation.materialIds)
+              const planningMaterials = [...new Map([
+                ...materials,
+                ...sources.map(({ material }) => material).filter((material) => referencedIds.includes(material.id)),
+              ].map((material) => [material.id, material])).values()]
+              requireMaterialReview(planningMaterials.filter((material) => !materials.some((existing) => existing.id === material.id)))
+              mutation.materialIds = referencedIds
+            }
+            if (roleTool.role === "topic" && target?.planConfirmed) {
+              const state = TopicStateSchema.parse(target.state)
+              // Existing references belong to the topic even when a chat attaches another file with the same name.
+              const teachingMaterials = [...target.materials, ...job.chat.materials.filter((material) => !target.materials.some((attached) => attached.name === material.name))]
+              if ("topicPartId" in mutation)
+                requireMaterialGrounding(state.content.filter((part) => part.id === mutation.topicPartId), teachingMaterials)
+              if (mutation.type === "editTopicContent") {
+                const progress = state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress
+                const sectionIds = new Set(mutation.changes.flatMap((change) => {
+                  if (change.action === "delete") return []
+                  return "sectionId" in change.block && change.block.sectionId ? [change.block.sectionId] : []
+                }))
+                requireMaterialGrounding(state.content.filter((part) => sectionIds.has(part.id) || progress?.[part.id]?.status === "active"), teachingMaterials)
               }
             }
-            if (mutation.type === "updateTopic" && mutation.summary !== undefined && /<topic-directory|^#{1,6}\s+Topic directory\b/im.test(mutation.summary)) {
-              validateTopicDirectory(mutation.summary)
-              const entries = [...(parseTopicDirectory(mutation.summary).directory?.items ?? [])]
-              const materials = [...new Map(sources.map(({ material }) => [material.id, material])).values()]
-              for (const entry of entries) {
-                entries.push(...entry.children)
-                for (const source of entry.sources) {
-                  if (!/^https?:\/\//.test(source.href) && !resolveMaterialLink(source.href, materials))
-                    throw new Error(`Unknown directory source: ${source.href}. Use the exact supplied material filename or source URL.`)
-                }
+            if (mutation.type === "editTopicContent" || mutation.type === "editTestContent") {
+              for (const change of mutation.changes) {
+                if (change.action === "delete" || change.block.type !== "source") continue
+                if (!readPages.get(change.block.materialId)?.has(change.block.page))
+                  throw new Error(`Read content source ${change.block.materialId}, page ${change.block.page}, before citing it.`)
               }
             }
-            await stateService.write(mutation)
-            if (mutation.type === "createTopic" || mutation.type === "updateTopic") {
-              mutation.materialIds = staged.topics.find((topic) => topic.id === mutation.topicId)?.materials.map((material) => material.id)
+            if (!roleTool.creation) {
+              if (!writable.has(mutation.topicId)) throw new Error("Only tagged or newly created scratchpads can be written.")
+              if (roleTool.role === "topic" && !target?.planConfirmed && mutation.type !== "updateTopic")
+                throw new WritePrerequisiteError("Wait for the learner to confirm the proposed plan. Present the plan and save phase awaiting_plan_confirmation; do not retry teaching before approval.", "confirmation", mutation.topicId)
+              if (mutation.type === "updateTopic" && target) {
+                if (mutation.content !== undefined) mutation.expectedContent = TopicStateSchema.parse(target.state).content
+              }
+              if ((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && target?.state && target.state.type !== "generic") mutation.expectedRevision = target.state.revision
+              if (mutation.type === "updateGeneric" && target) mutation.expectedSummary = target.learning.notes
+              if (mutation.type === "updateTest" && target) mutation.expectedState = TestStateSchema.parse(target.state)
             }
-            topicMutations.push(mutation)
-            if (mutation.type === "createTopic") writable.add(mutation.topicId)
-            activity("Staging topic state")
-            result = JSON.stringify({ topicId: mutation.topicId, staged: true })
+            const existing = existingScratchpadForCreation(staged, job.chat.id, mutation)
+            if (existing) {
+              result = JSON.stringify({ scratchpadId: topicHandles.handle(existing.id), type: existing.state?.type, staged: true, reused: true, nextAction: "Use the matching update tool to revise this scratchpad." })
+            } else {
+              await stateService.write(mutation)
+              if ("materialIds" in mutation) mutation.materialIds = staged.topics.find((topic) => topic.id === mutation.topicId)?.materials.map((material) => material.id)
+              topicMutations.push(mutation)
+              if (roleTool.creation) {
+                writable.add(mutation.topicId)
+                topicHandles.register(mutation.topicId)
+              }
+              activity("Staging scratchpad state")
+              let nextAction = "Maintain this scratchpad with its matching role tools."
+              if (mutation.type === "createTopic") nextAction = "Present the proposed plan and save phase awaiting_plan_confirmation. Wait for learner approval before activating parts or recording questions."
+              result = JSON.stringify({ scratchpadId: topicHandles.handle(mutation.topicId), type: roleTool.role, staged: true, nextAction, ...((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && { state: staged.topics.find((topic) => topic.id === mutation.topicId)?.state }) })
+            }
           }
         } else if (name === "save_learning_state") {
           saved = undefined
-          const candidate = SaveLearningStateSchema.parse(input)
+          const handoff = SaveLearningStateInputSchema.parse(input)
+          const active = activeTopicParts()
+          const unanswered = active.flatMap((part) => part.steps.flatMap((step, stepIndex) => {
+            if (step.answerFromUser !== undefined) return []
+            return [{ topicId: part.topicId, topicPartId: part.partId, stepIndex, question: step.question }]
+          }))
+          let pendingQuestion = handoff.question ?? handoff.pendingQuestion
+          let pendingCheck: LearningState["pendingCheck"]
+          if (pendingPhases.includes(handoff.phase) && active.length) {
+            let selected
+            if (handoff.pendingCheck) {
+              const topicId = topicHandles.resolve(handoff.pendingCheck.topicId, false)
+              selected = unanswered.find((step) => step.topicId === topicId && step.topicPartId === handoff.pendingCheck?.topicPartId && step.stepIndex === handoff.pendingCheck.stepIndex)
+            } else if (unanswered.length === 1) selected = unanswered[0]
+            if (!selected) throw new Error("Select an unanswered recorded check with pendingCheck (topicId, topicPartId, stepIndex). Use topic_recordQuestion first if none exists.")
+            pendingCheck = { topicId: selected.topicId, topicPartId: selected.topicPartId, stepIndex: selected.stepIndex }
+            pendingQuestion = selected.question
+          }
+          if (!pendingPhases.includes(handoff.phase)) pendingQuestion = ""
+          const candidate = SaveLearningStateSchema.parse({ ...handoff, pendingQuestion, pendingCheck })
+          if (handoff.responseOptions)
+            candidate.responseQuestion = LearningStateSchema.shape.responseQuestion.unwrap().parse({ prompt: pendingQuestion || handoff.question || "", options: handoff.responseOptions })
+          if (candidate.responseQuestion && pendingPhases.includes(candidate.phase))
+            candidate.responseQuestion.prompt = pendingQuestion
+          const created = topicMutations.some((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type))
+          if (scratchpadRequested && !created && !["awaiting_choice", "awaiting_clarification"].includes(candidate.phase))
+            throw new Error("Infer the scratchpad type from this chat and create it with the matching role tool before saving, or ask a focused clarification if the learner's goal is unclear.")
+          const draftIds = new Set(staged.topics.filter((topic) => writable.has(topic.id) && !topic.archived && !topic.planConfirmed && topic.state?.type === "topic" && topic.state.content.length > 0).map((topic) => topic.id))
+          if (candidate.phase === "awaiting_plan_confirmation" && draftIds.size) {
+            delete candidate.responseQuestion
+          }
+          const error = learningStateError(candidate)
+          if (error) throw new Error(error)
+          for (const [key, issue] of writePrerequisites) {
+            let resolved = false
+            if (issue.prerequisite === "creation" && created) {
+              const createdTopic = topicMutations.some((mutation) => mutation.type === "createTopic")
+              resolved = !createdTopic || (candidate.phase === "awaiting_plan_confirmation" && draftIds.size > 0)
+            }
+            if (issue.prerequisite === "confirmation" && candidate.phase === "awaiting_plan_confirmation" && issue.topicId && draftIds.has(issue.topicId)) resolved = true
+            if (resolved) {
+              saveErrors.delete(key)
+              writePrerequisites.delete(key)
+            }
+          }
           saved = candidate
           activity("Saving the chat handoff")
           result =
-            "Chat handoff staged. Provide the learner-facing lesson/question/choice now. The harness will atomically save and verify it before displaying your reply."
+            "Chat handoff staged. Provide only the explanation or feedback. Place needed references beside the relevant explanation. The app renders the recorded question from authoritative state. Everything commits together before display."
         } else {
           throw new Error("This tool is not available.")
         }
         if (saveKey) {
           saveErrors.delete(saveKey)
-          if (writer) saveErrors.delete(`${name}:invalid`)
+          writePrerequisites.delete(saveKey)
+          if (writer) {
+            saveErrors.delete(`${name}:invalid`)
+            writePrerequisites.delete(`${name}:invalid`)
+          }
 
         }
       } catch (error) {
         telemetry?.reject()
         success = false
         result = `Tool error: ${error instanceof Error ? error.message : "Invalid tool arguments."}`
-        if (saveKey) saveErrors.set(saveKey, result)
+        if (saveKey) {
+          saveErrors.set(saveKey, result)
+          writePrerequisites.delete(saveKey)
+          if (error instanceof WritePrerequisiteError) writePrerequisites.set(saveKey, error)
+        }
       }
-      return { text: result, images: sourceImages, success }
+      if (success && (roleTool || name === "read_scratchpad" || name === "test_getCoveredTopics")) {
+        const parsed = z.json().safeParse(JSON.parse(result))
+        if (parsed.success) result = JSON.stringify(mapTopicReferenceIds(parsed.data, topicHandles.referenceHandle))
+      }
+      return { text: topicHandles.modelText(result), images: sourceImages, success }
     },
     get saved() {
-      return saved !== undefined && saveErrors.size === 0
+      return saved !== undefined && saveErrors.size === 0 && !learningStateError(saved)
     },
     get saveError() {
       if (saveErrors.size) {
-        return [...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected topic write. ${error}`).join("\n")
+        return topicHandles.modelText([...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected scratchpad write. ${error}`).join("\n"))
       }
+      if (saved) return learningStateError(saved)
+    },
+    hasReply(reply: string) {
+      return lessonBody(reply).trim().length > 0
+    },
+    recoveryMessage(reply: string) {
+      const request = job.chat.messages.findLast((message) => message.role === "user")
+      const error = session.saveError
+      return `Internal app correction, not a learner message.\nOriginal learner request: ${JSON.stringify(topicHandles.modelText(request?.content ?? ""))}\n${error ?? "A complete saved handoff and a learner-facing reply are required."}\nRepair outstanding writes with their original tool and target and maintain the scratchpad. Save the private handoff with save_learning_state. Reply to the original learner with only the subject explanation or feedback. The app renders the recorded question; do not repeat it. Place any needed references beside the relevant explanation. Keep internal tool errors, write operations, and retries out of the lesson.`
     },
     previewReply(reply: string) {
-      if (!saved || saveErrors.size) return ""
-      // Pending assessment replies stay buffered so a rejected private key never flashes in chat.
-      if (["awaiting_answer", "awaiting_clarification", "contested"].includes(saved.phase) && saved.privateAnswerKey.trim().length > 20) return ""
-      return reply
+      if (!saved || saveErrors.size || learningStateError(saved)) return ""
+      return topicHandles.storageText(prepareReply(reply))
     },
     finish(reply: string) {
-      if (!saved || saveErrors.size)
+      reply = topicHandles.storageText(prepareReply(reply))
+      if (!saved || saveErrors.size || learningStateError(saved))
         throw new Error(
           [...saveErrors.values()].join("\n") ||
+            (saved && learningStateError(saved)) ||
             "The runner did not save a complete learning state. Retry this turn.",
         )
       if (!reply.trim())
         throw new Error("The runner returned no lesson. Retry this turn.")
-      const visibleResponse = messageText({ content: reply, responseQuestion: saved.responseQuestion })
-      const states = [saved]
-      for (const state of states) {
-        const pendingKey = state.privateAnswerKey.trim()
-        if (
-          ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
-          pendingKey.length > 20 &&
-          states.some(
-            (other) => visibleResponse.includes(pendingKey) || other.notes.includes(pendingKey) || staged.topics.some((topic) => topic.learning.notes.includes(pendingKey) || JSON.stringify(topic.state).includes(pendingKey)),
-          )
-        )
-          throw new Error(
-            "The runner included a private assessment key in the lesson. Retry with a different runner.",
-          )
-      }
       return {
         reply,
         learning: saved,
@@ -446,28 +752,34 @@ export async function runTutorTurn(
   const session = await createTutorSession(job, activity, telemetry)
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: session.instructions },
-    ...job.chat.messages.map((message) => ({ role: message.role, content: messageText(message) })),
+    ...await Promise.all(job.chat.messages.map(async (message) => {
+      if (message.role === "assistant") return { role: "assistant" as const, content: session.modelText(messageText(message)) }
+      const images = await session.readMessageImages(message)
+      if (!images.length) return { role: "user" as const, content: session.modelText(messageText(message)) }
+      return { role: "user" as const, content: [{ type: "text" as const, text: session.modelText(messageText(message)) }, ...images] }
+    })),
   ]
   let response: OpenAI.Chat.Completions.ChatCompletionMessage | undefined
-  return runAgentGraph({
-    limit: 16,
+  return runTutorGraph({
+    session,
+    maxAttempts: 16,
     diagnostic,
     telemetry,
-    runner: job.runner,
-    async run(iteration) {
+    async model(iteration) {
       activity("Preparing your lesson")
       diagnostic("model.request", {
         iteration,
         model: job.runner.model,
       })
       onReply("")
-      const stream = client.chat.completions.stream({
+      const parameters = {
         model: job.runner.model,
         messages,
         tools: session.tools,
         max_completion_tokens: 12_000,
-        stream: true,
-      })
+        stream: true as const,
+      }
+      const stream = client.chat.completions.stream(parameters)
       stream.on("content", (_delta, text) => onReply(session.previewReply(text)))
       const completion = await stream.finalChatCompletion()
       response = completion.choices[0]?.message
@@ -487,48 +799,29 @@ export async function runTutorTurn(
         replyCharacters: response.content?.length ?? 0,
         saved: session.saved,
       })
-      if (response.tool_calls?.length) return "tools"
-      return "validate"
+      return {
+        reply: response.content ?? "",
+        calls: (response.tool_calls ?? []).flatMap((call) => {
+          if (call.type !== "function") throw new Error("The model requested an unsupported tool.")
+          return [{ id: call.id, name: call.function.name, arguments: call.function.arguments }]
+        }),
+        finishAfterTools: false,
+      }
     },
-    ready: () => session.saved && !!response?.content?.trim(),
-    recover() {
+    recover(message) {
       messages.push({
         role: "user",
-        content:
-          `Save the complete learning state with save_learning_state, then provide the learner-facing reply.${session.saveError ? `\nCorrect rejected saves first: ${session.saveError}` : ""}`,
+        content: message,
       })
     },
-    async tools() {
+    consumeTools(calls, results) {
       const sourceImages: ChatCompletionContentPart[] = []
-      for (const call of response?.tool_calls ?? []) {
-        if (call.type !== "function")
-          throw new Error("The model requested an unsupported tool.")
-        diagnostic("tool.call", { tool: call.function.name })
-        let input: Parameters<typeof LearningStateSchema.parse>[0]
-        try {
-          input = JSON.parse(call.function.arguments)
-        } catch {
-          // Failed saves must invalidate publication even if an earlier handoff was valid.
-          input = null
-        }
-        const result = await session.execute(call.function.name, input)
-        diagnostic("tool.result", {
-          tool: call.function.name,
-          success: result.success,
-          error: result.success ? null : result.text,
-        })
-        messages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: result.text,
-        })
-        sourceImages.push(...result.images)
+      for (const [index, call] of calls.entries()) {
+        messages.push({ role: "tool", tool_call_id: call.id ?? "", content: results[index].text })
+        sourceImages.push(...results[index].images)
       }
-      if (sourceImages.length)
-        messages.push({ role: "user", content: sourceImages })
-      return "agent"
+      if (sourceImages.length) messages.push({ role: "user", content: sourceImages })
     },
-    finish: () => session.finish(response?.content ?? ""),
     exhausted: () => new Error(
       "The runner reached its tool limit. Retry with a narrower request.",
     ),

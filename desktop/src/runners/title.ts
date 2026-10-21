@@ -1,5 +1,4 @@
 import { mkdir } from "node:fs/promises"
-import OpenAI from "openai"
 import { z } from "zod"
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
@@ -14,9 +13,8 @@ const instructions =
   "Generate a concise title of 3–8 words from the learner's request. Use the learner's language. Do not include markdown or explanation."
 
 export async function generateTopicTitle(
-  job: Pick<WorkerJob, "runner" | "codex" | "cli" | "titleModel">,
+  job: Pick<WorkerJob, "runner" | "codex" | "cli">,
   request: string,
-  client: OpenAI | undefined,
   processChanged: (pid: number | null) => void,
   diagnostic: Diagnostic,
 ) {
@@ -37,29 +35,6 @@ export async function generateTopicTitle(
       timeout,
     )
     return TitleSchema.parse(parseCliResponse(job.cli.provider, output)).title
-  }
-  if (job.runner.provider === "openrouter") {
-    if (!client || !job.titleModel)
-      throw new Error("No priced title model is available from OpenRouter.")
-    diagnostic("title.model", {
-      provider: "openrouter",
-      model: job.titleModel.id,
-    })
-    const result = await client.chat.completions.create(
-      {
-        model: job.titleModel.id,
-        messages: [
-          { role: "system", content: instructions + " Return only the title, without quotes." },
-          { role: "user", content: input },
-        ],
-        max_tokens: 80,
-      },
-      { timeout: 30_000, maxRetries: 0 },
-    )
-    const title = result.choices[0]?.message.content
-      ?.trim()
-      .replace(/^["'“]|["'”]$/g, "")
-    return TitleSchema.parse({ title }).title
   }
   if (!job.codex) throw new Error("The Codex runtime is unavailable.")
   await mkdir(job.codex.home, { recursive: true, mode: 0o700 })

@@ -11,11 +11,15 @@ test("chat tabs virtualize, close, reopen, cycle recent views, and restore after
   const repository = new WorkspaceRepository(join(directory, "workspace"))
   const runnerId = randomUUID()
   await repository.load()
+  const executable = resolve("tests/fixtures/provider-cli.mjs")
+  await chmod(executable, 0o755)
   await repository.mutate((state) => {
+    state.runners[0].provider = "claude"
+    state.providerSettings.push({ id: "claude", displayName: "Fixture tutor", binaryPath: executable, enabled: true })
     state.runners.push({
       id: runnerId,
       name: "Tutor",
-      provider: "openrouter",
+      provider: "claude",
       model: "default",
     })
     state.chats.push(
@@ -127,10 +131,10 @@ test("chat tabs virtualize, close, reopen, cycle recent views, and restore after
     await openChat("Chat 199")
     expect(await page.getByRole("tab").count()).toBeLessThan(10)
     const savedTabs = await page.evaluate(() => localStorage.getItem("edu:chat-tabs"))
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(selected()).toHaveText("Chat 199")
     expect(await page.evaluate(() => localStorage.getItem("edu:chat-tabs"))).toBe(savedTabs)
-    await expect(page.getByRole("tab", { name: "New topic", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("tab", { name: "New scratchpad", exact: true })).toHaveCount(0)
     await expect(
       page.getByRole("button", { name: "All chats", exact: true }),
     ).toBeVisible()
@@ -147,11 +151,11 @@ test("chat tabs virtualize, close, reopen, cycle recent views, and restore after
     const library = page.getByRole("dialog", { name: "All chats" })
     await library
       .getByRole("textbox", { name: "Search chats" })
-      .fill("New topic")
-    await expect(library.getByRole("button", { name: "New topic", exact: true })).toHaveCount(0)
+      .fill("New scratchpad")
+    await expect(library.getByRole("button", { name: "New scratchpad", exact: true })).toHaveCount(0)
     await expect(library.getByText("No chats match your search.")).toBeVisible()
     await page.keyboard.press("Escape")
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(
       page.getByRole("textbox", { name: "Message your tutor" }),
     ).toHaveText("Plan my next topic")
@@ -214,7 +218,7 @@ test("submitting a new topic opens a conversation only after creation", async ()
       }),
     ).toBeVisible()
     await expect(
-      page.getByRole("tab", { name: "New topic", exact: true }),
+      page.getByRole("tab", { name: "New scratchpad", exact: true }),
     ).toHaveCount(0)
     await expect(
       page.getByText("Here is your learning plan. Confirm it to begin.", {
@@ -230,7 +234,7 @@ test("submitting a new topic opens a conversation only after creation", async ()
     await expect(
       page
         .getByRole("dialog", { name: "All chats" })
-        .getByRole("button", { name: "New topic", exact: true }),
+        .getByRole("button", { name: "New scratchpad", exact: true }),
     ).toHaveCount(0)
   } finally {
     await app.close()
@@ -242,14 +246,20 @@ test("Ctrl+Tab chooses chats or topics from the focused context", async () => {
   const directory = await mkdtemp(join(tmpdir(), "edu-context-tabs-"))
   const repository = new WorkspaceRepository(join(directory, "workspace"))
   await repository.load()
+  const executable = resolve("tests/fixtures/provider-cli.mjs")
+  await chmod(executable, 0o755)
   await repository.mutate((state) => {
+    state.runners[0].provider = "claude"
+    state.providerSettings.push({ id: "claude", displayName: "Fixture tutor", binaryPath: executable, enabled: true })
     const runnerId = state.runners[0].id
     state.chats.push(newChat(runnerId, "Chat A"), newChat(runnerId, "Chat B"))
     state.topics.push(
-      ...["Topic A", "Topic B", "Topic C"].map((title, index) => ({
-        ...newTopic(title),
-        createdAt: new Date(Date.UTC(2026, 9, 13) - index * 1000).toISOString(),
-      })),
+      ...["Topic A", "Topic B", "Topic C"].map((title, index) => {
+        const topic = newTopic(title)
+        topic.createdAt = new Date(Date.UTC(2026, 9, 13) - index * 1000).toISOString()
+        if (topic.state) topic.state.createdAt = topic.createdAt
+        return topic
+      }),
     )
   })
   const {
@@ -267,7 +277,7 @@ test("Ctrl+Tab chooses chats or topics from the focused context", async () => {
       selected: true,
       includeHidden: true,
     })
-    const navigation = page.getByRole("navigation", { name: "Your topics" })
+    const navigation = page.getByRole("navigation", { name: "Your scratchpads" })
     await navigation
       .getByRole("button", { name: "Topic A", exact: true })
       .click()
@@ -335,15 +345,16 @@ test("Ctrl+Tab chooses chats or topics from the focused context", async () => {
     await expect(selectedChat).toHaveText("Chat A")
     await page.keyboard.press("Escape")
 
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(selectedChat).toHaveText("Chat A")
-    await expect(page.getByRole("tab", { name: "New topic", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("tab", { name: "New scratchpad", exact: true })).toHaveCount(0)
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).focus()
     await page.keyboard.press("Control+Tab")
     await expect(
       page.getByRole("heading", { name: "Topic A", exact: true }),
     ).toBeVisible()
     await expect(selectedChat).toHaveText("Chat A")
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await page
       .getByRole("textbox", { name: "Message your tutor" })
       .fill("A topic draft")
@@ -355,7 +366,7 @@ test("Ctrl+Tab chooses chats or topics from the focused context", async () => {
     await expect(page.getByRole("heading", { name: "Topic C", exact: true })).toBeVisible()
     await expect(selectedChat).toHaveText("Chat A")
     await page.keyboard.up("Control")
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(
       page.getByRole("textbox", { name: "Message your tutor" }),
     ).toHaveText("A topic draft")

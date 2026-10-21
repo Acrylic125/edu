@@ -36,7 +36,7 @@ test("startup waits for provider checks before deciding setup is required", asyn
   vi.resetModules()
   const { useWorkspace } = await import("../src/renderer/store")
   const snapshot = useWorkspace.getState().snapshot
-  const provider = ProviderStatusSchema.parse({ id: "codex", name: "ChatGPT", connected: false, loading: true, models: [] })
+  const provider = ProviderStatusSchema.parse({ id: "claude", name: "Claude", connected: false, loading: true, models: [] })
 
   useWorkspace.getState().setSnapshot({ ...snapshot, providers: [provider] })
   expect(useWorkspace.getState().loaded).toBe(false)
@@ -55,16 +55,16 @@ test("startup shows setup once every provider check finishes without a connected
   const { useWorkspace } = await import("../src/renderer/store")
   const snapshot = useWorkspace.getState().snapshot
   const codex = ProviderStatusSchema.parse({ id: "codex", name: "ChatGPT", connected: false, models: [] })
-  const openrouter = ProviderStatusSchema.parse({ id: "openrouter", name: "OpenRouter", connected: false, loading: true, models: [] })
+  const claude = ProviderStatusSchema.parse({ id: "claude", name: "Claude", connected: false, loading: true, models: [] })
 
-  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, openrouter] })
+  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, claude] })
   expect(useWorkspace.getState().loaded).toBe(false)
 
-  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, { ...openrouter, loading: false, error: "Account check failed" }] })
+  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, { ...claude, loading: false, error: "Account check failed" }] })
   expect(useWorkspace.getState().loaded).toBe(true)
   expect(useWorkspace.getState().providerSetupComplete).toBe(false)
 
-  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, openrouter] })
+  useWorkspace.getState().setSnapshot({ ...snapshot, providers: [codex, claude] })
   expect(useWorkspace.getState().loaded).toBe(true)
 })
 
@@ -75,7 +75,7 @@ test("a connected provider opens the workspace while other startup checks are pe
     ...useWorkspace.getState().snapshot,
     providers: [
       ProviderStatusSchema.parse({ id: "codex", name: "ChatGPT", connected: true, models: [] }),
-      ProviderStatusSchema.parse({ id: "openrouter", name: "OpenRouter", connected: false, loading: true, models: [] }),
+      ProviderStatusSchema.parse({ id: "claude", name: "Claude", connected: false, loading: true, models: [] }),
     ],
   })
   expect(useWorkspace.getState().loaded).toBe(true)

@@ -134,6 +134,12 @@ button:disabled {
   padding-left: 1rem;
   color: var(--muted-foreground);
 }
+.understanding-check-body > * + * {
+  margin-top: 0.75rem;
+}
+.understanding-check-body > p:empty {
+  display: none;
+}
 .markdown pre {
   overflow-x: auto;
   border: 1px solid var(--border);

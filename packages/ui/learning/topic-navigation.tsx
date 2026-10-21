@@ -37,12 +37,14 @@ export function TopicNavigationItem({
   title,
   selected = false,
   busy = false,
+  scratchpadType,
   render,
   className,
   ...props
 }: Omit<useRender.ComponentProps<"button">, "children"> & {
   selected?: boolean
   busy?: boolean
+  scratchpadType?: "topic" | "test" | "generic"
   title: string
 }) {
   return useRender({
@@ -56,6 +58,9 @@ export function TopicNavigationItem({
         selected
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+        selected && scratchpadType === "topic" && "bg-learning-yellow text-learning-ink",
+        selected && scratchpadType === "test" && "bg-learning-sage text-learning-ink",
+        selected && scratchpadType === "generic" && "bg-learning-blue text-learning-ink",
         className,
       ),
       children: (

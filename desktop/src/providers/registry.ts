@@ -2,7 +2,6 @@ import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { z } from "zod"
 import { shell } from "electron"
-import { ModelAccount } from "../main/account"
 import { CodexProvider } from "./codex"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, resolveCliExecutable, runCliCommand } from "./cli"
 import {
@@ -14,33 +13,11 @@ import {
   ProviderIdSchema,
 } from "../shared/contracts"
 
-const OpenRouterModelsSchema = z.object({
-  data: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      description: z.string().default(""),
-      supported_parameters: z.array(z.string()).default([]),
-      architecture: z.object({
-        input_modalities: z.array(z.string()),
-        output_modalities: z.array(z.string()),
-      }),
-      pricing: z.object({
-        prompt: z.string().pipe(z.coerce.number<string>().finite().nonnegative()),
-        completion: z.string().pipe(z.coerce.number<string>().finite().nonnegative()),
-        request: z.string().pipe(z.coerce.number<string>().finite().nonnegative()).optional().default(0),
-      }).optional().catch(undefined),
-    }),
-  ),
-})
-
 export class ProviderRegistry {
   private pollingTimer?: ReturnType<typeof setInterval>
   private refreshTasks = new Map<z.infer<typeof ProviderIdSchema>, Promise<void>>()
   private disconnecting = new Set<z.infer<typeof ProviderIdSchema>>()
   private closed = false
-  private titleModel?: z.infer<typeof ProviderModelSchema>
-  readonly openrouter
   codex
   private settings: z.infer<typeof ProviderSettingsSchema>[] = []
   private cliAbort = new AbortController()
@@ -48,14 +25,6 @@ export class ProviderRegistry {
     id, name: id === "claude" ? "Claude" : "Antigravity", connected: false,
     models: [],
   }))
-  private openrouterState = ProviderStatusSchema.parse({
-    id: "openrouter",
-    name: "OpenRouter",
-    connected: false,
-    installed: true,
-    models: [{ id: "openrouter/auto", name: "Auto", isDefault: true }],
-  })
-
   constructor(
     private directory: string,
     private executable: string,
@@ -65,7 +34,6 @@ export class ProviderRegistry {
     this.settings = settings
     for (const provider of this.cliStates)
       provider.connected = settings.some((item) => item.id === provider.id && item.enabled && item.binaryPath)
-    this.openrouter = new ModelAccount(directory)
     this.codex = new CodexProvider(
       { executable: settings.find((item) => item.id === "codex")?.binaryPath || executable, home: join(directory, "providers", "codex") },
       notify,
@@ -76,7 +44,6 @@ export class ProviderRegistry {
   get statuses() {
     return [
       this.codex.state,
-      { ...this.openrouterState, connected: this.openrouter.connected },
       ...this.cliStates,
     ].map((provider) => {
       const settings = this.settings.find((item) => item.id === provider.id)
@@ -136,7 +103,6 @@ export class ProviderRegistry {
       const task = (async () => {
         try {
           if (id === "codex") await this.codex.refresh()
-          else if (id === "openrouter") await this.refreshOpenRouter()
           else {
             const provider = this.cliStates.find((provider) => provider.id === id)
             if (provider) await this.refreshCli(provider)
@@ -211,91 +177,6 @@ export class ProviderRegistry {
     }
   }
 
-  private async refreshOpenRouter() {
-    this.openrouterState.loading = true
-    this.openrouterState.error = undefined
-    this.notify()
-    try {
-      const previouslyConnected = this.openrouter.connected
-      await this.openrouter.load()
-      const hasKey = this.openrouter.connected
-      this.openrouter.connected = previouslyConnected && hasKey
-      if (hasKey) {
-        const key = await this.openrouter.key()
-        const account = await fetch("https://openrouter.ai/api/v1/key", {
-          headers: { Authorization: `Bearer ${key}` },
-          signal: AbortSignal.any([this.cliAbort.signal, AbortSignal.timeout(15_000)]),
-        })
-        if (account.status === 401 || account.status === 403) {
-          this.openrouter.connected = false
-          throw new Error("OpenRouter sign-in has expired. Click Connect to sign in again.")
-        }
-        if (!account.ok) throw new Error("Could not check OpenRouter. Refresh to try again.")
-        z.object({ data: z.object({ is_free_tier: z.boolean() }) }).parse(await account.json())
-        this.openrouter.connected = true
-      }
-      const response = await fetch("https://openrouter.ai/api/v1/models", {
-        signal: AbortSignal.any([this.cliAbort.signal, AbortSignal.timeout(20_000)]),
-      })
-      if (!response.ok)
-        throw new Error(
-          "Could not load OpenRouter models. Refresh to try again.",
-        )
-      const result = OpenRouterModelsSchema.parse(await response.json())
-      const cheapest = result.data
-        .filter((model) =>
-          model.id !== "openrouter/auto" &&
-          model.pricing &&
-          model.architecture.input_modalities.includes("text") &&
-          model.architecture.output_modalities.includes("text"),
-        )
-        .sort((left, right) => {
-          if (!left.pricing || !right.pricing) return 0
-          // Estimate a short title request: 500 input tokens and 40 output tokens.
-          const leftCost = left.pricing.prompt * 500 + left.pricing.completion * 40 + left.pricing.request
-          const rightCost = right.pricing.prompt * 500 + right.pricing.completion * 40 + right.pricing.request
-          return leftCost - rightCost || left.id.localeCompare(right.id)
-        })[0]
-      this.titleModel = undefined
-      if (cheapest)
-        this.titleModel = ProviderModelSchema.parse({
-          id: cheapest.id,
-          name: cheapest.name,
-        })
-      this.openrouterState.models = [
-        {
-          id: "openrouter/auto",
-          name: "Auto",
-          description: "Choose a model automatically",
-          isDefault: true,
-          reasoningEfforts: [],
-        },
-        ...result.data
-          .filter(
-            (model) =>
-              model.id !== "openrouter/auto" &&
-              model.supported_parameters.includes("tools"),
-          )
-          .map((model) => ({
-            id: model.id,
-            name: model.name,
-            description: model.description,
-            isDefault: false,
-            reasoningEfforts: [],
-          })),
-      ]
-    } catch (error) {
-      this.openrouterState.error =
-        error instanceof Error
-          ? error.message
-          : "Could not load OpenRouter models."
-    } finally {
-      this.openrouterState.loading = false
-      this.openrouterState.checkedAt = new Date().toISOString()
-      this.notify()
-    }
-  }
-
   async connect(id: z.infer<typeof ProviderIdSchema>) {
     if (this.closed) throw new Error("EdU is shutting down.")
     if (this.disconnecting.has(id)) throw new Error("Wait for this provider to finish disconnecting.")
@@ -345,20 +226,11 @@ export class ProviderRegistry {
       await this.codex.connect()
       return
     }
-    this.openrouterState.connecting = true
-    this.notify()
-    try {
-      await this.openrouter.connect()
-    } finally {
-      this.openrouterState.connecting = false
-      this.notify()
-    }
   }
 
   async cancel(id: z.infer<typeof ProviderIdSchema>) {
     if (id === "claude" || id === "antigravity") return
     if (id === "codex") await this.codex.cancel()
-    else this.openrouter.cancel()
   }
 
   async disconnect(id: z.infer<typeof ProviderIdSchema>) {
@@ -375,7 +247,6 @@ export class ProviderRegistry {
         return
       }
       if (id === "codex") await this.codex.disconnect()
-      else await this.openrouter.disconnect()
       this.notify()
     } finally {
       this.disconnecting.delete(id)
@@ -395,15 +266,7 @@ export class ProviderRegistry {
         )
       return { apiKey: "", codex: this.codex.connection }
     }
-    try {
-      return { apiKey: await this.openrouter.key(), codex: undefined, titleModel: this.titleModel }
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT")
-        throw new Error(
-          "Connect your model account for OpenRouter in Settings → Providers to start learning.",
-        )
-      throw error
-    }
+    throw new Error("Provider not found.")
   }
 
   validateRunner(
@@ -413,7 +276,7 @@ export class ProviderRegistry {
     const provider = this.statuses.find((item) => item.id === input.provider)
     if (!provider) throw new Error("Provider not found.")
     const model = provider.models.find((item) => item.id === input.model)
-    if (!model && input.provider !== "openrouter")
+    if (!model)
       throw new Error(
         "Choose an available model. Refresh providers if it is missing.",
       )
@@ -431,7 +294,6 @@ export class ProviderRegistry {
     clearInterval(this.pollingTimer)
     this.pollingTimer = undefined
     this.cliAbort.abort()
-    this.openrouter.cancel()
     this.codex.close()
   }
 }

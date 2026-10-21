@@ -6,6 +6,8 @@ import tailwindcss from "@tailwindcss/vite"
 export default defineConfig({
   main: {
     build: {
+      // Bundle the ESM Markdown plugins so CommonJS receives their plugin functions.
+      externalizeDeps: { exclude: ["unified", "remark-parse", "remark-gfm"] },
       rollupOptions: {
         input: {
           index: resolve("src/main/index.ts"),

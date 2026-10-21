@@ -86,7 +86,7 @@ else {
         if (!id.success || !page.success)
           return new Response("Source not found", { status: 404 })
         const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id.data))
           const material = owner?.materials.find((item) => item.id === id.data)
           if (!owner || !material) continue
@@ -117,7 +117,6 @@ else {
         repository.stateSnapshot.providerSettings,
       )
       providers = registry
-      await registry.openrouter.load()
       const skillDirectory = app.isPackaged
         ? join(process.resourcesPath, "resources", "tutor-me")
         : join(app.getAppPath(), "resources", "tutor-me")
@@ -137,7 +136,7 @@ else {
           topics: repository.publicTopics,
           chats: repository.publicChats,
           runtime: runnerManager.statuses,
-          connected: registry.openrouter.connected,
+          connected: registry.statuses.some((provider) => provider.connected),
           providers: registry.statuses,
         })
       }
@@ -174,7 +173,7 @@ else {
       }
       ipcMain.handle(Channel.connect, async (event, raw) => {
         trusted(event)
-        const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        const provider = ProviderIdSchema.default("codex").parse(raw)
         if (registry.statuses.some((item) => item.id === provider && item.connecting)) return
         if (provider === "claude" || provider === "antigravity") {
           const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === provider)
@@ -199,7 +198,7 @@ else {
       })
       ipcMain.handle(Channel.disconnect, async (event, raw) => {
         trusted(event)
-        const provider = ProviderIdSchema.default("openrouter").parse(raw)
+        const provider = ProviderIdSchema.default("codex").parse(raw)
         for (const runner of repository.stateSnapshot.runners) {
           if (runner.provider === provider) runnerManager.stop(runner.id)
         }
@@ -221,8 +220,6 @@ else {
         const previous = repository.stateSnapshot.providerSettings.find((item) => item.id === settings.id)
         settings.enabled = previous?.enabled ?? false
         if (settings.binaryPath !== (previous?.binaryPath ?? "")) settings.enabled = false
-        if (settings.id === "openrouter" && settings.binaryPath)
-          throw new Error("OpenRouter does not use a local binary.")
         if (settings.binaryPath) {
           if (!isAbsolute(settings.binaryPath))
             throw new Error("Enter an absolute binary path.")
@@ -230,8 +227,7 @@ else {
             throw new Error("Choose an executable file for the binary path.")
           await access(settings.binaryPath, constants.X_OK)
         }
-        const changesBinary = settings.id !== "openrouter" &&
-          settings.binaryPath !== (previous?.binaryPath ?? "")
+        const changesBinary = settings.binaryPath !== (previous?.binaryPath ?? "")
         if (changesBinary) {
           if (registry.statuses.some((provider) => provider.id === settings.id && (provider.connecting || provider.loading)))
             throw new Error("Wait for the provider to finish connecting before changing its binary.")
@@ -323,7 +319,9 @@ else {
       })
       ipcMain.handle(Channel.createChat, async (event, raw) => {
         trusted(event)
-        const chat = newChat(CreateChatSchema.parse(raw).runnerId)
+        const input = CreateChatSchema.parse(raw)
+        const chat = newChat(input.runnerId)
+        chat.scratchpadRequested = input.scratchpadRequested ?? false
         await repository.mutate((workspace) => {
           if (!workspace.runners.some((runner) => runner.id === chat.runnerId))
             throw new Error("Runner not found.")
@@ -348,7 +346,7 @@ else {
       })
       ipcMain.handle(Channel.selectMaterials, async (event, raw) => {
         trusted(event)
-        return materialDrafts.select(MaterialDraftIdsSchema.parse(raw))
+        return materialDrafts.select(MaterialDraftIdsSchema.parse(raw), window)
       })
       ipcMain.handle(Channel.dropMaterials, async (event, raw) => {
         trusted(event)
@@ -382,7 +380,7 @@ else {
         if (busy)
           throw new Error("Wait for the current lesson before adding sources.")
         if (draftIds.length > 0) await materialDrafts.import(repository, owner, draftIds)
-        else await importMaterials(repository, owner)
+        else await importMaterials(repository, owner, undefined, window)
         notify()
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
@@ -406,7 +404,7 @@ else {
       ipcMain.handle(Channel.openWorkspace, async (event, raw) => {
         trusted(event)
         const topic = repository.topic(IdSchema.parse(raw))
-        const path = join(directory, "topics", topic.id)
+        const path = join(directory, "scratchpads", topic.id)
         await mkdir(path, { recursive: true, mode: 0o700 })
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
@@ -415,7 +413,7 @@ else {
         trusted(event)
         const id = IdSchema.parse(raw)
         const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["topics", topics], ["chats", chats]] as const) {
+        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id))
           const material = owner?.materials.find((item) => item.id === id)
           if (!owner || !material) continue

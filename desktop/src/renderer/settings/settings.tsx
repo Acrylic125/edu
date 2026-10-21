@@ -158,7 +158,7 @@ function ProviderSettings({ snapshot, initialProvider, onboarding = false }: {
       {!onboarding && (
         <>
           <h1 id="providers-heading" className="text-xl font-medium tracking-tight">Providers</h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">Connect your existing ChatGPT, Claude, Antigravity, or OpenRouter account.</p>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">Connect your existing ChatGPT, Claude, or Antigravity account.</p>
         </>
       )}
       <div className="mt-9 grid gap-8 md:grid-cols-[160px_minmax(0,1fr)]">
@@ -203,10 +203,7 @@ function ProviderEditor({ provider }: {
   }
   let binaryPlaceholder = "Bundled Codex runtime"
   let binaryHelp = "Leave the binary path empty to use the bundled runtime."
-  if (provider.id === "openrouter") {
-    binaryPlaceholder = "Not required"
-    binaryHelp = "OpenRouter connects directly to your account."
-  } else if (cliProvider) {
+  if (cliProvider) {
     binaryPlaceholder = "/absolute/path/to/agy"
     if (provider.id === "claude") binaryPlaceholder = "/absolute/path/to/claude"
     binaryHelp = "Leave empty to detect your installed CLI automatically. Set a path only for a custom installation."
@@ -275,7 +272,7 @@ function ProviderEditor({ provider }: {
             <label htmlFor="provider-display-name" className="text-sm">Display name</label>
             <input id="provider-display-name" className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm" value={displayName} disabled={busy} required maxLength={60} onChange={(event) => { setDisplayNameDraft(event.target.value); setSaved(false); setSaveError(undefined) }} />
             <label htmlFor="provider-binary-path" className="text-sm">Binary path</label>
-            <input id="provider-binary-path" className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm disabled:text-muted-foreground" value={binaryPath} disabled={busy || provider.id === "openrouter"} placeholder={binaryPlaceholder} maxLength={4096} onChange={(event) => { setBinaryPathDraft(event.target.value); setSaved(false); setSaveError(undefined) }} />
+            <input id="provider-binary-path" className="h-10 min-w-0 rounded-lg border border-input bg-background px-3 text-sm disabled:text-muted-foreground" value={binaryPath} disabled={busy} placeholder={binaryPlaceholder} maxLength={4096} onChange={(event) => { setBinaryPathDraft(event.target.value); setSaved(false); setSaveError(undefined) }} />
           </div>
           <p className="mt-3 text-xs leading-5 text-muted-foreground">{binaryHelp}</p>
           <button type="submit" className="mt-5 h-9 rounded-lg border border-border px-3 text-sm font-medium hover:bg-accent disabled:opacity-50" disabled={busy || provider.loading || provider.connecting || !displayName.trim()}>Save changes</button>

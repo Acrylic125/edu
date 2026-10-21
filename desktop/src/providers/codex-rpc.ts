@@ -53,7 +53,7 @@ export class CodexAppServer {
         "-c",
         'cli_auth_credentials_store="keyring"',
         "-c",
-        'web_search="disabled"',
+        'web_search="live"',
         "-c",
         "tools.view_image=false",
         ...[

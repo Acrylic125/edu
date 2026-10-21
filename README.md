@@ -19,7 +19,7 @@ pnpm desktop:package
 ```
 
 Open Settings for Appearance and Providers. ChatGPT uses the bundled Codex
-runtime; OpenRouter connects through browser sign-in. Claude and Antigravity use
+runtime. Claude and Antigravity use
 your installed, signed-in CLI, configured with an absolute binary path.
 
 See [desktop/README.md](desktop/README.md) for account setup, packaging, and harness

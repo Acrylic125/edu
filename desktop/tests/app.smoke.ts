@@ -100,7 +100,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.screenshot({ path: "test-results/appearance-dark.png" })
     await page.getByRole("button", { name: "Back", exact: true }).click()
     await expect(page.locator("html")).toHaveClass("dark")
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     const modelTrigger = page.getByRole("combobox", {
       name: "Choose provider and model",
     })
@@ -109,10 +109,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(page.getByRole("button", { name: "Favorites", exact: true })).toHaveCount(0)
     await expect(page.getByRole("heading", { name: "Setup", exact: true })).toBeVisible()
     await expect(page.getByRole("option")).toHaveCount(0)
-    await page.getByRole("button", { name: "OpenRouter", exact: true }).click()
-    await expect(page.getByRole("heading", { name: "Set up OpenRouter", exact: true })).toBeVisible()
-    await expect(page.getByRole("button", { name: "OpenRouter", exact: true })).toBeEnabled()
-    await expect(page.getByRole("button", { name: "OpenRouter", exact: true }).locator("svg")).toHaveCSS("filter", "grayscale(1)")
+    await expect(page.getByRole("button", { name: "OpenRouter", exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: "Claude", exact: true }).click()
     await expect(page.getByRole("heading", { name: "Set up Claude", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "Open provider settings", exact: true }).click()
@@ -136,18 +133,12 @@ test("native sandboxed app manages runners and restores topics across restarts",
         ...snapshot,
         providers: snapshot.providers.map((provider) => ({
           ...provider,
-          connected: provider.id === "codex" || provider.id === "openrouter",
+          connected: provider.id === "codex",
         })),
       })
     }, pickerSnapshot)
     await modelTrigger.click()
     await expect(page.getByRole("heading", { name: "Setup", exact: true })).toHaveCount(0)
-    await page.getByRole("button", { name: "OpenRouter", exact: true }).click()
-    await page.getByRole("combobox", { name: "Search models" }).fill("openrouter/auto")
-    await page.getByRole("option", { name: "Auto", exact: true }).click()
-    await expect(modelTrigger).toHaveText(/Auto/)
-    await expect(page.getByRole("listbox", { name: "Models" })).not.toBeVisible()
-    await modelTrigger.click()
     await page.getByRole("button", { name: "My ChatGPT", exact: true }).click()
     await page
       .getByRole("combobox", { name: "Search models" })
@@ -216,7 +207,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
       await bridge.stopRunner(snapshot.runners[0].id)
       await bridge.addRunner({ name: "Physics tutor", provider: "codex", model: model.id, reasoningEffort: model.effort })
     }, codexModel)
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await page.getByLabel("Message your tutor").fill("Teach me calculus")
     await page.getByRole("button", { name: "Send message" }).click()
     await expect(page.getByRole("alert")).toContainText(
@@ -282,7 +273,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     )
     const chat = snapshot?.chats[0]
     if (!snapshot || !topic || !chat) throw new Error("Missing restored topic or chat")
-    await expect(page.getByRole("navigation", { name: "Your topics" }).locator("svg")).toHaveCount(0)
+    await expect(page.getByRole("navigation", { name: "Your scratchpads" }).locator("svg")).toHaveCount(0)
 
     await page.setViewportSize({ width: 390, height: 844 })
     await page.getByRole("button", { name: "Open topics", exact: true }).click()
@@ -322,14 +313,14 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await expect(topicPane).toBeVisible()
     await expect(tutorChat).not.toBeVisible()
     await page.getByRole("button", { name: "Expand chat panel", exact: true }).click()
-    await page.getByRole("button", { name: "Collapse topics", exact: true }).click()
+    await page.getByRole("button", { name: "Collapse scratchpads", exact: true }).click()
     await expect(navigation).not.toBeVisible()
-    await page.getByRole("button", { name: "Expand topics", exact: true }).click()
+    await page.getByRole("button", { name: "Expand scratchpads", exact: true }).click()
     await expect(navigation).toBeVisible()
-    await page.getByRole("button", { name: "New topic", exact: true }).click()
+    await page.getByRole("button", { name: "New scratchpad", exact: true }).click()
     await expect(tutorChat).toBeVisible()
     await expect(page.getByLabel("Message your tutor")).toBeVisible()
-    await expect(page.getByRole("tab", { name: "New topic", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("tab", { name: "New scratchpad", exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: topic.title, exact: true }).click()
     await expect(tutorChat).toBeVisible()
 
@@ -348,7 +339,7 @@ test("native sandboxed app manages runners and restores topics across restarts",
     await page.getByRole("button", { name: "Open workspace in Finder" }).click()
     await expect
       .poll(() => app.evaluate(() => process.env.PRUNE_TEST_OPENED_WORKSPACE))
-      .toBe(join(directory, "workspace", "topics", topic.id))
+      .toBe(join(directory, "workspace", "scratchpads", topic.id))
     await tutorChat.getByRole("tab", { name: chat.title, exact: true }).first().click()
     await page.getByLabel("Message this chat").pressSequentially("Compare with @Teach")
     await page.screenshot({ path: "test-results/topic-mentions.png" })

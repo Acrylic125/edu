@@ -21,7 +21,6 @@ const providerNames = {
   codex: "Codex",
   claude: "Claude",
   antigravity: "Antigravity",
-  openrouter: "OpenRouter",
 }
 
 
@@ -103,14 +102,6 @@ export function ProviderModelPicker({
       providerName: status?.name ?? providerNames[id],
       unavailable: false,
     }))
-    if (id === "openrouter" && !entries.some((entry) => entry.id === "openrouter/auto")) {
-      entries.push({
-        ...ProviderModelSchema.parse({ id: "openrouter/auto", name: "Auto" }),
-        provider: id,
-        providerName: status?.name ?? providerNames[id],
-        unavailable: false,
-      })
-    }
     if (value.provider === id && !entries.some((entry) => entry.id === value.model)) {
       entries.unshift({
         ...ProviderModelSchema.parse({
@@ -161,7 +152,6 @@ export function ProviderModelPicker({
     setOpen(false)
   }
   let label = model?.name ?? value.model
-  if (value.model === "openrouter/auto") label = "Auto"
   const effort = value.reasoningEffort ?? model?.defaultReasoningEffort
   let effortLabel = "Auto"
   if (effort) effortLabel = effort.charAt(0).toUpperCase() + effort.slice(1)

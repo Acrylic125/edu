@@ -6,22 +6,17 @@ export function ProviderSetupInstructions({ provider, onRefresh, disabled = fals
   onRefresh: () => void
   disabled?: boolean
 }) {
-  const cliProvider = provider.id === "claude" || provider.id === "antigravity"
-  const installed = provider.id === "openrouter" || provider.installed
+  const installed = provider.installed
   let installUrl = "https://code.claude.com/docs/en/setup"
+  if (provider.id === "codex") installUrl = "https://developers.openai.com/codex/cli"
   if (provider.id === "antigravity") installUrl = "https://antigravity.google/docs/cli/install"
-  let connectHelp = "Click Connect and sign in with your OpenRouter account."
-  if (provider.id === "codex") connectHelp = "Click Connect and sign in with your ChatGPT account."
-  else if (cliProvider) connectHelp = "Click Connect and complete sign-in if prompted."
 
   return (
     <ol className="mt-3 list-decimal space-y-3 pl-4 leading-5 text-muted-foreground">
       <li>
         <div className="flex items-start justify-between gap-3">
           <span>
-            {cliProvider && installed && <span>CLI installed</span>}
-            {cliProvider && !installed && <><a href={installUrl} target="_blank" rel="noreferrer" className="font-medium text-foreground underline underline-offset-2">Install CLI</a> (if not present).</>}
-            {!cliProvider && <span>No installation needed.</span>}
+            <a href={installUrl} target="_blank" rel="noreferrer" className="font-medium text-foreground underline underline-offset-2">Install CLI</a>
           </span>
           <span className="flex shrink-0 items-center gap-2">
             <button type="button" aria-label={`Recheck ${provider.name} setup`} title="Recheck setup" disabled={disabled || provider.loading || provider.connecting} onClick={onRefresh} className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50">
@@ -37,9 +32,9 @@ export function ProviderSetupInstructions({ provider, onRefresh, disabled = fals
       </li>
       <li>
         <div className="flex items-start justify-between gap-3">
-          <span>
-            {provider.connected ? "Account connected" : connectHelp}
-            {provider.connected && provider.account && <span className="mt-1 block text-xs">{provider.account}</span>}
+          <span className="min-w-0 break-words">
+            Connect account
+            {provider.connected && provider.account && <> (Signed in as {provider.account})</>}
           </span>
           {provider.connected && <Check role="img" aria-label="Account connected" className="size-4 shrink-0 text-emerald-500" />}
           {!provider.connected && provider.connecting && <LoaderCircle role="img" aria-label="Connecting account" className="size-4 shrink-0 animate-spin motion-reduce:animate-none" />}
