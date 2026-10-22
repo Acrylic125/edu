@@ -5,6 +5,12 @@ import { homedir } from "node:os"
 import { z } from "zod"
 import { CliConnectionSchema, providerDefaultModels } from "../shared/contracts"
 
+export const CliToolServerSchema = z.object({
+  url: z.url(),
+  headers: z.record(z.string(), z.string()),
+  names: z.array(z.string().min(1)),
+})
+
 export async function resolveCliExecutable(provider: z.infer<typeof CliConnectionSchema>["provider"], binaryPath?: string) {
   if (binaryPath) {
     if (!(await stat(binaryPath)).isFile()) throw new Error("The configured CLI is not an executable file.")
@@ -40,14 +46,17 @@ export async function resolveCliExecutable(provider: z.infer<typeof CliConnectio
   throw new Error(`Install ${provider === "claude" ? "Claude Code" : "Antigravity CLI"}, then click Connect. For a custom installation, set its binary path in provider settings.`)
 }
 
-export async function prepareCliWorkspace(connection: z.infer<typeof CliConnectionSchema>, webResearch = false) {
+export async function prepareCliWorkspace(connection: z.infer<typeof CliConnectionSchema>, webResearch = false, toolServer?: z.infer<typeof CliToolServerSchema>) {
   await mkdir(connection.directory, { recursive: true, mode: 0o700 })
   if (connection.provider === "antigravity") {
     const agents = join(connection.directory, ".agents", "agents")
     await mkdir(agents, { recursive: true, mode: 0o700 })
-    // agy needs finish to emit schema output; tutoring also needs its read-only web tools.
     let nativeTools = "finish"
     if (webResearch) nativeTools += ", search_web, read_url_content"
+    const mcpServers = []
+    if (toolServer) mcpServers.push({ name: "edu", serverUrl: toolServer.url, headers: toolServer.headers })
+    let instructions = "Return the requested structured response with finish."
+    if (toolServer) instructions = "Use EdU MCP tools for source reads and learning-state changes. Save the private handoff before returning the requested structured reply with finish. Use the available web tools for research."
     await writeFile(join(agents, "edu-tutor.md"), `---
 name: edu-tutor
 description: EdU tutoring response adapter
@@ -55,11 +64,11 @@ tools: [${nativeTools}]
 mainAgent: true
 subagent: false
 commandExecutionPolicy: off
-mcpServers: []
+mcpServers: ${JSON.stringify(mcpServers)}
 skills: []
 plugins: []
 ---
-Return the requested structured response with finish. EdU performs attachment reads and state saves. Use the available web tools to research source material when requested.
+${instructions}
 `, { mode: 0o600 })
   }
 }
@@ -71,11 +80,16 @@ export function runCliCommand(
   processChanged: (pid: number | null) => void = () => {},
   timeout = 120_000,
   signal?: AbortSignal,
+  toolServer?: z.infer<typeof CliToolServerSchema>,
 ) {
   const { ANTHROPIC_API_KEY: _anthropic, ANTHROPIC_AUTH_TOKEN: _anthropicToken,
     CLAUDE_CODE_OAUTH_TOKEN: _claudeToken, GEMINI_API_KEY: _gemini,
     GOOGLE_API_KEY: _google, ANTHROPIC_BASE_URL: _anthropicUrl,
-    GOOGLE_GEMINI_BASE_URL: _geminiUrl, ...environment } = process.env
+    GOOGLE_GEMINI_BASE_URL: _geminiUrl, ANTIGRAVITY_PERM_GRANTS: _inheritedGrants, ...environment } = process.env
+  if (connection.provider === "antigravity" && toolServer) {
+    // Scope EdU's grants to this subprocess instead of changing the shared CLI settings.
+    environment.ANTIGRAVITY_PERM_GRANTS = JSON.stringify({ allow: toolServer.names.map((name) => `mcp(edu/${name})`), deny: [], ask: [] })
+  }
   return new Promise<string>((resolve, reject) => {
     if (signal?.aborted) {
       reject(new Error("The provider request was canceled."))
@@ -133,14 +147,27 @@ export function runCliCommand(
   })
 }
 
-export function cliPromptArguments(connection: z.infer<typeof CliConnectionSchema>, schema: string, model = "default", effort?: string, webResearch = false) {
+export function cliPromptArguments(connection: z.infer<typeof CliConnectionSchema>, schema: string, model = "default", effort?: string, webResearch = false, toolServer?: z.infer<typeof CliToolServerSchema>) {
   const args = ["-p", "--output-format", "json", "--json-schema", schema]
   if (connection.provider === "claude") {
     let nativeTools = ""
     if (webResearch) nativeTools = "WebSearch,WebFetch"
-    args.push("--tools", nativeTools, "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--safe-mode", "--no-session-persistence")
-    if (webResearch) args.push("--allowedTools", nativeTools)
-  } else args.push("--agent", "edu-tutor", "--sandbox", "--print-timeout", "2m")
+    let mcpConfig = { mcpServers: {} }
+    let customizationMode = "--safe-mode"
+    const allowedTools = []
+    if (webResearch) allowedTools.push("WebSearch", "WebFetch")
+    if (toolServer) {
+      mcpConfig = { mcpServers: { edu: { type: "http", url: toolServer.url, headers: toolServer.headers } } }
+      customizationMode = "--bare"
+      allowedTools.push(...toolServer.names.map((name) => `mcp__edu__${name}`))
+    }
+    args.push("--tools", nativeTools, "--strict-mcp-config", "--mcp-config", JSON.stringify(mcpConfig), "--setting-sources", "", "--settings", '{"disableAllHooks":true}', customizationMode, "--no-session-persistence")
+    if (allowedTools.length) args.push("--allowedTools", allowedTools.join(","))
+  } else {
+    let timeout = "2m"
+    if (toolServer) timeout = "5m"
+    args.push("--agent", "edu-tutor", "--sandbox", "--print-timeout", timeout)
+  }
   args.push("--model", model === "default" ? providerDefaultModels[connection.provider] : model)
   if (effort) args.push("--effort", effort)
   return args

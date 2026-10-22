@@ -1096,7 +1096,7 @@ export function App() {
   )
 }
 
-function DesktopSidebar({
+export function DesktopSidebar({
   snapshot,
   topicId,
   view,
@@ -1119,13 +1119,20 @@ function DesktopSidebar({
 }) {
   const { closeNavigation, revealChat } = useWorkspaceLayout()
   const tagging = useRef(false)
-  const [archivedOpen, setArchivedOpen] = useState(false)
   const activeTopics = snapshot.topics.filter((item) => !item.archived)
   const archivedTopics = snapshot.topics.filter((item) => item.archived)
+  const selectedArchivedTopicId = archivedTopics.find((item) => item.id === topicId)?.id
+  const [archiveDisclosure, setArchiveDisclosure] = useState({
+    selectedTopicId: selectedArchivedTopicId,
+    open: selectedArchivedTopicId !== undefined,
+  })
 
-  useEffect(() => {
-    if (archivedTopics.some((item) => item.id === topicId)) setArchivedOpen(true)
-  }, [archivedTopics, topicId])
+  if (archiveDisclosure.selectedTopicId !== selectedArchivedTopicId) {
+    setArchiveDisclosure({
+      selectedTopicId: selectedArchivedTopicId,
+      open: archiveDisclosure.open || selectedArchivedTopicId !== undefined,
+    })
+  }
   const runningChats = snapshot.chats.filter((chat) =>
     snapshot.runtime.some(
       (state) => state.chatId === chat.id && state.status === "running",
@@ -1227,7 +1234,7 @@ function DesktopSidebar({
         {activeTopics.map(topicItem)}
       </TopicNavigation>
       {archivedTopics.length > 0 && (
-        <Collapsible className="mt-6" open={archivedOpen} onOpenChange={setArchivedOpen}>
+        <Collapsible className="mt-6" open={archiveDisclosure.open} onOpenChange={(open) => setArchiveDisclosure({ selectedTopicId: selectedArchivedTopicId, open })}>
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span className="flex min-w-0 items-center gap-2">
               Archived

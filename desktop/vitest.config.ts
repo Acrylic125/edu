@@ -1,5 +1,11 @@
 import { defineConfig } from "vitest/config"
 
 export default defineConfig({
-  test: { include: ["tests/**/*.test.ts"], environment: "node" },
+  resolve: { dedupe: ["react", "react-dom"] },
+  esbuild: { jsx: "automatic" },
+  test: {
+    server: { deps: { inline: [/@base-ui/, /packages\/ui/] } },
+    include: ["tests/**/*.test.ts"],
+    environment: "node",
+  },
 })

@@ -1,33 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 
-const args = process.argv.slice(2)
-if (process.env.EDU_TEST_CLI_FAIL_CONNECTION === "1" && args[0] !== "models" && args[0] !== "auth") process.exit(1)
-if (args[0] === "auth") {
-  const authFile = process.env.EDU_TEST_CLI_AUTH_FILE
-  if (authFile && args[1] === "login") writeFileSync(authFile, "signed-in")
-  if (authFile && !existsSync(authFile)) {
-    console.log(JSON.stringify({ loggedIn: false, authMethod: "none" }))
-    process.exit(1)
-  }
-  console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "learner@example.test" }))
-} else if (args[0] === "models") {
-  console.log("gemini-test  Gemini fixture model")
-} else if (args[0] === "--print" && args[1] === "/usage") {
-  console.log("Account quotas available")
-} else if (args[0] === "inspect-environment") {
-  console.log(JSON.stringify({ key: process.env.ANTHROPIC_API_KEY ?? null, gemini: process.env.GEMINI_API_KEY ?? null }))
-} else {
-  let input = readFileSync(0, "utf8")
-  if (input.includes("Hold concurrent turn")) await new Promise((resolve) => setTimeout(resolve, 60_000))
-  if (args.includes("--agent")) {
-    const prompt = args.find((arg) => arg.startsWith("-p="))
-    if (!prompt || input) throw new Error("Antigravity requires an attached print prompt and empty stdin")
-    const nativeTools = readFileSync(".agents/agents/edu-tutor.md", "utf8").match(/^tools: \[([^\]]+)\]/m)?.[1].split(",").map((tool) => tool.trim()) ?? []
-    if (!nativeTools.includes("finish")) throw new Error("Antigravity requires finish for structured output")
-    if (nativeTools.some((tool) => !["finish", "search_web", "read_url_content"].includes(tool))) throw new Error("Unexpected Antigravity tool")
-    input = prompt.slice(3)
-  }
+function nextAction(input) {
   let action = { ready: true }
   if (input.includes("Suggested topic:\n"))
     action = { title: "Introduction to Limits" }
@@ -175,6 +149,80 @@ A function's limit describes its nearby behavior as the input approaches a point
       }
     }
   }
+  return action
+}
+
+const args = process.argv.slice(2)
+if (process.env.EDU_TEST_CLI_FAIL_CONNECTION === "1" && args[0] !== "models" && args[0] !== "auth") process.exit(1)
+if (args[0] === "auth") {
+  const authFile = process.env.EDU_TEST_CLI_AUTH_FILE
+  if (authFile && args[1] === "login") writeFileSync(authFile, "signed-in")
+  if (authFile && !existsSync(authFile)) {
+    console.log(JSON.stringify({ loggedIn: false, authMethod: "none" }))
+    process.exit(1)
+  }
+  console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", email: "learner@example.test" }))
+} else if (args[0] === "models") {
+  console.log("gemini-test  Gemini fixture model")
+} else if (args[0] === "--print" && args[1] === "/usage") {
+  console.log("Account quotas available")
+} else if (args[0] === "inspect-environment") {
+  console.log(JSON.stringify({ key: process.env.ANTHROPIC_API_KEY ?? null, gemini: process.env.GEMINI_API_KEY ?? null, grants: process.env.ANTIGRAVITY_PERM_GRANTS ?? null }))
+} else {
+  let input = readFileSync(0, "utf8")
+  if (input.includes("Hold concurrent turn")) await new Promise((resolve) => setTimeout(resolve, 60_000))
+  if (args.includes("--agent")) {
+    const prompt = args.find((arg) => arg.startsWith("-p="))
+    if (!prompt || input) throw new Error("Antigravity requires an attached print prompt and empty stdin")
+    const nativeTools = readFileSync(".agents/agents/edu-tutor.md", "utf8").match(/^tools: \[([^\]]+)\]/m)?.[1].split(",").map((tool) => tool.trim()) ?? []
+    if (!nativeTools.includes("finish")) throw new Error("Antigravity requires finish for structured output")
+    if (nativeTools.some((tool) => !["finish", "search_web", "read_url_content"].includes(tool))) throw new Error("Unexpected Antigravity tool")
+    input = prompt.slice(3)
+  }
+  let server
+  if (args.includes("--agent")) {
+    const agent = readFileSync(".agents/agents/edu-tutor.md", "utf8")
+    const configured = JSON.parse(agent.match(/^mcpServers: (.+)$/m)?.[1] ?? "[]")
+    server = configured[0]
+  } else {
+    const index = args.indexOf("--mcp-config")
+    if (index !== -1) server = JSON.parse(args[index + 1]).mcpServers.edu
+  }
+  let action
+  if (server) {
+    let sequence = 0
+    const url = server.url ?? server.serverUrl
+    async function request(method, params) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { ...server.headers, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method, params }),
+      })
+      if (!response.ok) throw new Error(`MCP HTTP ${response.status}`)
+      const message = await response.json()
+      if (message.error) throw new Error(message.error.message)
+      return message.result
+    }
+    await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "provider-fixture", version: "1" } })
+    const { tools } = await request("tools/list", {})
+    if (!tools.some((tool) => tool.name === "save_learning_state")) throw new Error("EdU native tools were not discovered")
+    const delimiter = "Conversation:\n"
+    const [instructions, conversation] = input.split(delimiter)
+    if (!conversation) throw new Error("Native turn requires conversation context")
+    const transcript = JSON.parse(conversation.split("\nInternal app correction")[0])
+    for (let iteration = 0; iteration < 20; iteration++) {
+      const legacyInput = `${instructions}Conversation and tool results:\n${JSON.stringify(transcript)}`
+      action = nextAction(legacyInput)
+      if (!action.calls?.length) break
+      transcript.push(action)
+      for (const call of action.calls) {
+        const result = await request("tools/call", { name: call.name, arguments: JSON.parse(call.arguments) })
+        transcript.push({ tool: call.name, result: result.content.filter((item) => item.type === "text").map((item) => item.text).join("\n") })
+      }
+    }
+    if (action.calls?.length) throw new Error("Fixture reached its native tool limit")
+    action = { reply: action.reply }
+  } else action = nextAction(input)
   if (args.includes("--agent")) console.log(JSON.stringify({ status: "SUCCESS", structured_output: action }))
   else console.log(JSON.stringify({ type: "result", is_error: false, structured_output: action }))
 }
