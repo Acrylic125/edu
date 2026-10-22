@@ -172,6 +172,23 @@ download-section:not(:defined) .download-integration:last-child {
   }
 }
 
+@media (orientation: landscape) and (max-height: 650px) {
+  .download-copy { padding: 16px; }
+  .download-copy h2 { font-size: clamp(1.5rem, min(4vw, 9svh), 2.125rem); }
+  .download-reveal { gap: 14px; margin-top: 10px; }
+  .download-free { font-size: clamp(1.1rem, 5.5svh, 1.5rem); }
+  .download-reveal .download-button { min-height: 44px; padding: 10px 24px; }
+  .download-integration { width: clamp(44px, 12svh, 60px); }
+  .download-integration > span { top: calc(100% + 8px); font-size: 10px; }
+  .download-trail { stroke-width: 1.5; }
+}
+
+@media (orientation: portrait) and (max-height: 700px) {
+  .download-reveal { gap: 18px; margin-bottom: 0; transform: none; }
+  .download-reveal .download-button { min-height: 44px; padding: 10px 24px; }
+  .download-integration { width: 56px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   download-section {
     height: 100svh;

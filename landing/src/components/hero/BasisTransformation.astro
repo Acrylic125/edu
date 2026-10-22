@@ -1,0 +1,400 @@
+---
+import { Image } from "astro:assets";
+import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
+
+const frames = [
+  { phase: "input", step: 0, duration: 1500, number: 1, operation: "P⁻¹", title: "Start with v", label: "Standard basis", vector: "v", basis: false, value: "(2, 0)" },
+  { phase: "project", step: 0, duration: 4400, number: 1, operation: "P⁻¹", title: "Find both components", label: "v = b₁ − b₂", vector: "v", basis: true, value: "(1, −1)" },
+  { phase: "scale-first", step: 1, duration: 3000, number: 2, operation: "D", title: "Double the blue component", label: "Blue coefficient", component: "blue", expression: "1 × 2 = 2" },
+  { phase: "scale-second", step: 1, duration: 3000, number: 2, operation: "D", title: "Halve the green component", label: "Green coefficient", component: "green", expression: "−1 × ½ = −½" },
+  { phase: "combine", step: 2, duration: 2800, number: 3, operation: "P", title: "Add the scaled components", label: "2b₁ − ½b₂", vector: "Av", basis: true, value: "(2, −½)" },
+  { phase: "result", step: 2, duration: 2800, number: 3, operation: "P", title: "Read in standard coordinates", label: "Standard coordinates", vector: "Av", basis: false, value: "(2½, 1½)" },
+];
+---
+
+<basis-transformation data-step="0" data-phase="input">
+  <article class="basis-explanation">
+    <div class="basis-toolbar">
+      <Image src={appIcon} width={27} height={27} alt="" format="webp" />
+      <span>EdU</span><span class="basis-divider">/</span><span>Linear algebra</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4h16v16H4zM15 4v16" /></svg>
+    </div>
+    <div class="basis-explanation-content">
+      <h2>Transformation<br />in an eigenvector basis</h2>
+      <div class="basis-formula math" aria-label="A equals P D P inverse">
+        <span>A =</span><span class="basis-symbol basis-symbol-p">P</span><span class="basis-symbol basis-symbol-d">D</span><span class="basis-symbol basis-symbol-inverse">P<sup>−1</sup></span>
+      </div>
+      <ol aria-label="Transformation in three steps">
+        <li data-basis-explanation="0" aria-current="step">
+          <span class="basis-operation basis-symbol-inverse math">P<sup>−1</sup></span>
+          <div><span class="basis-number">1.</span><p>Converts <strong class="math">v</strong> from the standard basis into B-basis coordinates.</p></div>
+        </li>
+        <li data-basis-explanation="1">
+          <span class="basis-operation basis-symbol-d math">D</span>
+          <div><span class="basis-number">2.</span><p>Scales the vector's components along the B-basis directions.</p></div>
+        </li>
+        <li data-basis-explanation="2">
+          <span class="basis-operation basis-symbol-p math">P</span>
+          <div><span class="basis-number">3.</span><p>Converts the resulting coordinates back into the standard basis.</p></div>
+        </li>
+      </ol>
+    </div>
+  </article>
+  <figure class="basis-figure">
+    <div class="basis-animation-heading">
+      <div class="basis-current-step">
+        {frames.map((frame) => <span data-basis-heading={frame.phase} data-step={frame.step} data-duration={frame.duration} aria-hidden={frame.phase !== "input"}><span class="basis-phase-number">{frame.number} / 3</span><span class="math">{frame.operation}</span><span class="basis-phase-title">{frame.title}</span></span>)}
+      </div>
+    </div>
+    <div class="basis-scene">
+      <svg class="basis-plot" viewBox="15 25 205 185" role="img" aria-label="The vector v splits into a blue component b1 and a green component minus b2 along perpendicular eigenvector directions. The blue component doubles, then the green component halves. The two scaled components add to Av, which is read in standard coordinates.">
+        <defs>
+          <clipPath id="hero-basis-clip"><path d="M22 34H210V204H22Z" /></clipPath>
+          <marker id="hero-basis-main-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--foreground)" /></marker>
+          <marker id="hero-basis-blue-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--vector-blue)" /></marker>
+          <marker id="hero-basis-sage-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="3.5" markerHeight="3.5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--vector-sage)" /></marker>
+        </defs>
+        <g class="basis-standard-grid" clip-path="url(#hero-basis-clip)">
+          <path d="M40 20V220M78 20V220M116 20V220M154 20V220M192 20V220M10 32H220M10 70H220M10 108H220M10 146H220M10 184H220M10 222H220" />
+        </g>
+        <g class="basis-standard-axes">
+          <path d="M22 146H210M78 204V34M206 143 210 146 206 149M75 38 78 34 81 38" />
+          <text x="207" y="163">x</text><text x="87" y="40">y</text>
+        </g>
+        <g class="basis-new-axes">
+          <path class="basis-axis-one" d="M22 202 190 34" marker-end="url(#hero-basis-blue-arrow)" />
+          <path class="basis-axis-two" d="M136 204 22 90" marker-end="url(#hero-basis-sage-arrow)" />
+          <text class="basis-label-one" x="185" y="31">b₁</text><text class="basis-label-two" x="22" y="85">b₂</text>
+        </g>
+        <path class="basis-projection-guides" d="M116 108 154 146 116 184" />
+        <circle class="basis-project-foot-one" cx="154" cy="146" r="3" />
+        <circle class="basis-project-foot-two" cx="154" cy="146" r="3" />
+        <path class="basis-right-angles" d="M111 113 116 118 121 113M111 179 116 174 121 179" />
+        <path class="basis-input-vector" d="M78 146 154 146" marker-end="url(#hero-basis-main-arrow)" />
+        <text class="basis-input-label" x="164" y="153">v</text>
+        <g class="basis-component-one-group">
+          <path class="basis-component basis-component-one" d="M78 146 78 146" marker-end="url(#hero-basis-blue-arrow)" />
+          <g class="basis-component-label basis-one-label"><text class="basis-before-scale" x="113" y="98">b₁</text><text class="basis-after-scale" x="113" y="98">2b₁</text></g>
+        </g>
+        <path class="basis-component-two-ghost" d="M78 146 97 165" />
+        <g class="basis-component-two-group">
+          <path class="basis-component basis-component-two" d="M78 146 78 146" marker-end="url(#hero-basis-sage-arrow)" />
+          <g class="basis-component-label basis-two-label"><text class="basis-before-scale" x="118" y="201">−b₂</text><text class="basis-after-scale" x="118" y="201">−½b₂</text></g>
+        </g>
+        <circle class="basis-result-point" cx="154" cy="146" r="3" />
+        <path class="basis-vector-main" d="M78 146 78 146" marker-end="url(#hero-basis-main-arrow)" />
+        <text class="basis-output-label" x="181" y="83">Av</text>
+        <circle class="basis-origin" cx="78" cy="146" r="3" />
+      </svg>
+    </div>
+    <figcaption class="basis-readouts">
+      {frames.map((frame) => (
+        <div data-basis-readout={frame.phase} data-component={frame.component} aria-hidden={frame.phase !== "input"}>
+          <p class="basis-readout-label">{frame.label}</p>
+          {frame.expression && <p class="basis-readout-value math">{frame.expression}</p>}
+          {!frame.expression && <p class="basis-readout-value math">{frame.basis ? <span>[<strong>{frame.vector}</strong>]<sub>B</sub></span> : <strong>{frame.vector}</strong>} = {frame.value}</p>}
+        </div>
+      ))}
+    </figcaption>
+    <p class="basis-example">Here b₁ ⟂ b₂. <span class="math">D = diag(2, ½)</span></p>
+  </figure>
+</basis-transformation>
+
+<script>
+  class BasisTransformation extends HTMLElement {
+    connectedCallback() {
+      const controller = new AbortController();
+      const { signal } = controller;
+      const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const explanation = this.closest("[data-explanation]");
+      const steps = this.querySelectorAll<HTMLElement>("[data-basis-explanation]");
+      const readouts = this.querySelectorAll<HTMLElement>("[data-basis-readout]");
+      const headings = this.querySelectorAll<HTMLElement>("[data-basis-heading]");
+      const phases = [...headings].map((heading) => ({
+        name: heading.dataset.basisHeading ?? "input",
+        step: Number(heading.dataset.step),
+        duration: Number(heading.dataset.duration),
+      }));
+      let timer = 0;
+      let playing = false;
+      let visible = false;
+      let phaseIndex = 0;
+
+      const show = (index: number) => {
+        phaseIndex = index;
+        const phase = phases[index];
+        this.dataset.phase = phase.name;
+        this.dataset.step = String(phase.step);
+        steps.forEach((item, step) => {
+          item.removeAttribute("aria-current");
+          if (step === phase.step) item.setAttribute("aria-current", "step");
+        });
+        readouts.forEach((item) => item.setAttribute("aria-hidden", String(item.dataset.basisReadout !== phase.name)));
+        headings.forEach((item) => item.setAttribute("aria-hidden", String(item.dataset.basisHeading !== phase.name)));
+      };
+      const reset = () => {
+        this.setAttribute("data-resetting", "");
+        show(0);
+        // Flush the reset before restoring transitions so each loop draws from the origin.
+        this.querySelectorAll<SVGPathElement>(".basis-component, .basis-projection-guides, .basis-vector-main").forEach((path) => getComputedStyle(path).getPropertyValue("d"));
+        this.removeAttribute("data-resetting");
+        this.removeAttribute("data-restarting");
+      };
+      const advance = () => {
+        if (!playing) return;
+        if (phaseIndex < phases.length - 1) {
+          show(phaseIndex + 1);
+          timer = window.setTimeout(advance, phases[phaseIndex].duration);
+          return;
+        }
+        this.setAttribute("data-restarting", "");
+        timer = window.setTimeout(() => {
+          if (!playing) return;
+          reset();
+          timer = window.setTimeout(advance, phases[0].duration);
+        }, 350);
+      };
+      const syncPlayback = () => {
+        const shouldPlay = visible && !document.hidden && !motion.matches && explanation?.getAttribute("aria-hidden") !== "true";
+        if (shouldPlay === playing) return;
+        playing = shouldPlay;
+        window.clearTimeout(timer);
+        if (!playing) this.removeAttribute("data-restarting");
+        if (playing) {
+          reset();
+          timer = window.setTimeout(advance, phases[0].duration);
+        }
+      };
+      motion.addEventListener("change", () => {
+        if (motion.matches) show(phases.length - 1);
+        syncPlayback();
+      }, { signal });
+      document.addEventListener("visibilitychange", syncPlayback, { signal });
+      const observer = new IntersectionObserver(([entry]) => {
+        visible = entry.isIntersecting;
+        syncPlayback();
+      }, { threshold: 0.15 });
+      observer.observe(this);
+      const visibilityObserver = new MutationObserver(syncPlayback);
+      if (explanation) visibilityObserver.observe(explanation, { attributes: true, attributeFilter: ["aria-hidden"] });
+      if (motion.matches) show(phases.length - 1);
+      this.cleanup = () => {
+        playing = false;
+        window.clearTimeout(timer);
+        controller.abort();
+        observer.disconnect();
+        visibilityObserver.disconnect();
+      };
+    }
+    private cleanup = () => {};
+    disconnectedCallback() { this.cleanup(); }
+  }
+  customElements.define("basis-transformation", BasisTransformation);
+</script>
+
+<style>
+  basis-transformation {
+    display: block;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    --vector-blue: color-mix(in srgb, var(--book-blue-dark) 70%, var(--foreground));
+    --vector-sage: color-mix(in srgb, var(--book-sage-dark) 70%, var(--foreground));
+  }
+  basis-transformation[data-resetting] * { transition: none; }
+  .basis-explanation {
+    position: absolute;
+    top: 7%;
+    left: 2%;
+    width: 92%;
+    height: 82%;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 21px;
+    background: var(--card);
+    box-shadow: 0 16px 48px -30px var(--book-shadow);
+    transform: rotate(-9deg);
+  }
+  .basis-toolbar { display: flex; height: 47px; align-items: center; gap: 9px; border-bottom: 1px solid var(--border); padding: 0 18px; font-size: 11px; }
+  .basis-toolbar > span:first-of-type { font-size: 13px; font-weight: 600; }
+  .basis-toolbar > span:last-of-type { color: var(--muted-foreground); }
+  .basis-divider { margin: 0 3px; color: var(--border); }
+  .basis-toolbar > svg { width: 16px; height: 16px; margin-left: auto; color: var(--muted-foreground); }
+  .basis-explanation-content { padding: 21px 23px; }
+  .basis-explanation h2 { font-size: 25px; font-weight: 600; line-height: 1.14; letter-spacing: -0.04em; }
+  .basis-formula { display: flex; align-items: center; gap: 8px; margin-top: 19px; font-size: 34px; line-height: 1; }
+  .basis-symbol { display: inline-flex; min-width: 42px; height: 46px; align-items: center; justify-content: center; border-radius: 10px; padding: 4px 9px; }
+  .basis-symbol sup, .basis-operation sup { position: static; align-self: flex-start; margin-top: 0; line-height: 1; }
+  .basis-symbol-p { background: var(--learning-sage); }
+  .basis-symbol-d { background: var(--learning-yellow); }
+  .basis-symbol-inverse { background: var(--learning-blue); }
+  .basis-explanation ol { display: grid; gap: 16px; width: 52%; margin-top: 22px; }
+  .basis-explanation li { display: flex; align-items: flex-start; gap: 11px; }
+  .basis-operation { display: inline-flex; position: relative; width: 35px; height: 39px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 9px; padding: 4px; font-size: 27px; line-height: 1; }
+  .basis-operation::after { position: absolute; inset: -3px; border: 1px solid var(--muted-foreground); border-radius: 12px; opacity: 0; content: ""; transition: opacity 500ms; }
+  [aria-current="step"] .basis-operation::after { opacity: 0.6; }
+  .basis-explanation li > div { display: flex; align-items: baseline; gap: 5px; }
+  .basis-number { color: var(--muted-foreground); font-size: 10px; }
+  .basis-explanation p { color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+  .basis-figure {
+    display: flex;
+    position: absolute;
+    right: -3%;
+    bottom: 0;
+    z-index: 1;
+    width: 48%;
+    height: 58%;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 17px;
+    background: var(--card);
+    box-shadow: 0 18px 45px -20px var(--book-shadow);
+    padding: 15px;
+  }
+  .basis-animation-heading { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .basis-current-step { display: grid; }
+  .basis-current-step > span { display: flex; grid-area: 1 / 1; align-items: center; gap: 8px; }
+  .basis-current-step > [aria-hidden="true"] { visibility: hidden; }
+  .basis-phase-number { color: var(--muted-foreground); font-size: 10px; }
+  .basis-current-step .math { font-size: 22px; }
+  .basis-phase-title { max-width: 145px; color: var(--muted-foreground); font-size: 10px; line-height: 1.3; }
+  .basis-scene { flex: 1; min-height: 0; opacity: 1; transition: opacity 300ms; }
+  basis-transformation[data-restarting] .basis-scene { opacity: 0; }
+  .basis-plot { display: block; width: 100%; height: 100%; overflow: visible; }
+  .basis-standard-grid { fill: none; stroke: var(--border); stroke-width: 0.8; opacity: 0.55; }
+  .basis-standard-axes { fill: none; stroke: var(--muted-foreground); stroke-width: 1; opacity: 0.6; transition: opacity 700ms; }
+  .basis-standard-axes text { fill: var(--muted-foreground); stroke: none; font-size: 12px; }
+  .basis-new-axes { opacity: 0.3; transition: opacity 700ms; }
+  .basis-axis-one { fill: none; stroke: var(--vector-blue); stroke-width: 1.2; }
+  .basis-axis-two { fill: none; stroke: var(--vector-sage); stroke-width: 1.2; }
+  .basis-new-axes text { font-family: var(--font-serif); font-size: 16px; font-style: italic; }
+  .basis-label-one { fill: var(--vector-blue); }
+  .basis-label-two { fill: var(--vector-sage); }
+  .basis-projection-guides { fill: none; stroke: var(--muted-foreground); stroke-width: 1.3; stroke-dasharray: 4 3; d: path("M116 108 154 146 116 184"); opacity: 0; transition: d 1600ms ease-in-out, opacity 700ms; }
+  .basis-right-angles { fill: none; stroke: var(--muted-foreground); stroke-width: 1; opacity: 0; transition: opacity 700ms; }
+  .basis-project-foot-one, .basis-project-foot-two { opacity: 0; transition: transform 1000ms ease-in-out, opacity 500ms; }
+  .basis-project-foot-one { fill: var(--vector-blue); }
+  .basis-project-foot-two { fill: var(--vector-sage); }
+  .basis-input-vector { fill: none; stroke: var(--foreground); stroke-width: 2.5; opacity: 1; transition: opacity 700ms; }
+  .basis-component { fill: none; stroke-width: 3.5; d: path("M78 146 78 146"); transition: d 1600ms ease-in-out; }
+  .basis-component-one { stroke: var(--vector-blue); }
+  .basis-component-two { stroke: var(--vector-sage); }
+  .basis-component-label { font-family: var(--font-serif); font-size: 17px; font-style: italic; opacity: 0; transition: transform 1600ms ease-in-out, opacity 700ms; }
+  .basis-one-label { fill: var(--vector-blue); }
+  .basis-two-label { fill: var(--vector-sage); }
+  .basis-before-scale, .basis-after-scale { transition: opacity 700ms; }
+  .basis-after-scale { opacity: 0; }
+  .basis-component-one-group, .basis-component-two-group { opacity: 0; transition: opacity 500ms; }
+  .basis-component-two-group { transition: transform 1400ms ease-in-out, opacity 500ms; }
+  .basis-component-two-ghost { fill: none; stroke: var(--vector-sage); stroke-width: 2; stroke-dasharray: 3 3; opacity: 0; transition: opacity 700ms; }
+  .basis-result-point { fill: var(--foreground); opacity: 0; transition: transform 1600ms ease-in-out, opacity 700ms; }
+  .basis-vector-main { fill: none; stroke: var(--foreground); stroke-width: 3; d: path("M78 146 78 146"); opacity: 0; transition: d 1100ms ease-in-out 1000ms, opacity 500ms 1000ms; }
+  .basis-origin { fill: var(--foreground); }
+  .basis-input-label, .basis-output-label { fill: var(--foreground); font-family: var(--font-serif); font-size: 16px; font-style: italic; transition: opacity 700ms; }
+  .basis-output-label { opacity: 0; }
+  .basis-readouts { display: grid; flex-shrink: 0; min-width: 0; margin-top: 8px; }
+  .basis-readouts > div { grid-area: 1 / 1; }
+  .basis-readouts > [aria-hidden="true"] { visibility: hidden; }
+  .basis-readout-label { color: var(--muted-foreground); font-size: 10px; line-height: 1.5; }
+  .basis-readout-value { margin-top: 5px; font-size: 21px; line-height: 1.3; white-space: nowrap; }
+  .basis-readouts [data-component="blue"] .basis-readout-value { color: var(--vector-blue); }
+  .basis-readouts [data-component="green"] .basis-readout-value { color: var(--vector-sage); }
+  .basis-readout-value strong { font-weight: 600; }
+  .basis-readout-value sub { font-size: 0.65em; }
+  .basis-example { flex-shrink: 0; margin-top: 14px; color: var(--muted-foreground); font-size: 9px; line-height: 1.4; }
+  basis-transformation:not([data-phase="input"]) .basis-new-axes { opacity: 1; }
+  basis-transformation:not([data-phase="input"]) .basis-standard-axes { opacity: 0.2; }
+  basis-transformation:not([data-phase="input"]) .basis-projection-guides { opacity: 0.8; }
+  basis-transformation:not([data-phase="input"]) .basis-component-one { d: path("M78 146 116 108"); }
+  basis-transformation:not([data-phase="input"]) .basis-component-two { d: path("M78 146 116 184"); }
+  basis-transformation:not([data-phase="input"]) .basis-component-label,
+  basis-transformation:not([data-phase="input"]) .basis-component-one-group,
+  basis-transformation:not([data-phase="input"]) .basis-component-two-group { opacity: 1; }
+  basis-transformation:not([data-phase="input"]) .basis-input-vector,
+  basis-transformation:not([data-phase="input"]) .basis-input-label { opacity: 0.25; }
+  basis-transformation:not([data-phase="input"]) .basis-project-foot-one { transform: translate(-38px, -38px); }
+  basis-transformation:not([data-phase="input"]) .basis-project-foot-two { transform: translate(-38px, 38px); }
+  basis-transformation[data-phase="project"] .basis-project-foot-one,
+  basis-transformation[data-phase="project"] .basis-project-foot-two { opacity: 1; }
+  basis-transformation[data-phase="project"] .basis-right-angles { opacity: 0.8; transition-delay: 1000ms; }
+  basis-transformation[data-phase="project"] .basis-component { transition-delay: 600ms; }
+  basis-transformation[data-phase="project"] .basis-component-label { transition-delay: 2100ms; }
+  basis-transformation:is([data-phase="scale-first"], [data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-component-one { d: path("M78 146 154 70"); }
+  basis-transformation:is([data-phase="scale-first"], [data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-one-label { transform: translate(38px, -38px); }
+  basis-transformation:is([data-phase="scale-first"], [data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-one-label .basis-before-scale { opacity: 0; }
+  basis-transformation:is([data-phase="scale-first"], [data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-one-label .basis-after-scale { opacity: 1; }
+  basis-transformation[data-phase="scale-first"] .basis-projection-guides { d: path("M154 70 192 108 116 184"); }
+  basis-transformation[data-phase="scale-first"] .basis-result-point { opacity: 0.6; transform: translate(38px, -38px); }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-component-two { d: path("M78 146 97 165"); }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-two-label { transform: translate(-19px, -19px); }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-two-label .basis-before-scale { opacity: 0; }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-two-label .basis-after-scale { opacity: 1; }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-projection-guides { d: path("M154 70 173 89 97 165"); }
+  basis-transformation:is([data-phase="scale-second"], [data-phase="combine"], [data-phase="result"]) .basis-result-point { opacity: 0.6; transform: translate(19px, -57px); }
+  basis-transformation:is([data-phase="combine"], [data-phase="result"]) .basis-component-two-group { transform: translate(76px, -76px); }
+  basis-transformation:is([data-phase="combine"], [data-phase="result"]) .basis-component-two-ghost { opacity: 0.5; }
+  basis-transformation:is([data-phase="combine"], [data-phase="result"]) .basis-vector-main { d: path("M78 146 173 89"); opacity: 1; }
+  basis-transformation:is([data-phase="combine"], [data-phase="result"]) .basis-output-label { opacity: 1; transition-delay: 2100ms; }
+  basis-transformation[data-phase="result"] .basis-standard-axes { opacity: 0.8; }
+  basis-transformation[data-phase="result"] .basis-projection-guides { opacity: 0.35; }
+  @container (max-width: 460px) {
+    basis-transformation { display: flex; flex-direction: column; padding-top: 5%; }
+    .basis-explanation { position: relative; top: auto; left: 3%; width: 92%; height: auto; flex-shrink: 0; border-radius: 17px; padding-bottom: 76px; transform: rotate(-7deg); }
+    .basis-toolbar { height: 38px; gap: 7px; padding: 0 13px; font-size: 9px; }
+    .basis-toolbar img { width: 22px; height: 22px; }
+    .basis-toolbar > span:first-of-type { font-size: 11px; }
+    .basis-toolbar > svg { width: 14px; height: 14px; }
+    .basis-explanation-content { padding: 14px 17px; }
+    .basis-explanation h2 { font-size: 20px; }
+    .basis-formula { margin-top: 10px; gap: 6px; font-size: 29px; }
+    .basis-symbol { min-width: 35px; height: 34px; border-radius: 8px; padding: 3px 7px; }
+    .basis-explanation ol { width: 100%; gap: 9px; margin-top: 12px; }
+    .basis-explanation li { gap: 10px; }
+    .basis-operation { width: 31px; height: 34px; border-radius: 8px; font-size: 24px; }
+    .basis-explanation p { font-size: 11px; line-height: 1.45; }
+    .basis-figure { position: relative; right: auto; bottom: auto; width: 88%; height: auto; flex: 1; margin-top: -60px; margin-left: auto; display: grid; grid-template-columns: 1.25fr 0.95fr; grid-template-rows: auto minmax(0, 1fr) auto; gap: 5px 10px; padding: 12px; }
+    .basis-animation-heading { grid-column: 1 / -1; }
+    .basis-scene { grid-column: 1; grid-row: 2; }
+    .basis-readouts { grid-column: 2; grid-row: 2; align-self: center; margin-top: 0; }
+    .basis-readout-value { font-size: 16px; }
+    .basis-example { grid-column: 1 / -1; margin-top: 2px; }
+  }
+  @media (max-height: 700px) {
+    .basis-explanation-content { padding: 12px 14px; }
+    .basis-explanation h2 { font-size: 18px; }
+    .basis-toolbar { height: 32px; }
+    .basis-formula { margin-top: 10px; gap: 5px; font-size: 24px; }
+    .basis-symbol { min-width: 29px; height: 30px; border-radius: 7px; padding: 3px 6px; }
+    .basis-explanation ol { gap: 10px; margin-top: 13px; }
+    .basis-operation { width: 26px; height: 29px; font-size: 21px; }
+    .basis-explanation p { font-size: 10px; line-height: 1.45; }
+    .basis-current-step .math { font-size: 18px; }
+    .basis-phase-number, .basis-readout-label { font-size: 9px; }
+    .basis-figure { padding: 9px; }
+    .basis-readout-value { font-size: 16px; }
+    .basis-example { margin-top: 3px; font-size: 8px; }
+  }
+  @media (max-height: 700px) {
+    @container (max-width: 460px) {
+      .basis-toolbar { height: 28px; }
+      .basis-toolbar img { width: 18px; height: 18px; }
+      .basis-explanation-content { padding: 10px 12px; }
+      .basis-explanation h2 { font-size: 16px; line-height: 1.1; }
+      .basis-formula { margin-top: 8px; font-size: 22px; }
+      .basis-symbol { min-width: 26px; height: 26px; }
+      .basis-explanation ol { gap: 7px; margin-top: 10px; }
+      .basis-explanation li { gap: 7px; }
+      .basis-operation { width: 24px; height: 26px; font-size: 20px; }
+      .basis-explanation p { font-size: 9.5px; line-height: 1.4; }
+      .basis-readout-value { font-size: 12px; }
+    }
+  }
+  @media (max-width: 340px) and (max-height: 700px) {
+    .basis-figure { grid-template-rows: auto minmax(0, 1fr); }
+    .basis-example { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    basis-transformation * { transition: none !important; }
+  }
+</style>
