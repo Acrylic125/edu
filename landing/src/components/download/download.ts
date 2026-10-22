@@ -13,14 +13,20 @@ class DownloadSection extends HTMLElement {
     let distance = 1;
     let width = 1;
     let height = 1;
-    // One polar coordinate system keeps the icon centers and SVG trail tips identical.
+    let orbitRadiusX = 1;
+    let orbitRadiusY = 1;
+    // Icons and trail tips share coordinates so they stay aligned when the orbit changes shape.
     const spiralPoint = (progress: number, index: number) => {
-      const finalRadius = Math.min(width * 0.44, height * 0.44) * 0.76;
-      const radius = finalRadius * (4 - 3 * progress);
+      const radiusScale = 4 - 3 * progress;
+      let horizontalScale = radiusScale;
+      if (height >= width) {
+        // Keep portrait logos outside the copy until the reveal settles.
+        horizontalScale += Math.sin(Math.PI * progress) * 6;
+      }
       const angle = -Math.PI / 2 + index * Math.PI * 2 / 3 + (progress - 1) * Math.PI * 4 / 3;
       return {
-        x: width / 2 + Math.cos(angle) * radius,
-        y: height / 2 + Math.sin(angle) * radius,
+        x: width / 2 + Math.cos(angle) * orbitRadiusX * horizontalScale,
+        y: height / 2 + Math.sin(angle) * orbitRadiusY * radiusScale,
       };
     };
 
@@ -67,6 +73,14 @@ class DownloadSection extends HTMLElement {
       distance = Math.max(1, this.offsetHeight - stage.offsetHeight);
       width = stage.clientWidth;
       height = stage.clientHeight;
+      orbitRadiusX = Math.min(width * 0.44, height * 0.44) * 0.76;
+      orbitRadiusY = orbitRadiusX;
+      if (height >= width) {
+        orbitRadiusY = height * 0.44;
+      } else if (height <= 650) {
+        orbitRadiusX = width * 0.4;
+        orbitRadiusY = height * 0.42;
+      }
       svg?.setAttribute("viewBox", `0 0 ${width} ${height}`);
       schedule();
     };

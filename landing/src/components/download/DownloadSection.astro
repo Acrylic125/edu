@@ -3,7 +3,7 @@ import { Image } from "astro:assets";
 import codex from "../../../../desktop/src/renderer/assets/providers/codex.svg";
 import antigravity from "../../../../desktop/src/renderer/assets/providers/antigravity.png";
 import claude from "../../../../desktop/src/renderer/assets/providers/claude.svg";
-import { links } from "../../links";
+import DownloadAction from "./DownloadAction.astro";
 import "./download.css";
 
 const integrations = [
@@ -11,7 +11,6 @@ const integrations = [
   { name: "Antigravity", icon: antigravity },
   { name: "Claude Code", icon: claude },
 ];
-const DownloadTag = links.download ? "a" : "button";
 ---
 
 <download-section id="download" aria-labelledby="download-heading">
@@ -39,12 +38,7 @@ const DownloadTag = links.download ? "a" : "button";
       <h2 id="download-heading">Use your existing<br />subscriptions<span class="sr-only"> for free.</span></h2>
       <div class="download-reveal">
         <p class="download-free" aria-hidden="true">for free.</p>
-        <DownloadTag class="action action-primary download-button" href={links.download || undefined} download={!!links.download} disabled={!links.download} title={!links.download ? "Download link coming soon" : undefined}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3v12m-5-5 5 5 5-5M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
-          </svg>
-          Download EdU
-        </DownloadTag>
+        <DownloadAction class="download-button" />
       </div>
     </div>
 

@@ -1,0 +1,14 @@
+---
+import { links } from "../../links";
+const DownloadTag = links.download ? "a" : "button";
+---
+
+<span class:list={["platform-availability action", Astro.props.class]} data-platform-availability>Available on MacOS</span>
+<DownloadTag class:list={["action action-primary", Astro.props.class]} data-platform-download hidden href={links.download || undefined} download={!!links.download} disabled={!links.download} title={!links.download ? "Download link coming soon" : undefined}>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" /></svg>
+  Download EdU
+</DownloadTag>
+
+<style>
+  [hidden] { display: none !important; }
+</style>

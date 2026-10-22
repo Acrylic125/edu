@@ -13,9 +13,9 @@ const steps = [
   "Check your understanding",
 ];
 const suggestions = [
-  { title: "Learn calculus", description: "Limits, derivatives and integrals", icon: "calculator", color: "bg-learning-yellow" },
-  { title: "Explore automata", description: "From finite states to languages", icon: "code", color: "bg-learning-sage" },
-  { title: "Prepare for an exam", description: "Turn your papers into practice", icon: "book", color: "bg-learning-blue" },
+  { title: "Learn calculus", description: "Limits, derivatives and integrals", icon: "graduation", color: "bg-learning-yellow" },
+  { title: "Test Me on ...", description: "Put your understanding to the test", icon: "clipboardCheck", color: "bg-learning-sage" },
+  { title: "What is a State Machine?", description: "Explore a question with free notes", icon: "messageCircle", color: "bg-learning-blue" },
 ] as const;
 const files = ["Differentiation Lecture Slides.ppt", "Differentiation Tutorial.pdf"];
 const plan = [
@@ -57,10 +57,10 @@ const plan = [
 
               <div class="demo-suggestions mb-5 grid gap-3 landscape:grid-cols-3 not-landscape:grid-cols-1">
                 {suggestions.map((suggestion) => (
-                  <div class:list={["relative flex items-center gap-4 rounded-[1.75rem] px-5 py-4 text-learning-ink landscape:min-h-44 landscape:flex-col landscape:items-start landscape:gap-5 landscape:py-5", suggestion.color]}>
+                  <div class:list={["relative flex min-h-24 min-w-0 items-center gap-4 overflow-hidden rounded-[1.75rem] px-5 py-5 text-learning-ink landscape:min-h-44 landscape:flex-col landscape:items-start landscape:gap-5", suggestion.color]}>
                     <span class="demo-suggestion-icon flex size-11 shrink-0 items-center justify-center rounded-full bg-learning-circle"><DemoIcon name={suggestion.icon} class="size-5" /></span>
-                    <div>
-                      <p class="text-sm font-semibold">{suggestion.title}</p>
+                    <div class="min-w-0 flex-1 landscape:w-full landscape:flex-none">
+                      <p class="line-clamp-2 text-base font-semibold leading-6 [overflow-wrap:anywhere]">{suggestion.title}</p>
                       <p class="mt-1 text-xs leading-5 text-learning-subtle">{suggestion.description}</p>
                     </div>
                     <DemoIcon name="arrow" class="demo-suggestion-arrow ml-auto size-4 shrink-0 rotate-90 text-learning-subtle landscape:absolute landscape:right-5 landscape:top-8" />

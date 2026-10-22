@@ -1,5 +1,5 @@
 ---
-import { Image, getImage } from "astro:assets";
+import { getImage } from "astro:assets";
 import appIcon from "../../../desktop/src/renderer/assets/app-icon.png";
 import LearningDemo from "../components/demo/LearningDemo.astro";
 import DownloadSection from "../components/download/DownloadSection.astro";
@@ -52,11 +52,6 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
   </head>
   <body class="bg-background text-foreground">
     <div class="mx-auto max-w-6xl px-6 sm:px-10">
-      <header class="flex h-20 items-center gap-3 sm:h-28">
-        <Image src={appIcon} width={44} height={44} alt="" format="webp" />
-        <span class="text-xl font-semibold tracking-tight">EdU</span>
-      </header>
-
       <main>
         <TransformationHero />
 
@@ -64,5 +59,24 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
         <DownloadSection />
       </main>
     </div>
+    <script is:inline>
+      async function detectDownloadPlatform() {
+        let isMacArm = false;
+        try {
+          const agent = navigator.userAgentData;
+          if (agent?.getHighEntropyValues) {
+            const platform = await agent.getHighEntropyValues(["architecture"]);
+            isMacArm = agent.platform === "macOS" && /^(arm|arm64|aarch64)$/i.test(platform.architecture);
+          } else {
+            isMacArm = /Macintosh|Mac OS X/i.test(navigator.userAgent) && /arm64|aarch64/i.test(navigator.userAgent) && navigator.maxTouchPoints < 2;
+          }
+        } catch {
+          // Browsers may deny architecture hints; keep the availability message in that case.
+        }
+        document.querySelectorAll("[data-platform-download]").forEach((button) => { button.hidden = !isMacArm; });
+        document.querySelectorAll("[data-platform-availability]").forEach((label) => { label.hidden = isMacArm; });
+      }
+      detectDownloadPlatform();
+    </script>
   </body>
 </html>

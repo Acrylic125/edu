@@ -1,33 +1,51 @@
 ---
 import { Image } from "astro:assets";
 import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
-import { links } from "../../links";
+import DownloadAction from "../download/DownloadAction.astro";
+import BasisTransformation from "./BasisTransformation.astro";
 import "./transformation.css";
+
+const headlineWords = [
+  { character: "看", word: "Now" },
+  { character: "不", word: "I" },
+  { character: "懂", word: "Understand." },
+];
 ---
 
-<transformation-hero data-view="lecture" aria-labelledby="intro">
+<transformation-hero data-view="understood" aria-labelledby="intro">
+  <div class="hero-viewport">
+  <header class="hero-brand">
+    <Image src={appIcon} width={44} height={44} alt="" format="webp" />
+    <span>EdU</span>
+    <a class="hero-github action" href="https://github.com/Acrylic125/edu" target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.63 1.22 3.27.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.24 1.16-3.03-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.64 0c2.15-1.46 3.1-1.16 3.1-1.16.61 1.55.23 2.7.11 2.98.72.79 1.16 1.8 1.16 3.03 0 4.32-2.63 5.28-5.14 5.56.4.35.76 1.03.76 2.08v3.1c0 .3.21.65.78.54A11.25 11.25 0 0 0 12 .75Z" /></svg>
+      GitHub
+    </a>
+  </header>
   <section class="transformation-stage">
     <div class="transformation-copy">
-      <h1 id="intro" aria-label="From 看不懂 to Now I understand. EdU, your personal AI tutor.">
-        <span class="hero-headline hero-before" lang="zh-Hans" aria-hidden="true">看不懂<span class="hero-question">。</span></span>
-        <span class="hero-headline hero-after" aria-hidden="true">Now I<br />understand.</span>
+      <h1 id="intro" class="hero-headline" aria-label="From 看不懂 to Now I Understand. EdU, your personal AI tutor.">
+        {headlineWords.map(({ character, word }, index) => (
+          <span class="hero-word" data-word={index} style={`--word-progress: var(--hero-word-${index}, 1)`} aria-hidden="true">
+            <span class="hero-word-before" lang="zh-Hans">{character}</span>
+            <span class="hero-word-after">{word}</span>
+          </span>
+        ))}
+        <span class="hero-question" aria-hidden="true">。</span>
       </h1>
       <div class="hero-description">
-        <p class="hero-before">All the information.<br />None of the understanding.</p>
-        <p class="hero-after">Your slides, made simple.<br />Your own AI tutor, until it clicks.</p>
+        <p class="hero-before">I dont understand</p>
+        <p class="hero-after">Reframed to understanding</p>
       </div>
       <div class="hero-actions">
-        <a class="action action-primary" href={links.download || "#download"} download={!!links.download}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" /></svg>
-          Download EdU
-        </a>
-        <p>Less staring. More understanding.</p>
+        <DownloadAction />
       </div>
     </div>
 
     <div class="transformation-example">
       <div class="transformation-art">
-        <div class="lecture-cluster" data-lecture aria-hidden="false">
+        <div class="transformation-canvas">
+        <div class="lecture-cluster" data-lecture aria-hidden="true">
           <article class="lecture-paper">
             <div class="lecture-meta"><span>Linear algebra</span><span>Lecture 08 / 42</span></div>
             <h2>2.4 Linear transformation<br />with respect to a B-basis</h2>
@@ -48,46 +66,24 @@ import "./transformation.css";
                 <h3>Diagonal matrix representation</h3>
                 <p>Suppose A = PDP<sup>−1</sup>, where D is a diagonal n × n matrix. If B is the basis for ℝ<sup>n</sup> formed from the columns of P, then D is the B-matrix for the transformation x ↦ Ax.</p>
                 <h3>Proof</h3>
-                <p>Denote the columns of P by b₁, …, bₙ, so that B = {b₁, …, bₙ}. In this case P is the change-of-coordinates matrix.</p>
+                <p>Denote the columns of P by b₁, …, bₙ, so that B = &#123;b₁, …, bₙ&#125;. In this case P is the change-of-coordinates matrix.</p>
                 <div class="theorem-equations math">[T]<sub>B</sub> = [[T(b₁)]<sub>B</sub> ⋯ [T(bₙ)]<sub>B</sub>]<br />= [P<sup>−1</sup>Ab₁ ⋯ P<sup>−1</sup>Abₙ]<br />= P<sup>−1</sup>A[b₁ ⋯ bₙ]<br />= P<sup>−1</sup>AP = D ∎</div>
               </div>
             </div>
             <footer>Change of coordinates &amp; similarity <span>291</span></footer>
           </article>
           <div class="lecture-scrap scrap-blue math" aria-hidden="true">[y]<sub>B</sub> = [T]<sub>B</sub>[x]<sub>B</sub><span>…but why?</span></div>
-          <div class="lecture-scrap scrap-yellow math" aria-hidden="true">A = PDP<sup>−1</sup><svg viewBox="0 0 200 35" fill="none"><path d="M5 14C52-4 161-3 193 11S99 39 14 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg></div>
         </div>
 
-        <article class="understanding-paper" data-explanation aria-hidden="true">
-          <div class="understanding-toolbar">
-            <Image src={appIcon} width={27} height={27} alt="" format="webp" />
-            <span>EdU</span><span class="understanding-divider">/</span><span>Linear algebra</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4h16v16H4zM15 4v16" /></svg>
-          </div>
-          <div class="understanding-content">
-            <div class="understanding-source"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 3H6v18h12V7zM14 3v5h5M9 12h6m-6 4h6" /></svg> Your lecture, simplified</div>
-            <h2>Same transformation.<br />A simpler point of view.</h2>
-            <p>Choose an eigenvector basis, and a complicated transformation becomes just a stretch.</p>
-            <div class="understanding-equation math" aria-label="A equals P times D times P inverse">
-              <span>A</span><span>=</span><span class="factor-back">P</span><span class="factor-stretch">D</span><span class="factor-basis">P<sup>−1</sup></span>
-            </div>
-            <ol class="understanding-steps">
-              <li class="step-basis"><span class="step-symbol math">P<sup>−1</sup></span><div><h3>Change your view</h3><p>Write x in the eigenvector basis.</p></div></li>
-              <li class="step-stretch"><span class="step-symbol math">D</span><div><h3>Just stretch</h3><p>Scale along each eigenvector.</p></div></li>
-              <li class="step-back"><span class="step-symbol math">P</span><div><h3>Change back</h3><p>Return to the original coordinates.</p></div></li>
-            </ol>
-            <div class="understanding-takeaway"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg><p>Read right to left. Three small steps, one transformation.</p></div>
-          </div>
-        </article>
+        <div class="understanding-paper" data-explanation aria-hidden="false">
+          <BasisTransformation />
+        </div>
+        </div>
       </div>
 
-      <div class="transformation-controls" role="group" aria-label="Compare the lecture with EdU’s explanation">
-        <button type="button" data-view-button="lecture" aria-pressed="true">The lecture</button>
-        <button type="button" data-view-button="understood" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z" /></svg> With EdU</button>
-      </div>
     </div>
   </section>
-  <a class="hero-explore" href="#how-it-works">See how it works <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16m-5-5 5 5 5-5" /></svg></a>
+  </div>
 </transformation-hero>
 
 <script>
