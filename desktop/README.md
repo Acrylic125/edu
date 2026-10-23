@@ -1,6 +1,6 @@
 # Set up EdU desktop
 
-For the design, architecture, and LangGraph diagrams, see the
+For the architecture and tutor flow diagram, see the
 [main README](../README.md).
 
 ## Run from source

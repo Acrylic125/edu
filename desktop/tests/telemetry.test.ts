@@ -19,7 +19,7 @@ test("worker spans share the main-process trace and keep concurrent contexts sep
   const exporter = new InMemorySpanExporter()
   const root = new TurnTelemetry({ directory: await directory(), name: "tutor.turn", exporter })
   const childExporter = new InMemorySpanExporter()
-  const worker = new TurnTelemetry({ directory: await directory(), name: "tutor.graph", parent: root.context, exporter: childExporter })
+  const worker = new TurnTelemetry({ directory: await directory(), name: "tutor.run", parent: root.context, exporter: childExporter })
   await Promise.all(["codex", "claude"].map((runner) => worker.span(runner, "AGENT", async () => {
     await new Promise((resolve) => setTimeout(resolve, 1))
     await worker.span(`${runner}.tool`, "TOOL", async () => {})

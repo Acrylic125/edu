@@ -47,7 +47,7 @@ If no eligible, unused question is available in the topic assets, search online 
 If online search is unavailable or no suitable question can be verified, explain the limitation and stop sourcing questions. Do not substitute a generated question or a question from an ineligible source.
 
 ## Feedback and Deliberating
-After the user answers, give [FEEDBACK and DELIBERATE on the answer](FEEDBACK_AND_DELIBERATE.md)
+After the user answers, apply [Feedback and Deliberate](FEEDBACK_AND_DELIBERATE.md) to the accumulated answers for that question. Continue to the next question once its substantive objectives are demonstrated. Create a follow-up only for a specific unresolved gap; preserve the original objectives rather than adding requirements for incidental details.
 
 Afterwards, document mistakes for the part in the state file.
 

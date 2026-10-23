@@ -6,7 +6,7 @@ import { type WorkerJob, type Diagnostic, ProviderSessionSchema } from "../share
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { createTutorSession } from "./tutor"
-import { runAgentGraph } from "./graph"
+import { runAgentTurn } from "./agent-turn"
 import { TutorPublicationError } from "./publication-error"
 import type { TurnTelemetry } from "./telemetry"
 
@@ -228,7 +228,7 @@ Screenshots attached to the current learner message are also supplied directly a
         if (part.type === "image_url") imageInput.push({ type: "image", url: part.image_url.url, detail: "high" })
       }
     }
-    return await runAgentGraph({
+    return await runAgentTurn({
       limit: 3,
       diagnostic,
       telemetry,
@@ -276,7 +276,6 @@ Screenshots attached to the current learner message are also supplied directly a
               event.turn.error?.message ??
                 "Codex was interrupted. Retry from your saved notes.",
             )
-          return "validate"
         } finally {
           completion.dispose()
         }

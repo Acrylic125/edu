@@ -267,7 +267,7 @@ test("requires a valid saved handoff before returning a learner reply", async ()
   ])
   const nodes: string[] = []
   const result = await runTutorTurn(input, client, () => {}, (event, details) => {
-    if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
+    if (event === "turn.step" && typeof details.step === "string") nodes.push(details.step)
   })
   expect(nodes).toContain("recover")
   expect(nodes).toContain("execute_tools")

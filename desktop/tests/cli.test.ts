@@ -149,7 +149,7 @@ test("native Claude tutoring loads only EdU MCP tools without safe-mode disablin
   expect(config).toEqual({ mcpServers: { edu: { type: "http", url: endpoint.url, headers: endpoint.headers } } })
 })
 
-test.each(["claude", "antigravity"] as const)("%s uses native tool callbacks and the same outer graph as Codex", async (provider) => {
+test.each(["claude", "antigravity"] as const)("%s uses native tool callbacks and the same validated turn loop as Codex", async (provider) => {
   const cli = await connection(provider)
   const chat = newChat(randomUUID())
   const job = WorkerJobSchema.parse({ chat, topics: [], runner: { id: chat.runnerId, name: "Tutor", provider, model: "default" }, cli, skillDirectory: resolve("resources/tutor-me"), assetDirectory: cli.directory })
@@ -169,7 +169,7 @@ test.each(["claude", "antigravity"] as const)("%s uses native tool callbacks and
   })
   const nodes: string[] = []
   const result = await runCliTutorTurn(job, () => {}, () => {}, (event, details) => {
-    if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
+    if (event === "turn.step" && typeof details.step === "string") nodes.push(details.step)
   })
   expect(result.reply).toContain("native tool results")
   expect(result.learning).toEqual(chat.learning)

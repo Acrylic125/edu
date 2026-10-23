@@ -5,7 +5,7 @@ import { z } from "zod"
 import { type WorkerJob, type Diagnostic } from "../shared/contracts"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, runCliCommand } from "../providers/cli"
 import { createTutorSession } from "./tutor"
-import { runAgentGraph } from "./graph"
+import { runAgentTurn } from "./agent-turn"
 import { startTutorToolServer } from "./tutor-mcp"
 import { TutorPublicationError } from "./publication-error"
 import type { TurnTelemetry } from "./telemetry"
@@ -26,7 +26,7 @@ export async function runCliTutorTurn(job: WorkerJob, activity: (message: string
 Use the EdU MCP tools during your native turn to read sources and update scratchpads. Save the private handoff with save_learning_state before returning the reply. Repair rejected tool operations before finishing. Return JSON containing only reply. Native file and shell tools are disabled.`
       let input = `${instructions}\nConversation:\n${JSON.stringify(transcript)}`
       let reply = ""
-      return await runAgentGraph({
+      return await runAgentTurn({
         limit: 3,
         diagnostic,
         telemetry,
@@ -40,7 +40,6 @@ Use the EdU MCP tools during your native turn to read sources and update scratch
             input, processChanged, 5 * 60_000, undefined, toolServer)
           await toolServer.drain()
           reply = ReplySchema.parse(parseCliResponse(connection.provider, output)).reply
-          return "validate"
         },
         ready() {
           diagnostic("tutor.validation", { saved: session.saved, saveError: session.saveError ?? null, emptyReply: !session.hasReply(reply) })

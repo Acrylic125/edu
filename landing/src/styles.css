@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "../../packages/ui/theme.css";
 
+html {
+  /* Scale the rem-based layout beyond its 1280px desktop baseline. */
+  font-size: max(1rem, 1.25vw);
+}
+
 body {
   margin: 0;
   overflow-x: clip;

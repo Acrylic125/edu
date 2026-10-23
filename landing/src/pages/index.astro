@@ -61,17 +61,18 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
     </div>
     <script is:inline>
       async function detectDownloadPlatform() {
-        let isMacArm = false;
+        const agent = navigator.userAgentData;
+        const isMac = (agent?.platform === "macOS" || /Macintosh|Mac OS X/i.test(navigator.userAgent)) && navigator.maxTouchPoints < 2;
+        let isMacArm = isMac;
         try {
-          const agent = navigator.userAgentData;
-          if (agent?.getHighEntropyValues) {
+          if (isMac && agent?.getHighEntropyValues) {
             const platform = await agent.getHighEntropyValues(["architecture"]);
-            isMacArm = agent.platform === "macOS" && /^(arm|arm64|aarch64)$/i.test(platform.architecture);
-          } else {
-            isMacArm = /Macintosh|Mac OS X/i.test(navigator.userAgent) && /arm64|aarch64/i.test(navigator.userAgent) && navigator.maxTouchPoints < 2;
+            if (platform.architecture) {
+              isMacArm = /^(arm|arm64|aarch64)$/i.test(platform.architecture);
+            }
           }
         } catch {
-          // Browsers may deny architecture hints; keep the availability message in that case.
+          // Architecture hints can be unavailable or denied on Apple Silicon browsers.
         }
         document.querySelectorAll("[data-platform-download]").forEach((button) => { button.hidden = !isMacArm; });
         document.querySelectorAll("[data-platform-availability]").forEach((label) => { label.hidden = isMacArm; });

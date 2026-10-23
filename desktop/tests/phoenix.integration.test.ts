@@ -6,24 +6,23 @@ import { promisify } from "node:util"
 import { randomUUID } from "node:crypto"
 import { expect, test } from "vitest"
 import { z } from "zod"
-import { runAgentGraph } from "../src/runners/graph"
+import { runAgentTurn } from "../src/runners/agent-turn"
 import { TurnTelemetry } from "../src/runners/telemetry"
 
 const environment = z.object({ EDU_PHOENIX_TEST_URL: z.string().url().optional() }).parse(process.env)
 
-test.skipIf(!environment.EDU_PHOENIX_TEST_URL)("replays synthetic LangGraph OTLP into local Phoenix", async () => {
+test.skipIf(!environment.EDU_PHOENIX_TEST_URL)("replays synthetic tutor OTLP into local Phoenix", async () => {
   const endpoint = environment.EDU_PHOENIX_TEST_URL
   if (!endpoint) throw new Error("Phoenix test URL is required")
   const directory = await mkdtemp(join(tmpdir(), "edu-phoenix-smoke-"))
   try {
     const name = `synthetic-${randomUUID()}`
     const main = new TurnTelemetry({ directory, name })
-    const worker = new TurnTelemetry({ directory, name: "tutor.graph", parent: main.context })
+    const worker = new TurnTelemetry({ directory, name: "tutor.run", parent: main.context })
     let attempt = 0
-    await runAgentGraph({
+    await runAgentTurn({
       limit: 3, telemetry: worker, runner: { provider: "codex", model: "synthetic" },
-      async run() { attempt++; return "tools" },
-      async tools() { await worker.span("read_material", "TOOL", async () => {}); return "validate" },
+      async run() { attempt++; await worker.span("read_material", "TOOL", async () => {}) },
       ready: () => attempt === 2, recover: () => {}, finish: () => "synthetic lesson",
       exhausted: () => new Error("Synthetic request limit"),
     })

@@ -8,7 +8,7 @@ import { StateService } from "../src/main/state-service"
 import { WorkerJobSchema } from "../src/shared/contracts"
 import { TopicStateSchema } from "../src/shared/topic-state"
 import { createTutorSession } from "../src/runners/tutor"
-import { createTutorGraph } from "../src/runners/tutor-graph"
+import { runTutorLoop } from "../src/runners/tutor-loop"
 
 function job() {
   const chat = newChat(randomUUID())
@@ -229,14 +229,14 @@ test("teaching adds no blanket source footer and preserves citations beside rele
   expect(canonical).toContain(`> [!CHECK]\n> ${question}`)
   expect(tutor.previewReply(missingCitation)).toBe(canonical)
   let attempt = 0
-  const result = await createTutorGraph({
+  const result = await runTutorLoop({
     session: tutor,
     model: async () => { attempt++; return { reply: missingCitation, calls: [], finishAfterTools: false } },
     consumeTools: () => {}, recover: () => {}, maxAttempts: 1,
     exhausted: () => new Error("Source lines are rendered by the app"),
-  }).invoke({})
+  })
   expect(attempt).toBe(1)
-  expect(result.result?.reply).toBe(canonical)
+  expect(result.reply).toBe(canonical)
 })
 
 test("relative citations resolve against the active topic despite duplicate lecture filenames", async () => {
@@ -256,14 +256,14 @@ test("relative citations resolve against the active topic despite duplicate lect
   await tutor.execute("topic_editContent", { topicId: "scratchpad_1", changes: [{ action: "add", block: { type: "markdown", id: "walkthrough", sectionId: "tp-binary", content: ["## Binary fractions\n\nEach position has a power-of-two weight."] } }] })
   expect((await tutor.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", pendingQuestion: question, privateAnswerKey: "A place contributes its digit multiplied by its positional weight.", workpad: "Awaiting the answer." })).success).toBe(true)
   const reply = "Each binary place has a power-of-two weight.\n\nSource: [Lecture](<assets/Lecture 3A.pdf#page=1>)\n\n> [!CHECK]\n> What is the positional weight?"
-  const result = await createTutorGraph({
+  const result = await runTutorLoop({
     session: tutor, model: async () => ({ reply, calls: [], finishAfterTools: false }),
     consumeTools: () => {}, recover: () => {}, maxAttempts: 1,
     exhausted: () => new Error("Unnecessary citation repair"),
-  }).invoke({})
-  expect(result.result?.reply).toContain("[Lecture](<assets/Lecture 3A.pdf#page=1>)")
-  expect(result.result?.reply).toContain(question)
-  expect(result.result?.reply).not.toContain(other.materials[0].id)
+  })
+  expect(result.reply).toContain("[Lecture](<assets/Lecture 3A.pdf#page=1>)")
+  expect(result.reply).toContain(question)
+  expect(result.reply).not.toContain(other.materials[0].id)
 })
 
 test("completing a part cannot evade reading its source by removing its active status", async () => {
@@ -349,7 +349,7 @@ test("teaching prefers the topic's attached lecture when chat filenames collide"
   expect((await tutor.execute("topic_activatePart", { topicId: "scratchpad_1", topicPartId: "tp-binary" })).success).toBe(true)
 })
 
-test("the graph repairs a fabricated plan by reading attachments before publishing", async () => {
+test("the tutor loop repairs a fabricated plan by reading attachments before publishing", async () => {
   const input = job()
   const tutor = await createTutorSession(input, () => {})
   const responses = [
@@ -365,7 +365,7 @@ test("the graph repairs a fabricated plan by reading attachments before publishi
   ]
   const recovery: string[] = []
   const excerpts: string[] = []
-  const graph = createTutorGraph({
+  const result = await runTutorLoop({
     session: tutor,
     model: async (attempt) => {
       if (attempt === 3) expect(excerpts.join("\n")).toContain("Page 2\nBinary fractions")
@@ -377,8 +377,7 @@ test("the graph repairs a fabricated plan by reading attachments before publishi
     recover: (message) => { recovery.push(message) },
     maxAttempts: 3, exhausted: () => new Error("Model budget exhausted"),
   })
-  const { result } = await graph.invoke({})
   expect(recovery).toHaveLength(1)
-  expect(result?.reply).toBe("Follow Lecture 3A: positional notation, then binary fractions.")
-  expect(result?.topicMutations).toMatchObject([{ type: "createTopic", topic: { content: [part] } }])
+  expect(result.reply).toBe("Follow Lecture 3A: positional notation, then binary fractions.")
+  expect(result.topicMutations).toMatchObject([{ type: "createTopic", topic: { content: [part] } }])
 })

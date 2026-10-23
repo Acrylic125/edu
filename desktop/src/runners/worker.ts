@@ -27,7 +27,7 @@ process.parentPort.on("message", async (event) => {
     const job = WorkerJobSchema.parse(event.data)
     if (job.telemetry) telemetry = new TurnTelemetry({
       ...job.telemetry,
-      name: "tutor.graph",
+      name: "tutor.run",
       attributes: { "session.id": job.chat.id, "edu.runner.id": job.runner.id, "edu.provider": job.runner.provider },
     })
     const activity = (activity: string) =>

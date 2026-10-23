@@ -22,7 +22,7 @@ import {
 } from "../shared/contracts"
 import { TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
 import { existingScratchpadForCreation, StateService } from "../main/state-service"
-import { runTutorGraph } from "./tutor-graph"
+import { runTutorLoop } from "./tutor-loop"
 import { ScratchpadMutationSchema, TestStateSchema } from "../shared/scratchpad-state"
 import { scratchpadToolDefinitions, scratchpadTools } from "./scratchpad-tools"
 import type { TurnTelemetry } from "./telemetry"
@@ -760,7 +760,7 @@ export async function runTutorTurn(
     })),
   ]
   let response: OpenAI.Chat.Completions.ChatCompletionMessage | undefined
-  return runTutorGraph({
+  return runTutorLoop({
     session,
     maxAttempts: 16,
     diagnostic,

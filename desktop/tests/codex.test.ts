@@ -1,5 +1,6 @@
 import { scratchpadToolDefinitions } from "../src/runners/scratchpad-tools"
 import { randomUUID } from "node:crypto"
+import { once } from "node:events"
 import {
   access,
   mkdtemp,
@@ -31,7 +32,13 @@ const directories: string[] = []
 const clients: CodexAppServer[] = []
 vi.mock("electron", () => ({ shell: { openExternal: vi.fn().mockResolvedValue(undefined) }, safeStorage: {} }))
 afterEach(async () => {
-  for (const client of clients.splice(0)) client.close()
+  await Promise.all(clients.splice(0).map(async (client) => {
+    if (client.child.exitCode !== null || client.child.signalCode !== null) return
+    // The native runtime can still write its database until the process exits.
+    const exited = once(client.child, "exit")
+    client.close()
+    await exited
+  }))
   await Promise.all(
     directories
       .splice(0)
@@ -44,6 +51,24 @@ async function directory() {
   return value
 }
 
+test("Codex sign-in uses private file credentials without requesting Keychain access", async () => {
+  const { job, home } = await fixture()
+  if (!job.codex) throw new Error("Missing Codex fixture")
+  const provider = new CodexProvider(job.codex, () => {}, async () => {})
+  try {
+    await provider.connect()
+    const runtime = z.object({ home: z.string(), args: z.array(z.string()) }).parse(
+      JSON.parse(await readFile(join(home, "runtime.json"), "utf8")),
+    )
+    expect(runtime.home).toBe(job.codex.home)
+    expect(runtime.args).toContain('cli_auth_credentials_store="file"')
+    expect(runtime.args).toContain('mcp_oauth_credentials_store="file"')
+    expect(runtime.args).not.toContain('cli_auth_credentials_store="keyring"')
+  } finally {
+    provider.close()
+  }
+})
+
 test("Codex enables live web research while keeping shell access disabled", async () => {
   const { job, home } = await fixture()
   if (!job.codex) throw new Error("Missing Codex fixture")
@@ -53,6 +78,30 @@ test("Codex enables live web research while keeping shell access disabled", asyn
   expect(client.child.spawnargs).toContain('web_search="live"')
   expect(client.child.spawnargs).toContain("shell_tool")
   expect(client.child.spawnargs).toContain("unified_exec")
+})
+
+test("bundled Codex reads credentials from EdU's isolated auth file", async () => {
+  const home = await directory()
+  await writeFile(
+    join(home, "auth.json"),
+    JSON.stringify({ OPENAI_API_KEY: "fixture-not-a-real-api-key" }),
+    { mode: 0o600 },
+  )
+  const client = new CodexAppServer({
+    home,
+    executable: resolve(
+      "resources/codex/bin",
+      process.platform === "win32" ? "codex.exe" : "codex",
+    ),
+  })
+  clients.push(client)
+  await client.initialize()
+  const result = await client.request(
+    "account/read",
+    { refreshToken: false },
+    z.object({ account: z.object({ type: z.string() }).nullable() }),
+  )
+  expect(result.account).toEqual({ type: "apiKey" })
 })
 
 test.each([false, true])("Codex receives attached screenshot pixels directly when resumed=%s", async (resumed) => {
@@ -115,7 +164,7 @@ import { readFileSync, appendFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 const home=dirname(fileURLToPath(import.meta.url))
-writeFileSync(join(home,"runtime.json"),JSON.stringify({cwd:process.cwd(),home:process.env.CODEX_HOME}))
+writeFileSync(join(home,"runtime.json"),JSON.stringify({cwd:process.cwd(),home:process.env.CODEX_HOME,args:process.argv.slice(2)}))
 let account=null
 let turns=0
 const send=value=>process.stdout.write(JSON.stringify(value)+"\\n")
@@ -279,7 +328,7 @@ test("Codex uses Tutor Me tool validation and returns a saved plan only after tu
     () => {},
     (pid) => processes.push(pid),
     (event, details) => {
-      if (event === "graph.node" && typeof details.node === "string") nodes.push(details.node)
+      if (event === "turn.step" && typeof details.step === "string") nodes.push(details.step)
     },
   )
   expect(nodes).toContain("agent")

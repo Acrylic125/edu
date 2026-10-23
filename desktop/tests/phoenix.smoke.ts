@@ -17,12 +17,19 @@ test("native agent workers spool Phoenix traces and install a portable exporter"
     const page = await app.firstWindow()
     await page.waitForFunction(() => typeof window.prune?.snapshot === "function")
     for (const provider of ["claude", "antigravity"] as const) {
+      await expect.poll(async () => page.evaluate(async (provider) => {
+        const snapshot = await window.prune?.snapshot()
+        return snapshot?.providers.some((item) => item.id === provider && (item.loading || item.connecting))
+      }, provider), { timeout: 30_000 }).toBe(false)
       const chatId = await page.evaluate(async ({ provider, executable }) => {
         const bridge = window.prune
         if (!bridge) throw new Error("Missing native bridge")
         await bridge.saveProvider({ id: provider, displayName: provider, binaryPath: executable, enabled: false })
         await bridge.connect(provider)
-        const runnerId = await bridge.addRunner({ name: `${provider} trace test`, provider, model: "default" })
+        const snapshot = await bridge.snapshot()
+        const model = snapshot.providers.find((item) => item.id === provider)?.models[0]
+        if (!model) throw new Error("The provider has no available models")
+        const runnerId = await bridge.addRunner({ name: `${provider} trace test`, provider, model: model.id })
         const chatId = await bridge.createChat({ runnerId })
         await bridge.send({ chatId, content: "Teach me limits" })
         return chatId
@@ -44,6 +51,8 @@ test("native agent workers spool Phoenix traces and install a portable exporter"
     const contents = Buffer.concat(bodies).toString("utf8")
     expect(contents).toContain("runner.claude")
     expect(contents).toContain("runner.antigravity")
+    expect(contents).toContain("tutor.run")
+    expect(contents).toContain("turn.validate")
     expect(contents).toContain("harness.commit")
     expect(contents).not.toContain("Teach me limits")
     expect(contents).not.toContain("Here is your learning plan")

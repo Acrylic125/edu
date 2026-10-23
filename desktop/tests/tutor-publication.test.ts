@@ -4,7 +4,7 @@ import { expect, test } from "vitest"
 import { newChat, newTopic } from "../src/main/workspace"
 import { TopicStateSchema } from "../src/shared/topic-state"
 import { createTutorSession } from "../src/runners/tutor"
-import { runTutorGraph } from "../src/runners/tutor-graph"
+import { runTutorLoop } from "../src/runners/tutor-loop"
 import { messageText } from "../src/shared/message-text"
 
 async function fixture() {
@@ -59,7 +59,7 @@ test("the app renders the saved check when the model changes only its final punc
   await tutor.execute("save_learning_state", handoff)
   const reply = `Nearby inputs give nearby outputs.\n\n> [!CHECK]\n> ${question.replace(/\?$/, ".")}`
   let attempts = 0
-  const result = await runTutorGraph({
+  const result = await runTutorLoop({
     session: tutor,
     model: async () => { attempts++; return { reply, calls: [], finishAfterTools: false } },
     consumeTools: () => {}, recover: () => {}, maxAttempts: 1,
@@ -97,7 +97,7 @@ test("a recorded check is rendered without asking the model to repeat it", async
   const { pendingQuestion, ...input } = handoff
   expect((await tutor.execute("save_learning_state", { ...input, pendingCheck: { topicId: "scratchpad_1", topicPartId: "tp-limits", stepIndex: 0 } })).success).toBe(true)
   let attempts = 0
-  const result = await runTutorGraph({
+  const result = await runTutorLoop({
     session: tutor,
     model: async () => { attempts++; return { reply: "Inputs close to 2 give outputs close to 4.", calls: [], finishAfterTools: false } },
     consumeTools: () => {}, recover: () => {}, maxAttempts: 1,
