@@ -52,9 +52,3 @@ docker compose -p edu-phoenix -f compose.yaml down
 
 The official Phoenix image is pinned by digest. No cloud account or model API key
 is required. See [Phoenix Docker deployment](https://arize.com/docs/phoenix/self-hosting/deployment-options/docker).
-
-## Exporter tests
-
-```sh
-uv run --with opentelemetry-proto python -m unittest discover -s tests
-```

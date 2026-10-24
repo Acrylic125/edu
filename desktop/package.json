@@ -12,8 +12,6 @@
     "preview": "node scripts/electron-vite.mjs preview",
     "dev:renderer": "vite --config vite.renderer.config.ts --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:smoke": "pnpm build && playwright test",
     "package": "pnpm build && electron-builder",
     "package:dir": "pnpm build && electron-builder --dir -c.mac.identity=null"
   },
@@ -51,7 +49,6 @@
   },
   "devDependencies": {
     "@openai/codex": "0.162.1",
-    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/mdast": "^4.0.4",
     "@types/node": "^26.4.1",
@@ -62,11 +59,9 @@
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
-    "happy-dom": "^21.0.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
-    "vite": "^7.3.7",
-    "vitest": "^3.2.7"
+    "vite": "^7.3.7"
   },
   "packageManager": "pnpm@10.26.0"
 }
