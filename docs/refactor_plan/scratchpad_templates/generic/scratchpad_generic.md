@@ -1,2 +1,0 @@
-# {SCRATCHPAD_NAME}
-
