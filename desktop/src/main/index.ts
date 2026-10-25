@@ -27,6 +27,7 @@ import {
   ProviderSettingsSchema,
   RunnerInputSchema,
   SendSchema,
+  RetrySchema,
   SnapshotSchema,
 } from "../shared/contracts"
 import { resolveCliExecutable } from "../providers/cli"
@@ -35,6 +36,7 @@ import { importMaterials, MaterialDrafts } from "./materials"
 import { readSourceImages } from "./source-images"
 import { newChat, WorkspaceRepository } from "./workspace"
 import { RunnerManager } from "../runners/manager"
+import { TutorWorkflowRepository } from "./tutor-workflow"
 import { installPhoenixExporter } from "../runners/telemetry"
 
 const environment = z
@@ -74,6 +76,7 @@ else {
       const directory = join(app.getPath("userData"), "workspace")
       const repository = new WorkspaceRepository(directory)
       await repository.load()
+      await new TutorWorkflowRepository(repository).recoverInterruptedTurns()
       const phoenixResources = app.isPackaged
         ? join(process.resourcesPath, "phoenix")
         : join(app.getAppPath(), "..", "phoenix")
@@ -343,6 +346,10 @@ else {
       ipcMain.handle(Channel.send, async (event, raw) => {
         trusted(event)
         await runnerManager.send(SendSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.retry, async (event, raw) => {
+        trusted(event)
+        await runnerManager.retry(RetrySchema.parse(raw))
       })
       ipcMain.handle(Channel.selectMaterials, async (event, raw) => {
         trusted(event)

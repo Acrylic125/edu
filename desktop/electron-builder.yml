@@ -17,6 +17,9 @@ extraResources:
   - from: resources
     to: resources
 asar: true
+# OCR worker threads resolve their modules and language data outside the archive.
+asarUnpack:
+  - node_modules/**
 mac:
   category: public.app-category.education
   target: [dmg, zip]

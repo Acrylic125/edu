@@ -4,9 +4,20 @@ import { generateTopicTitle } from "./title"
 import { runCliTutorTurn } from "./cli"
 import { TurnTelemetry } from "./telemetry"
 import { TutorPublicationError } from "./publication-error"
+import { WorkflowResponseSchema } from "../shared/tutor-workflow"
+import { createWorkflowClient } from "./workflow-client"
+import { SqliteCheckpointSaver } from "./workflow-checkpointer"
+import { parseScratchpadCommand } from "../shared/scratchpad-commands"
+import { createTutorGraph, type WorkflowNativeRunner } from "./tutor-graph"
 
 let busy = false
+let workflowClient: ReturnType<typeof createWorkflowClient> | undefined
 process.parentPort.on("message", async (event) => {
+  const response = WorkflowResponseSchema.safeParse(event.data)
+  if (response.success) {
+    workflowClient?.receive(response.data)
+    return
+  }
   if (busy) {
     process.parentPort.postMessage({
       type: "error",
@@ -38,7 +49,8 @@ process.parentPort.on("message", async (event) => {
       process.parentPort.postMessage({ type: "trace", event, details })
     const processChanged = (pid: number | null) =>
       process.parentPort.postMessage({ type: "codex_process", pid })
-    if (!job.cli && !job.chat.titleGenerated && !job.chat.messages.some((message) => message.role === "assistant")) {
+    const creationCommand = parseScratchpadCommand(job.chat.messages.at(-1)?.content ?? "")
+    if (creationCommand?.type !== "topic" && !job.cli && !job.chat.titleGenerated && !job.chat.messages.some((message) => message.role === "assistant")) {
       activity("Naming your chat")
       try {
         const request = job.chat.messages.find((message) => message.role === "user")?.content ?? ""
@@ -50,21 +62,45 @@ process.parentPort.on("message", async (event) => {
         diagnostic("title.failed", { error: error instanceof Error ? error.message : "Could not generate a title." })
       }
     }
-    let result
-    if (job.runner.provider === "codex") {
-      result = await runCodexTutorTurn(
-        job,
-        activity,
-        processChanged,
-        diagnostic,
-        telemetry,
-        onReply,
-      )
-    } else if (job.runner.provider === "claude" || job.runner.provider === "antigravity") {
-      result = await runCliTutorTurn(job, activity, processChanged, diagnostic, telemetry)
+    if (!job.workflow) throw new Error("A durable turn workflow is required.")
+    workflowClient = createWorkflowClient(job.workflow.attemptId, (message) => process.parentPort.postMessage(message))
+    const checkpointer = new SqliteCheckpointSaver(job.workflow.checkpointPath)
+    try {
+      const native: WorkflowNativeRunner = async (input, session, invocationId) => {
+        let phase = "tutor"
+        if (session.tools.some((tool) => tool.type === "function" && tool.function.name === "submit_topic_plan")) phase = "planner"
+        else if (session.tools.some((tool) => tool.type === "function" && tool.function.name === "finish_role")) phase = "role"
+        else if (!session.tools.length) phase = "compaction"
+        const invoke = async () => {
+          const changed = (pid: number | null) => process.parentPort.postMessage({ type: "codex_process", invocationId, pid })
+          const host = workflowClient!.host
+          await host.beginInvocation(job.chat.id, job.workflow!.turnId, invocationId)
+          try {
+            let result
+            if (input.runner.provider === "codex") result = await runCodexTutorTurn(input, activity, changed, diagnostic, telemetry, onReply, session)
+            else result = await runCliTutorTurn(input, activity, changed, diagnostic, telemetry, session)
+            await host.endInvocation(job.chat.id, job.workflow!.turnId, invocationId, true)
+            return result
+          } catch (error) {
+            await host.endInvocation(job.chat.id, job.workflow!.turnId, invocationId, false)
+            throw error
+          }
+        }
+        if (telemetry) return telemetry.span("workflow.invocation", "CHAIN", invoke, { "edu.invocation.id": invocationId, "edu.workflow.phase": phase })
+        return invoke()
+      }
+      const graph = createTutorGraph(workflowClient.host, native, checkpointer, { codex: job.codex, cli: job.cli, apiKey: job.apiKey }, activity)
+      const saved = await checkpointer.getTuple({ configurable: { thread_id: job.workflow.turnId } })
+      let input: { chatId: string; turnId: string } | null = { chatId: job.chat.id, turnId: job.workflow.turnId }
+      if (job.workflow.resume && saved) input = null
+      await graph.invoke(input, { configurable: { thread_id: job.workflow.turnId }, durability: "sync", recursionLimit: 100 })
+    } finally {
+      checkpointer.close()
+      workflowClient.close()
+      workflowClient = undefined
     }
     await flushTelemetry(false)
-    process.parentPort.postMessage({ type: "result", ...result })
+    process.parentPort.postMessage({ type: "workflow_complete", turnId: job.workflow.turnId })
   } catch (error) {
     if (error instanceof TutorPublicationError)
       process.parentPort.postMessage({ type: "trace", event: "tutor.publication_failed", details: { error: error.detail } })
@@ -73,6 +109,8 @@ process.parentPort.on("message", async (event) => {
     if (error instanceof Error) message = error.message
     process.parentPort.postMessage({ type: "error", error: message })
   } finally {
+    workflowClient?.close()
+    workflowClient = undefined
     busy = false
   }
 })

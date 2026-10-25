@@ -34,6 +34,7 @@ const bridge: DesktopBridge = {
   createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
   archiveTopic: (input) => ipcRenderer.invoke(Channel.archiveTopic, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
+  retry: (input) => ipcRenderer.invoke(Channel.retry, input),
   selectMaterials: async (draftIds) =>
     MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.selectMaterials, draftIds)),
   dropMaterials: async (files, draftIds = []) => {

@@ -35,6 +35,7 @@ import { ScratchpadStateSchema, ScratchpadTypeSchema, scratchpadReferences } fro
 import { StoredScratchpadStateSchema, StoredTopicSchema, StoredWorkspaceSchema } from "./workspace-migrations"
 import { importStructuredContent } from "./structured-content-migration"
 import { scratchpadMarkdown } from "../shared/scratchpad-markdown"
+import { ConversationSummarySchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
 
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true }).extend({
   version: z.literal(3),
@@ -396,7 +397,57 @@ export class WorkspaceRepository {
     return operation
   }
 
-  private async commit(state: Workspace) {
+  workflow(turnId: string) {
+    return this.database.workflow(turnId)
+  }
+
+  conversationSummary(chatId: string) {
+    return this.database.conversationSummary(chatId)
+  }
+
+  async saveWorkflowSummary(turnId: string, summary: z.infer<typeof ConversationSummarySchema>) {
+    const operation = this.writes.then(() => {
+      const turn = this.database.workflow(turnId)
+      turn.summary = summary
+      this.database.saveWorkflow(turn, summary)
+      return turn.summary
+    })
+    this.writes = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  async saveWorkflow(turn: z.infer<typeof WorkflowRecordSchema>) {
+    const operation = this.writes.then(() => this.database.saveWorkflow(turn))
+    this.writes = operation.catch(() => {})
+    return operation
+  }
+
+  async updateWorkflow(turnId: string, update: (turn: z.infer<typeof WorkflowRecordSchema>) => void) {
+    const operation = this.writes.then(() => {
+      const turn = this.database.workflow(turnId)
+      update(turn)
+      this.database.saveWorkflow(turn)
+      return this.database.workflow(turnId)
+    })
+    this.writes = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  async mutateWorkflow(turnId: string, update: (turn: z.infer<typeof WorkflowRecordSchema>, state: Workspace) => void) {
+    const operation = this.writes.then(async () => {
+      await this.recoverFiles()
+      this.state = { ...this.state, topics: await this.readTopics() }
+      const next = structuredClone(this.state)
+      const turn = this.database.workflow(turnId)
+      update(turn, next)
+      await this.commit(next, turn)
+      return this.database.workflow(turnId)
+    })
+    this.writes = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  private async commit(state: Workspace, workflow?: z.infer<typeof WorkflowRecordSchema>) {
     const validated = WorkspaceSchema.parse(state)
     for (const topic of validated.topics) {
       const previous = this.state.topics.find((item) => item.id === topic.id)
@@ -421,7 +472,7 @@ export class WorkspaceRepository {
     WorkspaceSchema.parse(validated)
     const previous = this.state
     await this.prepareReferencedAssets(validated, previous)
-    this.database.save(validated)
+    this.database.save(validated, workflow)
     this.state = validated
     await this.syncFiles(validated, previous)
     this.database.filesSynced()

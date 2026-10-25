@@ -4,11 +4,10 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs
 import { tmpdir } from "node:os"
 import { basename, extname, join } from "node:path"
 import { dialog, type BrowserWindow, type OpenDialogOptions } from "electron"
-import { extractText, getDocumentProxy } from "unpdf"
-import { OfficeGenerator, OfficeParser } from "officeparser"
 import { z } from "zod"
 import { MaterialOwnerSchema, MaterialSchema, PastedImageSchema } from "../shared/contracts"
 import { WorkspaceRepository } from "./workspace"
+import { extractMaterial } from "./material-extraction"
 
 async function selectMaterialFiles(parent?: BrowserWindow) {
   const options = {
@@ -152,46 +151,7 @@ export async function importMaterials(
           `${basename(source)} is larger than 20 MB. Add a smaller file.`,
         )
       const buffer = await readFile(source)
-      let text = ""
-      let pages: string[] = []
-      let kind: z.infer<typeof MaterialSchema>["kind"] = "text"
-      if (extname(source).toLowerCase() === ".pdf") {
-        kind = "pdf"
-        const pdf = await getDocumentProxy(new Uint8Array(buffer))
-        try {
-          const extracted = await extractText(pdf, { mergePages: false })
-          pages = extracted.text
-          text = pages.join("\n\n")
-        } finally {
-          await pdf.loadingTask.destroy()
-        }
-      } else if (extname(source).toLowerCase() === ".pptx") {
-        const presentation = await OfficeParser.parseOffice(buffer, {
-          fileType: "pptx",
-          ignoreSlideMasters: true,
-        })
-        for (const slide of presentation.content.filter((node) => node.type === "slide")) {
-          const extracted = await OfficeGenerator.generate(
-            { ...presentation, content: [slide] },
-            "text",
-          )
-          pages.push(extracted.value.trim())
-        }
-        if (pages.length === 0)
-          throw new Error(`${basename(source)} has no readable slides.`)
-        text = pages.map((page, index) => `Slide ${index + 1}\n${page}`).join("\n\n")
-      } else if (
-        [".png", ".jpg", ".jpeg", ".webp"].includes(extname(source).toLowerCase())
-      ) {
-        kind = "image"
-        if (info.size > 8 * 1024 * 1024)
-          throw new Error("Use images smaller than 8 MB.")
-        text = "Image source. Use read_material to inspect the image visually."
-      } else {
-        if (buffer.includes(0))
-          throw new Error(`${basename(source)} is not a readable text file.`)
-        text = buffer.toString("utf8")
-      }
+      const { text, pages, kind, documentIndex } = await extractMaterial(buffer, extname(source).toLowerCase(), join(repository.directory, "source-cache"))
       const name = basename(source)
       if (
         current().materials.some((item) => item.name === name) ||
@@ -206,6 +166,7 @@ export async function importMaterials(
         kind,
         text,
         pages,
+        documentIndex,
       })
       await copyFile(source, join(assetDirectory, name), constants.COPYFILE_EXCL)
       materials.push(material)
