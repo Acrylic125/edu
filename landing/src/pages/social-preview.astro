@@ -1,0 +1,64 @@
+---
+import TransformationHero from "../components/hero/TransformationHero.astro";
+import "../styles.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1200" />
+    <meta name="robots" content="noindex" />
+    <title>EdU social preview artwork</title>
+  </head>
+  <body class="bg-background text-foreground">
+    <TransformationHero socialPreview />
+  </body>
+</html>
+
+<style is:global>
+  html { font-size: 16px; color-scheme: light; }
+  body { width: 1200px; height: 630px; overflow: hidden; }
+  transformation-hero[data-social-preview] {
+    width: 1200px;
+    height: 630px;
+    padding: 36px 48px;
+    --hero-art-natural-width: 620px;
+    --hero-art-natural-height: 460px;
+  }
+  [data-social-preview] .hero-viewport { position: relative; height: 100%; }
+  [data-social-preview] .hero-brand { height: 52px; }
+  [data-social-preview] .hero-brand img { width: 44px; height: 44px; }
+  [data-social-preview] .hero-brand span { font-size: 27px; }
+  [data-social-preview] .hero-brand::after {
+    content: "edu.benapps.dev";
+    margin-left: auto;
+    color: var(--muted-foreground);
+    font-size: 16px;
+  }
+  [data-social-preview] .hero-github,
+  [data-social-preview] .hero-description,
+  [data-social-preview] .hero-actions { display: none; }
+  [data-social-preview] .transformation-stage {
+    grid-template-columns: 470px 1fr;
+    gap: 18px;
+    padding: 22px 0 0;
+  }
+  [data-social-preview] .hero-headline {
+    height: auto;
+    overflow: visible;
+    font-size: 64px;
+    line-height: 1.04;
+    letter-spacing: -0.065em;
+  }
+  [data-social-preview] .transformation-art { height: 460px; }
+  [data-social-preview] .transformation-canvas { width: 620px; height: 460px; }
+  transformation-hero[data-social-preview] .lecture-cluster {
+    display: block;
+    opacity: 0.4;
+    filter: none;
+    transform: translate(-48px, -25px) rotate(-14deg) scale(0.85);
+  }
+  [data-social-preview] .understanding-paper { opacity: 1; filter: none; transform: none; }
+  [data-social-preview] * { animation: none !important; transition: none !important; }
+</style>

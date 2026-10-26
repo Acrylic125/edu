@@ -5,6 +5,8 @@ function interpolate(progress: number, start: number, end: number) {
 
 class TransformationHero extends HTMLElement {
   connectedCallback() {
+    if (this.hasAttribute("data-social-preview")) return;
+
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const portrait = window.matchMedia("(orientation: portrait)");
     const controller = new AbortController();

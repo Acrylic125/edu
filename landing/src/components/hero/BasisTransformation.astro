@@ -2,6 +2,13 @@
 import { Image } from "astro:assets";
 import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
 
+interface Props {
+  still?: boolean;
+}
+
+const { still = false } = Astro.props;
+const initialPhase = still ? "project" : "input";
+
 const frames = [
   { phase: "input", step: 0, duration: 1500, number: 1, operation: "P⁻¹", title: "Start with v", label: "Standard basis", vector: "v", basis: false, value: "(2, 0)" },
   { phase: "project", step: 0, duration: 4400, number: 1, operation: "P⁻¹", title: "Find both components", label: "v = b₁ − b₂", vector: "v", basis: true, value: "(1, −1)" },
@@ -12,7 +19,7 @@ const frames = [
 ];
 ---
 
-<basis-transformation data-step="0" data-phase="input">
+<basis-transformation data-step="0" data-phase={initialPhase} data-still={still || undefined}>
   <article class="basis-explanation">
     <div class="basis-toolbar">
       <Image src={appIcon} width={27} height={27} alt="" format="webp" />
@@ -43,7 +50,7 @@ const frames = [
   <figure class="basis-figure">
     <div class="basis-animation-heading">
       <div class="basis-current-step">
-        {frames.map((frame) => <span data-basis-heading={frame.phase} data-step={frame.step} data-duration={frame.duration} aria-hidden={frame.phase !== "input"}><span class="basis-phase-number">{frame.number} / 3</span><span class="math">{frame.operation}</span><span class="basis-phase-title">{frame.title}</span></span>)}
+        {frames.map((frame) => <span data-basis-heading={frame.phase} data-step={frame.step} data-duration={frame.duration} aria-hidden={frame.phase !== initialPhase}><span class="basis-phase-number">{frame.number} / 3</span><span class="math">{frame.operation}</span><span class="basis-phase-title">{frame.title}</span></span>)}
       </div>
     </div>
     <div class="basis-scene">
@@ -89,7 +96,7 @@ const frames = [
     </div>
     <figcaption class="basis-readouts">
       {frames.map((frame) => (
-        <div data-basis-readout={frame.phase} data-component={frame.component} aria-hidden={frame.phase !== "input"}>
+        <div data-basis-readout={frame.phase} data-component={frame.component} aria-hidden={frame.phase !== initialPhase}>
           <p class="basis-readout-label">{frame.label}</p>
           {frame.expression && <p class="basis-readout-value math">{frame.expression}</p>}
           {!frame.expression && <p class="basis-readout-value math">{frame.basis ? <span>[<strong>{frame.vector}</strong>]<sub>B</sub></span> : <strong>{frame.vector}</strong>} = {frame.value}</p>}
@@ -103,6 +110,8 @@ const frames = [
 <script>
   class BasisTransformation extends HTMLElement {
     connectedCallback() {
+      if (this.hasAttribute("data-still")) return;
+
       const controller = new AbortController();
       const { signal } = controller;
       const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
