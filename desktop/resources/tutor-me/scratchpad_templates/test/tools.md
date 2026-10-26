@@ -6,11 +6,15 @@ The `scratchpad.state.json` is managed by a StateService which are exposed as to
 Writers that change a question FORCE the thread into that question's `threadWriters`. Include this in `createTest` for each question in the payload, `addQuestion`, and `recordAnswer`. Reads leave `threadWriters` unchanged. `documentMistake` writes a content part and does not change `threadWriters`.
 
 ### Tutor Agent Tools
-`test_getCoveredTopics(topics: TopicId[] | null)` -> Covered topic parts across workspace tutor threads
-  - null selects all workspace topics; a list narrows the scope, and an empty list selects none.
-  - Returns completed parts and partial parts with recorded questions or section-linked teaching content. Activation alone and untouched curriculum are excluded.
-  - Partial parts must be limited to the concepts shown in their teaching evidence. Their planned goals and source references may include material not yet taught.
-  - Read before establishing a test scope; the initial session also includes this evidence. Refresh when the scope expands. Leaves progress unchanged.
+`test_getCoveredTopics(topics: TopicId[] | null, offset?: number, limit?: number)` -> Paginated coverage inventory
+  - For a new test, null selects all granted workspace topics. For an existing test, null uses its saved source topic references. An explicit list selects the requested scope; an empty list selects none.
+  - Returns topic and part IDs, names, planned objectives, coverage status, question and answer counts, and taught block counts. Each page contains up to limit parts. The default limit is 25; the maximum is 100. Follow nextOffset until it is null.
+  - Completed parts and partial parts with recorded questions or section-linked lesson text appear in the inventory. Activation alone and untouched curriculum are excluded.
+  - Planned objectives can include untaught concepts. Read detailed evidence for the selected part before using partial coverage. Leaves progress unchanged.
+`read_topic_evidence(topicId, topicPartId, offset?: number, limit?: number)` -> One part's teaching evidence
+  - Returns the selected part's goals, mistakes, progress across tutor threads, recorded questions and answers, and section-linked content blocks as paginated JSON text in evidence.
+  - offset and limit count characters. The default and maximum limit is 20,000. Follow nextOffset for the required history. The response includes totalCharacters and coverage counts.
+  - Use the inventory to choose relevant parts, then read their evidence. Initial prompts contain focused context; full lesson and answer history is available through this tool.
 `getMistakesForTopic(topics: TopicId[] | null)` -> Mistakes across topics if null
   - Call only when creating questions that evaluates the provided topic(s) OR explicitly asked
 `getMistakes(testId)` -> Mistakes on content parts

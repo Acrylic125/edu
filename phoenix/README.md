@@ -29,7 +29,7 @@ A process interruption after server acceptance but before checkpointing can also
 cause a replay; the original trace and span IDs are preserved.
 
 Use `--dry-run` to validate without uploading, `--state-file` to put checkpoints
-elsewhere, and `--timeout` to change the HTTP timeout. Traces include graph, agent,
+elsewhere, and `--timeout` to change the HTTP timeout. Traces include turn, agent,
 tool, validation, recovery, and commit metadata. They exclude prompts, tool
 arguments, replies, private answer keys, and credentials.
 
@@ -52,9 +52,3 @@ docker compose -p edu-phoenix -f compose.yaml down
 
 The official Phoenix image is pinned by digest. No cloud account or model API key
 is required. See [Phoenix Docker deployment](https://arize.com/docs/phoenix/self-hosting/deployment-options/docker).
-
-## Exporter tests
-
-```sh
-uv run --with opentelemetry-proto python -m unittest discover -s tests
-```

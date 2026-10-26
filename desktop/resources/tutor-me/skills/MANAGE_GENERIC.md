@@ -1,5 +1,5 @@
 ---
-name: manage-test
+name: manage-generic
 description: Manage scratchpads of type, "generic". Extract "type" from `{scratchpad}.scratchpad.state.json`
 ---
 

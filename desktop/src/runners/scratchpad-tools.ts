@@ -85,6 +85,6 @@ export const scratchpadToolDefinitions = [
 export const scratchpadTools: ChatCompletionTool[] = scratchpadToolDefinitions.map(({ name, description, parameters }) => ({ type: "function", function: { name, description, parameters } }))
 
 export function isScratchpadReadTool(name: string) {
-  if (["read_skill", "read_material", "read_scratchpad", "test_getCoveredTopics"].includes(name)) return true
+  if (["read_skill", "read_material", "read_scratchpad", "read_topic_evidence", "test_getCoveredTopics", "list_scratchpads"].includes(name)) return true
   return scratchpadToolDefinitions.some((tool) => tool.name === name && !tool.writer)
 }

@@ -141,12 +141,14 @@ export function NewTopicView({
 
 export function LearningDocumentLayout({
   title,
+  badge,
   materials,
   plan,
   children,
   actions,
 }: {
   title: string
+  badge?: ReactNode
   materials?: ReactNode
   plan?: ReactNode
   children: ReactNode
@@ -159,6 +161,7 @@ export function LearningDocumentLayout({
     >
       <article className="mx-auto w-full max-w-[850px] px-6 pb-24 pt-12 sm:px-12 lg:pt-16">
         <div className="mx-auto max-w-[700px]">
+          {badge && <div className="mb-4">{badge}</div>}
           <h1
             data-document-title
             className="min-w-0 break-words text-3xl font-semibold leading-tight tracking-tight sm:text-[2.5rem]"

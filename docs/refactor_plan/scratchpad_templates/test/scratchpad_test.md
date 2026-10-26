@@ -1,7 +1,0 @@
-# {SCRATCHPAD_NAME}
-
-## {QUESTION_TITLE}
-{qUESTION}
-
-### You answered
-{ANSWER}

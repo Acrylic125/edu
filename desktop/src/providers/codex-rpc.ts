@@ -51,7 +51,10 @@ export class CodexAppServer {
         "--listen",
         "stdio://",
         "-c",
-        'cli_auth_credentials_store="keyring"',
+        // Each spawned runtime must avoid interactive OS credential prompts.
+        'cli_auth_credentials_store="file"',
+        "-c",
+        'mcp_oauth_credentials_store="file"',
         "-c",
         'web_search="live"',
         "-c",

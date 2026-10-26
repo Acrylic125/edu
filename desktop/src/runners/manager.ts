@@ -9,23 +9,29 @@ import {
   type RunnerSchema,
   type WorkerJob,
   CreateTopicSchema,
+  WorkerJobSchema,
+  RetrySchema,
 } from "../shared/contracts"
 import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions"
 import { newTopic, WorkspaceRepository } from "../main/workspace"
 import { generateTopicTitle } from "./title"
 import { TurnTrace } from "./trace"
 import { TurnTelemetry } from "./telemetry"
-import { ScratchpadTransactionSchema } from "../shared/scratchpad-state"
-import { applyScratchpadMutation } from "../main/state-service"
+import { dispatchWorkflowRequest, TutorWorkflowRepository } from "../main/tutor-workflow"
+import { WorkflowRequestSchema } from "../shared/tutor-workflow"
+import { selectTutorTopicIds } from "./tutor-evidence"
 
 export class RunnerManager {
-  private codexProcesses = new Map<string, number>()
+  private codexProcesses = new Map<string, Map<string, number>>()
   private processes = new Map<string, Electron.UtilityProcess>()
   private runtime = new Map<string, z.infer<typeof RuntimeSchema>>()
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private locks = new Set<string>()
   private topicLocks = new Set<string>()
   private committing = new Set<string>()
+  private workflowRequests = new Map<string, Set<string>>()
+  private failures = new Map<string, Promise<void>>()
+  private workflows: TutorWorkflowRepository
   private traces = new Map<string, { chatId: string; trace: TurnTrace; telemetry: TurnTelemetry; startedAt: number }>()
 
   constructor(
@@ -37,10 +43,13 @@ export class RunnerManager {
     ) => Promise<Pick<WorkerJob, "apiKey" | "codex" | "cli">>,
     private notify: () => void,
     private phoenixExporterInstalled = true,
-  ) {}
+    private notifyRuntime: () => void = notify,
+  ) {
+    this.workflows = new TutorWorkflowRepository(repository)
+  }
 
   get statuses() {
-    return this.repository.stateSnapshot.runners.flatMap((runner) => {
+    return this.repository.publicRunners.flatMap((runner) => {
       const executions = [...this.runtime.entries()].filter(([, runtime]) => runtime.runnerId === runner.id)
       if (!executions.length) return [{
         runnerId: runner.id,
@@ -123,6 +132,10 @@ export class RunnerManager {
       throw new Error(
         "The runner is saving this turn. Try stopping again in a moment.",
       )
+    if (this.runtime.get(id)?.status === "running") {
+      this.fail(id, "The turn was stopped. Retry to continue its saved workflow.")
+      return
+    }
     const child = this.processes.get(id)
     this.processes.delete(id)
     this.clearTimer(id)
@@ -165,6 +178,11 @@ export class RunnerManager {
 
   async send(input: z.infer<typeof SendSchema>) {
     const chat = this.repository.chat(input.chatId)
+    const runtime = this.runtime.get(chat.id)
+    let failedTurnId = chat.failedTurnId
+    if (runtime?.status === "error" && runtime.turnId) failedTurnId = runtime.turnId
+    if (/^\s*retry[.!]?\s*$/i.test(input.content) && failedTurnId)
+      return this.retry({ chatId: chat.id, turnId: failedTurnId })
     const id = chat.id
     const runnerId = chat.runnerId
     if (this.runtime.get(id)?.status === "running" || this.locks.has(id))
@@ -270,10 +288,10 @@ export class RunnerManager {
           this.fail(id, "The runner timed out. Retry with a smaller request.")
         }, 5 * 60_000),
       )
-      child.postMessage({
+      const job = WorkerJobSchema.parse({
         telemetry: { directory: telemetryDirectory, parent: telemetry.context },
         chat: { ...turnWorkspace.chats.find((item) => item.id === chat.id), providerSession: chat.providerSession },
-        topics: this.contextTopics(chat.id, turnWorkspace).map((topic) => ({
+        topics: this.contextTopics(chat.id, turnWorkspace, input).map((topic) => ({
           ...topic,
           assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
         })),
@@ -281,6 +299,7 @@ export class RunnerManager {
         ...connection,
         skillDirectory: this.skillDirectory,
         assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
+        sourceCacheDirectory: join(this.repository.directory, "source-cache"),
         confirmTopicId: input.confirmTopicId,
         openedTopicId: input.openedTopicId,
         workspaceTopics: turnWorkspace.topics.map((topic) => ({
@@ -288,6 +307,13 @@ export class RunnerManager {
           assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
         })),
       })
+      const turn = await this.workflows.start(job)
+      const runtime = this.runtime.get(id)
+      if (runtime) runtime.turnId = turn.turnId
+      child.postMessage({ ...job, workflow: {
+        turnId: turn.turnId, attemptId: turn.attemptId, resume: false,
+        checkpointPath: join(this.repository.directory, "chats", chat.id, "workflows", `${turn.turnId}.sqlite`),
+      } })
       this.notify()
     } catch (error) {
       if (started) this.fail(id, error instanceof Error ? error.message : "Could not start this lesson.")
@@ -297,16 +323,50 @@ export class RunnerManager {
     }
   }
 
-  // Tags persist for the whole chat; the most recently tagged topics stay in context within the prompt budget.
-  private contextTopics(chatId: string, { chats, topics } = this.repository.stateSnapshot) {
-    const ids = [
-      ...new Set(
-        chats
-          .find((chat) => chat.id === chatId)
-          ?.messages.flatMap((message) => message.topicIds)
-          .reverse(),
-      ),
-    ].slice(0, 8)
+  async retry(raw: z.infer<typeof RetrySchema>) {
+    const input = RetrySchema.parse(raw)
+    const id = input.chatId
+    if (this.runtime.get(id)?.status === "running" || this.locks.has(id)) throw new Error("This chat is already working.")
+    this.locks.add(id)
+    try {
+      await this.failures.get(id)
+      const saved = this.workflows.get(id, input.turnId)
+      if (saved.receipt) {
+        this.workflows.complete(id, input.turnId)
+        this.runtime.set(id, { runnerId: saved.source.runner.id, chatId: id, status: "ready", activity: "Ready to learn" })
+        this.notify()
+        return
+      }
+      const connection = await this.getConnection(saved.source.runner)
+      const turn = await this.workflows.retry(id, input.turnId)
+      this.start(turn.source.runner.id, id)
+      const child = this.processes.get(id)
+      if (!child) throw new Error("Runner did not start.")
+      const trace = new TurnTrace(join(this.repository.directory, "chats", id, "diagnostics"))
+      const directory = join(this.repository.directory, "phoenix")
+      const telemetry = new TurnTelemetry({ directory, name: "tutor.retry", attributes: { "session.id": id, "edu.turn.id": turn.turnId } })
+      this.traces.set(id, { chatId: id, trace, telemetry, startedAt: performance.now() })
+      trace.record("harness.resume", { chatId: id, turnId: turn.turnId })
+      await trace.flush()
+      this.runtime.set(id, { runnerId: turn.source.runner.id, chatId: id, turnId: turn.turnId, status: "running", activity: "Resuming your lesson", pid: child.pid })
+      this.timers.set(id, setTimeout(() => { if (!this.committing.has(id)) this.fail(id, "The runner timed out. Retry to continue the saved workflow.") }, 5 * 60_000))
+      child.postMessage({ ...turn.source, ...connection, telemetry: { directory, parent: telemetry.context }, workflow: {
+        turnId: turn.turnId, attemptId: turn.attemptId, resume: true,
+        checkpointPath: join(this.repository.directory, "chats", id, "workflows", `${turn.turnId}.sqlite`),
+      } })
+      this.notify()
+    } catch (error) {
+      if (this.runtime.get(id)?.status === "running") this.fail(id, error instanceof Error ? error.message : "Could not resume the turn.")
+      throw error
+    } finally {
+      this.locks.delete(id)
+    }
+  }
+
+  private contextTopics(chatId: string, { chats, topics } = this.repository.stateSnapshot, input?: Pick<z.infer<typeof SendSchema>, "openedTopicId" | "confirmTopicId">) {
+    const chat = chats.find((chat) => chat.id === chatId)
+    if (!chat) return []
+    const ids = selectTutorTopicIds(chat, input?.openedTopicId, input?.confirmTopicId)
     return topics.filter((topic) => ids.includes(topic.id))
   }
 
@@ -318,27 +378,59 @@ export class RunnerManager {
     if (this.processes.get(id) !== child) return
     const event = WorkerEventSchema.parse(payload)
     if (event.type === "codex_process") {
-      if (event.pid) this.codexProcesses.set(id, event.pid)
-      else this.codexProcesses.delete(id)
+      const processes = this.codexProcesses.get(id) ?? new Map<string, number>()
+      const invocation = event.invocationId ?? "title"
+      if (event.pid) processes.set(invocation, event.pid)
+      else processes.delete(invocation)
+      this.codexProcesses.set(id, processes)
+      const runtime = this.runtime.get(id)
+      if (event.pid && event.invocationId && runtime?.chatId && runtime.turnId)
+        await this.workflows.nativeStarted(runtime.chatId, runtime.turnId, event.invocationId, event.pid)
       return
     }
     const runtime = this.runtime.get(id)
     if (!runtime || runtime.status !== "running" || !runtime.chatId) return
     const chatId = runtime.chatId
     const trace = this.traces.get(id)?.trace
+    if (event.type === "workflow_request") {
+      const pending = this.workflowRequests.get(id) ?? new Set<string>()
+      pending.add(event.requestId)
+      this.workflowRequests.set(id, pending)
+      this.committing.add(id)
+      try {
+        const request = WorkflowRequestSchema.parse(event.request)
+        if (request.chatId !== chatId || request.turnId !== runtime.turnId) throw new Error("The request does not belong to this active turn.")
+        const turn = this.workflows.get(chatId, request.turnId)
+        if (turn.attemptId !== event.attemptId) throw new Error("This workflow attempt has been superseded.")
+        const diagnostic = this.traces.get(id)
+        let durationMs: number | undefined
+        if ((request.operation === "saveReply" || request.operation === "presentPlan" || request.operation === "presentRoleReply") && diagnostic) {
+          durationMs = Math.max(0, performance.now() - diagnostic.startedAt)
+        }
+        const result = await dispatchWorkflowRequest(this.workflows, request, durationMs)
+        child.postMessage({ type: "workflow_response", requestId: event.requestId, result: z.json().parse(JSON.parse(JSON.stringify(result ?? null))) })
+        if (request.operation === "commitBatch" || request.operation === "saveReply" || request.operation === "presentPlan" || request.operation === "presentRoleReply") this.notify()
+      } catch (error) {
+        child.postMessage({ type: "workflow_response", requestId: event.requestId, error: error instanceof Error ? error.message : "Workflow request failed." })
+      } finally {
+        pending.delete(event.requestId)
+        if (!pending.size) this.committing.delete(id)
+      }
+      return
+    }
     if (event.type === "trace") {
       trace?.record(event.event, event.details)
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "reply") {
       runtime.reply = event.text
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "activity") {
       runtime.activity = event.activity
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "title") {
@@ -359,66 +451,14 @@ export class RunnerManager {
       this.fail(id, event.error)
       return
     }
-    const turn = this.traces.get(id)
-    const durationMs = turn ? Math.max(0, performance.now() - turn.startedAt) : undefined
-    this.committing.add(id)
-    try {
-      trace?.record("harness.commit_started", {
-        replyCharacters: event.reply.length,
-        phase: event.learning.phase,
-        topicMutations: event.topicMutations.length,
-      })
-      const context = this.contextTopics(chatId).filter((topic) => !topic.archived).map((topic) => topic.id)
-      const commit = () => this.repository.mutate((workspace) => {
-        const writable = new Set(context)
-        for (const mutation of ScratchpadTransactionSchema.parse({ operations: event.topicMutations }).operations) {
-          if (["createTopic", "createTest", "createGeneric"].includes(mutation.type)) {
-            writable.add(mutation.topicId)
-          } else if (!writable.has(mutation.topicId)) {
-            throw new Error("Only tagged or newly created topics can be written.")
-          }
-          applyScratchpadMutation(workspace, chatId, mutation)
-        }
-        if (event.topicUpdates.length) throw new Error("Legacy topic writes are no longer supported. Retry with structured topic tools.")
-        const chat = workspace.chats.find((item) => item.id === chatId)
-        if (!chat) throw new Error("Chat not found.")
-        chat.learning = event.learning
-        if (event.topicMutations.some((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)))
-          chat.scratchpadRequested = false
-        chat.topicHandles = [...new Set([...chat.topicHandles, ...event.topicMutations
-          .filter((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)).map((mutation) => mutation.topicId)])]
-        chat.providerSession = event.providerSession
-        chat.messages.push({
-          id: randomUUID(),
-          role: "assistant",
-          content: event.reply,
-          ...(event.learning.responseQuestion && { responseQuestion: event.learning.responseQuestion }),
-          durationMs,
-          createdAt: new Date().toISOString(),
-          topicIds: event.topicMutations.filter((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type)).map((mutation) => mutation.topicId),
-        })
-
-      })
-      const telemetry = this.traces.get(id)?.telemetry
-      if (telemetry) await telemetry.span("harness.commit", "CHAIN", commit)
-      else await commit()
-      trace?.record("harness.committed", {
-        chatId,
-        topicMutations: event.topicMutations.length,
-      })
-      await this.finishTelemetry(id, false)
-      await trace?.flush()
-      this.runtime.set(id, {
-        runnerId: runtime.runnerId,
-        chatId,
-        status: "ready",
-        activity: "Ready to learn",
-        pid: child.pid,
-      })
-      this.notify()
-    } finally {
-      this.committing.delete(id)
-    }
+    if (event.type !== "workflow_complete" || event.turnId !== runtime.turnId)
+      throw new Error("A verified workflow completion is required.")
+    const completion = this.workflows.complete(chatId, event.turnId)
+    trace?.record("harness.committed", { chatId, turnId: event.turnId, receiptId: completion.receipt.receiptId })
+    await this.finishTelemetry(id, false)
+    await trace?.flush()
+    this.runtime.set(id, { runnerId: runtime.runnerId, chatId, status: "ready", activity: "Ready to learn", pid: child.pid })
+    this.notify()
   }
 
   private fail(id: string, error: string) {
@@ -428,6 +468,13 @@ export class RunnerManager {
     this.stopCodex(id)
     child?.kill()
     const trace = this.traces.get(id)?.trace
+    const runtime = this.runtime.get(id)
+    if (runtime?.chatId && runtime.turnId) {
+      const failure = this.workflows.fail(runtime.chatId, runtime.turnId, error).then(() => { this.notify() }).catch((issue) => {
+        trace?.record("workflow.failure_save_failed", { error: issue instanceof Error ? issue.message : "Could not save failed turn." })
+      })
+      this.failures.set(id, failure)
+    }
     trace?.record("harness.failed", { error })
     void this.finishTelemetry(id, true)
     void trace?.flush().catch(() => {
@@ -439,6 +486,7 @@ export class RunnerManager {
     this.runtime.set(id, {
       runnerId: this.runtime.get(id)?.runnerId ?? id,
       chatId: this.runtime.get(id)?.chatId,
+      turnId: runtime?.turnId,
       status: "error",
       activity: "Needs attention",
       error,
@@ -458,9 +506,9 @@ export class RunnerManager {
   }
 
   private stopCodex(id: string) {
-    const pid = this.codexProcesses.get(id)
+    const processes = this.codexProcesses.get(id)
     this.codexProcesses.delete(id)
-    if (pid) {
+    for (const pid of processes?.values() ?? []) {
       try {
         process.kill(pid)
       } catch {}
@@ -482,5 +530,6 @@ export class RunnerManager {
       ),
     )
     await Promise.all([...this.traces.keys()].map((id) => this.finishTelemetry(id, true)))
+    await Promise.all(this.failures.values())
   }
 }

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { DocumentIndexSchema } from "./document-index"
 import { TopicPartSchema } from "./topic-state"
 import { ScratchpadStateSchema, ScratchpadMutationSchema } from "./scratchpad-state"
 
@@ -46,6 +47,10 @@ export const ProviderStatusSchema = z.object({
   error: z.string().optional(),
   models: z.array(ProviderModelSchema),
   settings: ProviderSettingsSchema.optional(),
+  runtime: z.object({
+    executable: z.string(),
+    source: z.enum(["installed", "bundled", "custom"]),
+  }).optional(),
 })
 export const CodexConnectionSchema = z.object({
   executable: z.string(),
@@ -91,6 +96,7 @@ export const MaterialSchema = z.object({
   kind: z.enum(["text", "pdf", "image"]).default("text"),
   text: z.string().max(300_000),
   pages: z.array(z.string()).max(1000),
+  documentIndex: DocumentIndexSchema.optional(),
 })
 export const LearningStateSchema = z
   .object({
@@ -119,7 +125,7 @@ export const LearningStateSchema = z
   })
   .superRefine((state, ctx) => {
     if (
-      ["awaiting_answer", "awaiting_clarification", "contested"].includes(state.phase) &&
+      (["awaiting_answer", "contested"].includes(state.phase) || (state.phase === "awaiting_clarification" && state.pendingCheck)) &&
       (!state.pendingQuestion || !state.privateAnswerKey)
     ) {
       ctx.addIssue({
@@ -146,6 +152,7 @@ export const ProviderSessionSchema = z.object({
   home: z.string().min(1),
   executable: z.string().min(1),
   toolVersion: z.number().int().positive(),
+  toolSignature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   status: z.enum(["ready", "pending"]),
 })
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
@@ -154,6 +161,9 @@ export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true
   messages: z.array(MessageSchema),
   topicHandles: z.array(IdSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
+  activeTurnId: IdSchema.optional(),
+  failedTurnId: IdSchema.optional(),
+  turnError: z.string().optional(),
 })
 export const WorkspaceSchema = z.object({
   version: z.literal(2),
@@ -195,6 +205,7 @@ export const RuntimeSchema = z.object({
   runnerId: IdSchema,
   status: z.enum(["stopped", "ready", "running", "error"]),
   chatId: IdSchema.optional(),
+  turnId: IdSchema.optional(),
   activity: z.string(),
   reply: z.string().max(200_000).optional(),
   error: z.string().optional(),
@@ -233,6 +244,7 @@ export const SnapshotSchema = z.object({
   connected: z.boolean(),
   providers: z.array(ProviderStatusSchema),
 })
+export const RuntimeUpdateSchema = SnapshotSchema.pick({ runtime: true })
 export const CreateTopicSchema = z.object({
   title: z.string().trim().min(1).max(30_000),
   runnerId: IdSchema.optional(),
@@ -250,6 +262,7 @@ export const MaterialOwnerSchema = z.object({
   kind: z.enum(["topic", "chat"]),
   id: IdSchema,
 })
+export const RetrySchema = z.object({ chatId: IdSchema, turnId: IdSchema }).strict()
 export const MaterialDraftSchema = MaterialSchema.pick({ id: true, name: true })
 export const MaterialDraftIdsSchema = z.array(IdSchema).max(12)
 export const DroppedMaterialsSchema = z.object({
@@ -277,6 +290,7 @@ export const TopicUpdateSchema = z.object({
   expected: LearningStateSchema.optional(),
 })
 export const WorkerJobSchema = z.object({
+  workflow: z.object({ turnId: IdSchema, attemptId: IdSchema, resume: z.boolean(), checkpointPath: z.string() }).optional(),
   telemetry: z.object({
     directory: z.string().min(1),
     parent: z.object({
@@ -299,10 +313,21 @@ export const WorkerJobSchema = z.object({
   cli: CliConnectionSchema.optional(),
   skillDirectory: z.string(),
   assetDirectory: z.string(),
+  sourceCacheDirectory: z.string().optional(),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
 })
+export const WorkerResultSchema = z.object({
+  reply: z.string().min(1).max(200_000),
+  learning: LearningStateSchema,
+  topicUpdates: z.array(TopicUpdateSchema).default([]),
+  topicMutations: z.array(ScratchpadMutationSchema).default([]),
+  providerSession: ProviderSessionSchema.optional(),
+})
+
 export const WorkerEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("workflow_request"), requestId: IdSchema, attemptId: IdSchema, request: z.json() }),
+  z.object({ type: z.literal("workflow_complete"), turnId: IdSchema }),
   z.object({ type: z.literal("reply"), text: z.string().max(200_000) }),
   z.object({ type: z.literal("title"), title: z.string().trim().min(1).max(150) }),
   z.object({ type: z.literal("activity"), activity: z.string() }),
@@ -314,21 +339,16 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("codex_process"),
     pid: z.number().int().positive().nullable(),
+    invocationId: z.string().optional(),
   }),
-  z.object({
-    type: z.literal("result"),
-    reply: z.string().min(1).max(200_000),
-    learning: LearningStateSchema,
-    topicUpdates: z.array(TopicUpdateSchema).default([]),
-    topicMutations: z.array(ScratchpadMutationSchema).default([]),
-    providerSession: ProviderSessionSchema.optional(),
-  }),
+  WorkerResultSchema.extend({ type: z.literal("result") }),
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
 export const Channel = {
   copyText: "prune:copy-text",
   snapshot: "prune:snapshot",
   update: "prune:update",
+  runtimeUpdate: "prune:runtime-update",
   connect: "prune:connect",
   disconnect: "prune:disconnect",
   cancelConnection: "prune:cancel-connection",
@@ -343,6 +363,7 @@ export const Channel = {
   createChat: "prune:create-chat",
   archiveTopic: "prune:archive-topic",
   send: "prune:send",
+  retry: "prune:retry",
   importMaterials: "prune:import-materials",
   selectMaterials: "prune:select-materials",
   dropMaterials: "prune:drop-materials",
@@ -364,6 +385,7 @@ export type DesktopBridge = {
   copyText: (text: string) => Promise<void>
   snapshot: () => Promise<Snapshot>
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void
+  subscribeRuntime: (listener: (update: z.infer<typeof RuntimeUpdateSchema>) => void) => () => void
   connect: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
   disconnect: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
   cancelConnection: (
@@ -383,6 +405,7 @@ export type DesktopBridge = {
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
   archiveTopic: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
+  retry: (input: z.infer<typeof RetrySchema>) => Promise<void>
   selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   pasteMaterials: (images: z.infer<typeof PastedImageSchema>[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>

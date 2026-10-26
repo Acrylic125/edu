@@ -150,7 +150,7 @@ export function App() {
   )
   const chatRunnerBusy = runtime?.status === "running"
   const chatRunning = chatRunnerBusy && !!chat && runtime.chatId === chat.id
-  const chatError = chat && runtime?.chatId === chat.id ? runtime.error : undefined
+  const chatError = runtime?.error ?? chat?.turnError
   const newModelConnected = snapshot.providers.some(
     (provider) => provider.id === newModel.provider && provider.connected,
   )
@@ -855,11 +855,9 @@ export function App() {
                   disabled={busy || !chatModelConnected}
                   onClick={() => {
                     void perform(() =>
-                      desktop().send({
+                      desktop().retry({
                         chatId: chat.id,
-                        content:
-                          "Retry my last request using the saved handoff. Do not skip a pending question.",
-                        openedTopicId: topic?.id,
+                        turnId: runtime?.turnId ?? chat.failedTurnId ?? "",
                       }),
                     )
                   }}
@@ -927,6 +925,7 @@ export function App() {
   } else {
     const documentMaterials = topicSourceMaterials(topic, snapshot.chats)
     const topicState = topic.state?.type === "topic" ? topic.state : undefined
+    const terminology = topicState?.document?.blocks.filter((block) => block.type === "term") ?? []
     const thread = topicState?.threadTutors.find((thread) => thread.id === chat?.id)
     const currentPart = topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
@@ -937,10 +936,7 @@ export function App() {
         chatLabel="Tutor chat"
         status={chatRunning ? "Working" : "Ready to learn"}
         documentActions={
-          <div className="absolute inset-x-4 top-4 z-10 flex items-center justify-between gap-2">
-            <Badge variant={topic.state?.type ?? "topic"}>
-              {{ topic: "Topic", test: "Test", generic: "Generic" }[topic.state?.type ?? "topic"]}
-            </Badge>
+          <div className="absolute right-4 top-4 z-10">
             <button
               className="rounded-full p-2 text-muted-foreground hover:bg-accent"
               aria-label="Open workspace in Finder"
@@ -956,6 +952,11 @@ export function App() {
         body={
           <LearningDocumentLayout
             title={topic.title}
+            badge={
+              <Badge variant={topic.state?.type ?? "topic"}>
+                {{ topic: "Topic", test: "Test", generic: "Generic" }[topic.state?.type ?? "topic"]}
+              </Badge>
+            }
             materials={
               topic.materials.length > 0
                 ? topic.materials.map((material) => (
@@ -989,7 +990,7 @@ export function App() {
               )
             }
           >
-            <StudyMarkdown text={notes.before} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            <StudyMarkdown text={notes.before} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             {notes.directory && (
               <TopicDirectory
                 heading={notes.directory.heading}
@@ -1003,7 +1004,7 @@ export function App() {
                 onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
               />
             )}
-            {notes.after.trim() && <StudyMarkdown text={notes.after} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
+            {notes.after.trim() && <StudyMarkdown text={notes.after} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
           </LearningDocumentLayout>
         }
         chat={chatPane}

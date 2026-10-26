@@ -1,4 +1,5 @@
 import { messageText } from "../shared/message-text"
+import { createHash } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { z } from "zod"
@@ -6,7 +7,7 @@ import { type WorkerJob, type Diagnostic, ProviderSessionSchema } from "../share
 import { CodexAppServer } from "../providers/codex-rpc"
 import { readCodexModels } from "../providers/codex"
 import { createTutorSession } from "./tutor"
-import { runAgentGraph } from "./graph"
+import { runAgentTurn } from "./agent-turn"
 import { TutorPublicationError } from "./publication-error"
 import type { TurnTelemetry } from "./telemetry"
 
@@ -39,6 +40,7 @@ export async function runCodexTutorTurn(
   diagnostic: Diagnostic = () => {},
   telemetry?: TurnTelemetry,
   onReply: (text: string) => void = () => {},
+  preparedSession?: Awaited<ReturnType<typeof createTutorSession>>,
 ) {
   if (!job.codex)
     throw new Error(
@@ -46,8 +48,9 @@ export async function runCodexTutorTurn(
     )
   const cwd = dirname(job.assetDirectory)
   await mkdir(cwd, { recursive: true, mode: 0o700 })
-  const session = await createTutorSession(job, activity, telemetry)
+  const session = preparedSession ?? await createTutorSession(job, activity, telemetry)
   const instructions = `${session.instructions}
+Code-mode tool calls: use text(await tools.tool_name(...)) to inspect each tool result and repair any rejected call. For completion tools, submit the result and end the invocation.
 Codex code-mode image handling: read_material returns a string containing the source text and inline image data URLs. Emit those URLs with image() to inspect the pixels; text() alone only prints encoded bytes. Use this pattern for a visual read:
 const source = await tools.read_material({id: materialId, firstPage: 1, lastPage: 1, includeVisuals: true});
 const imagePattern = /data:image\\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+/g;
@@ -95,10 +98,13 @@ Screenshots attached to the current learner message are also supplied directly a
         }
       }),
     }
+    const toolSignature = createHash("sha256").update(JSON.stringify(session.tools)).digest("hex")
     const previous = job.chat.providerSession
     const canResume =
+      (!preparedSession || preparedSession.resumeProviderSession) &&
       previous?.status === "ready" &&
-      previous.toolVersion === 23 &&
+      previous.toolVersion === 24 &&
+      previous.toolSignature === toolSignature &&
       previous.home === job.codex.home &&
       previous.executable === job.codex.executable
     const responseSchema = z.object({ thread: z.object({ id: z.string() }) })
@@ -137,7 +143,8 @@ Screenshots attached to the current learner message are also supplied directly a
       threadId,
       home: job.codex.home,
       executable: job.codex.executable,
-      toolVersion: 23,
+      toolVersion: 24,
+      toolSignature,
       status: "ready",
     })
     diagnostic("codex.session", { threadId, resumed })
@@ -164,6 +171,7 @@ Screenshots attached to the current learner message are also supplied directly a
         () => {},
       )
       const output = await operation
+      onReply(session.previewReply(reply))
       diagnostic("tool.result", {
         tool: call.tool,
         success: output.success,
@@ -228,7 +236,7 @@ Screenshots attached to the current learner message are also supplied directly a
         if (part.type === "image_url") imageInput.push({ type: "image", url: part.image_url.url, detail: "high" })
       }
     }
-    return await runAgentGraph({
+    return await runAgentTurn({
       limit: 3,
       diagnostic,
       telemetry,
@@ -262,8 +270,17 @@ Screenshots attached to the current learner message are also supplied directly a
             },
             z.object({}).passthrough(),
           )
-          const event = await completion.promise
+          const outcome = await Promise.race([
+            completion.promise.then((event) => ({ type: "completed" as const, event })),
+            session.completion.then(() => ({ type: "yield" as const })),
+          ])
           await sequence
+          if (outcome.type === "yield") {
+            if (!session.saved) throw new Error("The invocation yielded without a validated result.")
+            diagnostic("turn.yielded", { attempt, saved: true })
+            return
+          }
+          const event = outcome.event
           diagnostic("turn.completed", {
             attempt,
             status: event.turn.status,
@@ -276,7 +293,6 @@ Screenshots attached to the current learner message are also supplied directly a
               event.turn.error?.message ??
                 "Codex was interrupted. Retry from your saved notes.",
             )
-          return "validate"
         } finally {
           completion.dispose()
         }

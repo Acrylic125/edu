@@ -7,11 +7,34 @@ import TransformationHero from "../components/hero/TransformationHero.astro";
 import "../styles.css";
 
 const favicon = await getImage({ src: appIcon, width: 64, height: 64, format: "png" });
-const title = "EdU — Your personal AI tutor";
-const description = "EdU is your personal AI tutor. Learn from your slides, practise what you know, and keep revision notes as you go.";
-const imageAlt = "EdU — Your personal AI tutor, with a stack of blue, green, and yellow books.";
+const title = "EdU, Reframed to understanding";
+const description = "Turn your lecture slides into visual explanations with EdU. Work through difficult concepts with an AI tutor, then check your understanding with practice questions.";
+const imageAlt = "EdU. Reframed to understanding. The landing page's linear algebra explanation and vector diagram.";
 const canonicalUrl = new URL("/", Astro.site);
-const imageUrl = new URL("/social-preview.png", Astro.site);
+const imageUrl = new URL("/social-preview-hero.png", Astro.site);
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${canonicalUrl}#website`,
+      name: "EdU",
+      url: canonicalUrl.href,
+      description,
+      inLanguage: "en-GB",
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${canonicalUrl}#app`,
+      name: "EdU",
+      url: canonicalUrl.href,
+      description,
+      applicationCategory: "EducationalApplication",
+      operatingSystem: "macOS",
+      image: imageUrl.href,
+    },
+  ],
+};
 ---
 
 <!doctype html>
@@ -20,6 +43,7 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#f4f4f1" />
     <link rel="canonical" href={canonicalUrl} />
     <meta property="og:title" content={title} />
@@ -29,6 +53,7 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
     <meta property="og:site_name" content="EdU" />
     <meta property="og:locale" content="en_GB" />
     <meta property="og:image" content={imageUrl} />
+    <meta property="og:image:secure_url" content={imageUrl} />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -40,6 +65,7 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
     <meta name="twitter:image:alt" content={imageAlt} />
     <link rel="icon" type="image/png" href={favicon.src} />
     <title>{title}</title>
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
     <script is:inline>
       const appearance = window.matchMedia("(prefers-color-scheme: dark)");
       function updateAppearance() {
@@ -61,17 +87,18 @@ const imageUrl = new URL("/social-preview.png", Astro.site);
     </div>
     <script is:inline>
       async function detectDownloadPlatform() {
-        let isMacArm = false;
+        const agent = navigator.userAgentData;
+        const isMac = (agent?.platform === "macOS" || /Macintosh|Mac OS X/i.test(navigator.userAgent)) && navigator.maxTouchPoints < 2;
+        let isMacArm = isMac;
         try {
-          const agent = navigator.userAgentData;
-          if (agent?.getHighEntropyValues) {
+          if (isMac && agent?.getHighEntropyValues) {
             const platform = await agent.getHighEntropyValues(["architecture"]);
-            isMacArm = agent.platform === "macOS" && /^(arm|arm64|aarch64)$/i.test(platform.architecture);
-          } else {
-            isMacArm = /Macintosh|Mac OS X/i.test(navigator.userAgent) && /arm64|aarch64/i.test(navigator.userAgent) && navigator.maxTouchPoints < 2;
+            if (platform.architecture) {
+              isMacArm = /^(arm|arm64|aarch64)$/i.test(platform.architecture);
+            }
           }
         } catch {
-          // Browsers may deny architecture hints; keep the availability message in that case.
+          // Architecture hints can be unavailable or denied on Apple Silicon browsers.
         }
         document.querySelectorAll("[data-platform-download]").forEach((button) => { button.hidden = !isMacArm; });
         document.querySelectorAll("[data-platform-availability]").forEach((label) => { label.hidden = isMacArm; });

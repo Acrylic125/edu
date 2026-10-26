@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import { ChatSchema, MessageSchema, WorkspaceSchema, type Workspace } from "../shared/contracts"
 import { StoredWorkspaceSchema } from "./workspace-migrations"
+import { ConversationSummarySchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
 
 const ChatStateSchema = ChatSchema.omit({ messages: true })
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true })
@@ -19,6 +20,7 @@ export class ChatDatabase {
       if (version > 1) throw new Error("This workspace needs a newer version of EdU.")
       database.exec(`
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
+        CREATE TABLE IF NOT EXISTS tutor_workflows (id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
         CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
         CREATE TABLE IF NOT EXISTS messages (
           id TEXT PRIMARY KEY,
@@ -73,7 +75,7 @@ export class ChatDatabase {
     }
   }
 
-  save(state: Workspace) {
+  save(state: Workspace, workflow?: z.infer<typeof WorkflowRecordSchema>) {
     const validated = WorkspaceSchema.parse(state)
     const database = this.open()
     try {
@@ -128,6 +130,8 @@ export class ChatDatabase {
       }
       metadata.run("removed_files", JSON.stringify(removedFiles))
       metadata.run("files_pending", "true")
+      if (workflow) database.prepare("INSERT INTO tutor_workflows(id, payload) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload")
+        .run(workflow.turnId, JSON.stringify(WorkflowRecordSchema.parse(workflow)))
       database.exec("COMMIT")
     } catch (error) {
       database.exec("ROLLBACK")
@@ -144,6 +148,45 @@ export class ChatDatabase {
       database.prepare("UPDATE metadata SET payload = 'false' WHERE key = 'files_pending'").run()
       database.prepare("UPDATE metadata SET payload = ? WHERE key = 'removed_files'").run(JSON.stringify({ topics: [], chats: [] }))
       database.exec("COMMIT")
+    } finally {
+      database.close()
+    }
+  }
+
+  workflow(turnId: string) {
+    const database = this.open()
+    try {
+      const row = database.prepare("SELECT payload FROM tutor_workflows WHERE id = ?").get(turnId)
+      if (!row) throw new Error("Turn not found.")
+      return WorkflowRecordSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload))
+    } finally {
+      database.close()
+    }
+  }
+
+  saveWorkflow(input: z.infer<typeof WorkflowRecordSchema>, summary?: z.infer<typeof ConversationSummarySchema>) {
+    const turn = WorkflowRecordSchema.parse(input)
+    const database = this.open()
+    try {
+      database.exec("BEGIN IMMEDIATE")
+      database.prepare("INSERT INTO tutor_workflows(id, payload) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload")
+        .run(turn.turnId, JSON.stringify(turn))
+      if (summary) database.prepare("INSERT INTO metadata(key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload")
+        .run(`summary:${turn.chatId}`, JSON.stringify(ConversationSummarySchema.parse(summary)))
+      database.exec("COMMIT")
+    } catch (error) {
+      database.exec("ROLLBACK")
+      throw error
+    } finally {
+      database.close()
+    }
+  }
+
+  conversationSummary(chatId: string) {
+    const database = this.open()
+    try {
+      const row = database.prepare("SELECT payload FROM metadata WHERE key = ?").get(`summary:${chatId}`)
+      if (row) return ConversationSummarySchema.parse(JSON.parse(JsonRowSchema.parse(row).payload))
     } finally {
       database.close()
     }

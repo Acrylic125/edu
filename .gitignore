@@ -8,3 +8,4 @@ __pycache__/
 .phoenix-export.sqlite3*
 node_modules/
 *.tsbuildinfo
+desktop/.test-out/

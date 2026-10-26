@@ -1,6 +1,4 @@
-import type { WorkerJob } from "../shared/contracts"
-
-export function materialSections(material: WorkerJob["chat"]["materials"][number]) {
+export function materialSections(material: { pages: string[] }) {
   const pages = material.pages.map((page, index) => {
     const headings = page.split("\n").flatMap((line) => {
       const match = /^([1-9]\d{0,2}\.|[1-9]\d{0,2}(?:\.\d{1,3})+\.?)\s+(.+)/.exec(line.trim())

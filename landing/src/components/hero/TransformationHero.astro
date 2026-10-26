@@ -5,6 +5,12 @@ import DownloadAction from "../download/DownloadAction.astro";
 import BasisTransformation from "./BasisTransformation.astro";
 import "./transformation.css";
 
+interface Props {
+  socialPreview?: boolean;
+}
+
+const { socialPreview = false } = Astro.props;
+
 const headlineWords = [
   { character: "看", word: "Now" },
   { character: "不", word: "I" },
@@ -12,7 +18,7 @@ const headlineWords = [
 ];
 ---
 
-<transformation-hero data-view="understood" aria-labelledby="intro">
+<transformation-hero data-view="understood" data-social-preview={socialPreview || undefined} aria-labelledby="intro">
   <div class="hero-viewport">
   <header class="hero-brand">
     <Image src={appIcon} width={44} height={44} alt="" format="webp" />
@@ -24,7 +30,8 @@ const headlineWords = [
   </header>
   <section class="transformation-stage">
     <div class="transformation-copy">
-      <h1 id="intro" class="hero-headline" aria-label="From 看不懂 to Now I Understand. EdU, your personal AI tutor.">
+      {socialPreview && <h1 id="intro" class="hero-headline">Reframed to<br />understanding.</h1>}
+      {!socialPreview && <h1 id="intro" class="hero-headline" aria-label="From 看不懂 to Now I Understand. EdU, your personal AI tutor.">
         {headlineWords.map(({ character, word }, index) => (
           <span class="hero-word" data-word={index} style={`--word-progress: var(--hero-word-${index}, 1)`} aria-hidden="true">
             <span class="hero-word-before" lang="zh-Hans">{character}</span>
@@ -32,7 +39,7 @@ const headlineWords = [
           </span>
         ))}
         <span class="hero-question" aria-hidden="true">。</span>
-      </h1>
+      </h1>}
       <div class="hero-description">
         <p class="hero-before">I dont understand</p>
         <p class="hero-after">Reframed to understanding</p>
@@ -76,7 +83,7 @@ const headlineWords = [
         </div>
 
         <div class="understanding-paper" data-explanation aria-hidden="false">
-          <BasisTransformation />
+          <BasisTransformation still={socialPreview} />
         </div>
         </div>
       </div>

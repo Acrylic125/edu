@@ -8,17 +8,18 @@ transformation-hero {
 }
 
 .hero-viewport { position: sticky; top: 0; display: flex; height: 100svh; flex-direction: column; }
-.hero-brand { display: flex; height: clamp(56px, 10svh, 96px); flex-shrink: 0; align-items: center; gap: 12px; }
-.hero-github { margin-left: auto; min-height: 40px; padding: 8px 14px; font-size: 14px; }
-.hero-brand span { font-size: 20px; font-weight: 600; letter-spacing: -0.025em; }
+.hero-brand { display: flex; height: clamp(3.5rem, 10svh, 6rem); flex-shrink: 0; align-items: center; gap: 0.75rem; }
+.hero-brand img { width: 2.75rem; height: 2.75rem; }
+.hero-github { margin-left: auto; min-height: 2.5rem; padding: 0.5rem 0.875rem; font-size: 0.875rem; }
+.hero-brand span { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.025em; }
 .transformation-stage {
   display: grid;
   flex: 1;
   min-height: 0;
   grid-template-columns: 0.85fr 1.15fr;
   align-items: center;
-  gap: 30px;
-  padding: 20px 0;
+  gap: 1.875rem;
+  padding: 1.25rem 0;
 }
 
 .transformation-copy h1 { margin: 0; }
@@ -52,11 +53,11 @@ transformation-hero {
 }
 .hero-word-after { opacity: var(--word-progress); transform: translateY(calc((1 - var(--word-progress)) * 0.4em)); }
 .hero-question { position: absolute; top: 0.35em; left: var(--punctuation-left, 3.6em); color: var(--book-gold-dark); opacity: calc(1 - var(--hero-word-2, 1)); }
-.hero-description { display: grid; margin-top: 24px; transform: translateY(calc((1 - var(--hero-word-2, 1)) * var(--hero-subtext-rise, 40px) * -1)); }
-.hero-description p { grid-area: 1 / 1; color: var(--muted-foreground); font-size: 17px; line-height: 1.7; }
-.hero-before { opacity: calc(1 - var(--hero-copy-progress)); filter: blur(calc(var(--hero-copy-progress) * 12px)); transform: translateY(calc(var(--hero-copy-progress) * -12px)); }
-.hero-after { opacity: var(--hero-copy-progress); filter: blur(calc((1 - var(--hero-copy-progress)) * 12px)); transform: translateY(calc((1 - var(--hero-copy-progress)) * 12px)); }
-.hero-actions { margin-top: 28px; }
+.hero-description { display: grid; margin-top: 1.5rem; transform: translateY(calc((1 - var(--hero-word-2, 1)) * var(--hero-subtext-rise, 40px) * -1)); }
+.hero-description p { grid-area: 1 / 1; color: var(--muted-foreground); font-size: 1.0625rem; line-height: 1.7; }
+.hero-before { opacity: calc(1 - var(--hero-copy-progress)); transform: translateY(calc(var(--hero-copy-progress) * -12px)); }
+.hero-after { opacity: var(--hero-copy-progress); transform: translateY(calc((1 - var(--hero-copy-progress)) * 12px)); }
+.hero-actions { margin-top: 1.75rem; }
 .hero-actions .action {
   border-color: color-mix(in srgb, var(--primary) calc((1 - var(--hero-progress)) * 100%), transparent);
   background: color-mix(in srgb, var(--primary) calc(var(--hero-progress) * 100%), transparent);
@@ -118,7 +119,11 @@ transformation-hero {
 }
 
 @media (min-width: 1280px) {
-  .transformation-stage { gap: 44px; }
+  .transformation-stage { gap: 2.75rem; }
+}
+
+@media (min-width: 1280px) and (orientation: landscape) {
+  transformation-hero { --hero-art-natural-width: 590px; }
 }
 
 @media (max-width: 900px) and (min-width: 641px) {

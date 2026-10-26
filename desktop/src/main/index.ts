@@ -27,15 +27,19 @@ import {
   ProviderSettingsSchema,
   RunnerInputSchema,
   SendSchema,
+  RetrySchema,
   SnapshotSchema,
 } from "../shared/contracts"
 import { resolveCliExecutable } from "../providers/cli"
 import { ProviderRegistry } from "../providers/registry"
+import { resolveCodexExecutable } from "../providers/codex-installation"
 import { importMaterials, MaterialDrafts } from "./materials"
 import { readSourceImages } from "./source-images"
 import { newChat, WorkspaceRepository } from "./workspace"
 import { RunnerManager } from "../runners/manager"
+import { TutorWorkflowRepository } from "./tutor-workflow"
 import { installPhoenixExporter } from "../runners/telemetry"
+import { createBatchedUpdate } from "../shared/batched-update"
 
 const environment = z
   .object({
@@ -74,6 +78,7 @@ else {
       const directory = join(app.getPath("userData"), "workspace")
       const repository = new WorkspaceRepository(directory)
       await repository.load()
+      await new TutorWorkflowRepository(repository).recoverInterruptedTurns()
       const phoenixResources = app.isPackaged
         ? join(process.resourcesPath, "phoenix")
         : join(app.getAppPath(), "..", "phoenix")
@@ -105,16 +110,16 @@ else {
         ? join(process.resourcesPath, "resources")
         : join(app.getAppPath(), "resources")
       app.dock?.setIcon(join(resources, "icon.png"))
+      const runtimeUpdates = createBatchedUpdate(() => {
+        if (window && !window.isDestroyed()) window.webContents.send(Channel.runtimeUpdate, { runtime: runnerManager.statuses })
+      })
+      const bundledCodex = join(resources, "codex", "bin", process.platform === "win32" ? "codex.exe" : "codex")
       const registry = new ProviderRegistry(
         directory,
-        join(
-          resources,
-          "codex",
-          "bin",
-          process.platform === "win32" ? "codex.exe" : "codex",
-        ),
+        await resolveCodexExecutable(bundledCodex),
         notify,
         repository.stateSnapshot.providerSettings,
+        bundledCodex,
       )
       providers = registry
       const skillDirectory = app.isPackaged
@@ -127,12 +132,13 @@ else {
         (runner) => registry.connection(runner),
         notify,
         phoenixExporterInstalled,
+        runtimeUpdates.schedule,
       )
       manager = runnerManager
 
       function snapshot() {
         return SnapshotSchema.parse({
-          runners: repository.stateSnapshot.runners,
+          runners: repository.publicRunners,
           topics: repository.publicTopics,
           chats: repository.publicChats,
           runtime: runnerManager.statuses,
@@ -141,6 +147,7 @@ else {
         })
       }
       function notify() {
+        runtimeUpdates.cancel()
         if (window && !window.isDestroyed())
           window.webContents.send(Channel.update, snapshot())
       }
@@ -343,6 +350,10 @@ else {
       ipcMain.handle(Channel.send, async (event, raw) => {
         trusted(event)
         await runnerManager.send(SendSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.retry, async (event, raw) => {
+        trusted(event)
+        await runnerManager.retry(RetrySchema.parse(raw))
       })
       ipcMain.handle(Channel.selectMaterials, async (event, raw) => {
         trusted(event)

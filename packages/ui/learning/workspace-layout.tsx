@@ -344,7 +344,7 @@ export function WorkspacePanes({
   const showChat = desktopPanes && !!chat && !chatCollapsed
   const canResize = showDocument && showChat
   const chatPanel = usePanelRef()
-  const chatSize = useRef("25rem")
+  const chatSize = useRef("40%")
 
   // Preserve the user's split while collapse and mobile drawers override panel sizes.
   useLayoutEffect(() => {
@@ -399,7 +399,7 @@ export function WorkspacePanes({
       <Panel
         id="workspace-chat-panel"
         panelRef={chatPanel}
-        defaultSize="25rem"
+        defaultSize="40%"
         minSize={showChat ? "20rem" : 0}
         maxSize={showChat ? "100%" : 0}
         className="flex min-h-0 flex-col"
