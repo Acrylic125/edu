@@ -344,6 +344,10 @@ export class WorkspaceRepository {
     return structuredClone(this.state)
   }
 
+  get publicRunners() {
+    return structuredClone(this.state.runners)
+  }
+
   get publicTopics() {
     return this.state.topics.map((topic) => {
       const {

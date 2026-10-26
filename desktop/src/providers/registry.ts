@@ -30,6 +30,7 @@ export class ProviderRegistry {
     private executable: string,
     private notify: () => void,
     settings: z.infer<typeof ProviderSettingsSchema>[] = [],
+    private bundledExecutable = executable,
   ) {
     this.settings = settings
     for (const provider of this.cliStates)
@@ -47,16 +48,29 @@ export class ProviderRegistry {
       ...this.cliStates,
     ].map((provider) => {
       const settings = this.settings.find((item) => item.id === provider.id)
+      if (provider.id === "codex") {
+        let source: NonNullable<z.infer<typeof ProviderStatusSchema>["runtime"]>["source"] = "installed"
+        if (settings?.binaryPath) source = "custom"
+        else if (this.codex.connection.executable === this.bundledExecutable) source = "bundled"
+        return {
+          ...provider,
+          settings,
+          name: settings?.displayName ?? provider.name,
+          runtime: { executable: this.codex.connection.executable, source },
+        }
+      }
       return { ...provider, settings, name: settings?.displayName ?? provider.name }
     })
   }
 
   configure(settings: z.infer<typeof ProviderSettingsSchema>) {
+    const previous = this.settings.find((item) => item.id === settings.id)
     this.settings = [...this.settings.filter((item) => item.id !== settings.id), settings]
     const cli = this.cliStates.find((item) => item.id === settings.id)
     if (cli) {
       cli.connected = settings.enabled && cli.connected
       cli.error = undefined
+      if (settings.binaryPath !== (previous?.binaryPath ?? "")) cli.runtime = undefined
     }
     if (settings.id === "codex" && this.codex.connection.executable !== (settings.binaryPath || this.executable)) {
       this.codex.close()
@@ -133,12 +147,16 @@ export class ProviderRegistry {
       try {
         executable = await resolveCliExecutable(provider.id, this.settings.find((item) => item.id === provider.id)?.binaryPath)
       } catch {
+        provider.runtime = undefined
         provider.installed = false
         provider.connected = false
         provider.account = undefined
         return
       }
       provider.installed = true
+      let source: NonNullable<z.infer<typeof ProviderStatusSchema>["runtime"]>["source"] = "installed"
+      if (this.settings.find((item) => item.id === provider.id)?.binaryPath) source = "custom"
+      provider.runtime = { executable, source }
       const connection = { provider: provider.id, executable, directory: join(this.directory, "providers", provider.id) }
       await mkdir(connection.directory, { recursive: true, mode: 0o700 })
       if (provider.id === "claude") {
@@ -213,6 +231,7 @@ export class ProviderRegistry {
         if (settings) settings.enabled = true
         provider.connected = true
         provider.installed = true
+        provider.runtime = { executable: connection.executable, source: "custom" }
         provider.checkedAt = new Date().toISOString()
         provider.error = undefined
       } finally {

@@ -201,13 +201,19 @@ function ProviderEditor({ provider }: {
     actionLabel = "Cancel sign-in"
     if (cliProvider) actionLabel = "Connecting…"
   }
-  let binaryPlaceholder = "Bundled Codex runtime"
-  let binaryHelp = "Leave the binary path empty to use the bundled runtime."
+  let binaryPlaceholder = "Installed Codex (bundled fallback)"
+  let binaryHelp = "Leave empty to use a compatible installed Codex, falling back to the bundled runtime."
   if (cliProvider) {
     binaryPlaceholder = "/absolute/path/to/agy"
     if (provider.id === "claude") binaryPlaceholder = "/absolute/path/to/claude"
     binaryHelp = "Leave empty to detect your installed CLI automatically. Set a path only for a custom installation."
   }
+  let runtimeSource = "Installed Codex"
+  if (provider.id === "claude") runtimeSource = "Installed Claude Code"
+  else if (provider.id === "antigravity") runtimeSource = "Installed Antigravity CLI"
+  if (provider.runtime?.source === "bundled") runtimeSource = "Bundled fallback"
+  else if (provider.runtime?.source === "custom") runtimeSource = "Custom binary"
+  if (!provider.runtime) runtimeSource = "Not detected"
 
   async function perform(scope: "save" | "connection", operation: () => Promise<void>) {
     setBusy(true)
@@ -248,6 +254,16 @@ function ProviderEditor({ provider }: {
           }}>{actionLabel}</button>
 
         </div>
+          <dl aria-label={`${provider.name} runtime`} className="mt-5 space-y-2 rounded-lg border border-border p-3 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <dt className="text-muted-foreground">Runtime source</dt>
+              <dd className="font-medium">{runtimeSource}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Executable path</dt>
+              <dd className="mt-1 select-text break-all font-mono text-xs leading-5">{provider.runtime?.executable ?? "Not detected. Click Recheck setup to search again."}</dd>
+            </div>
+          </dl>
         {/* Reserve feedback space so failures do not move the page or its controls. */}
         <div className="mt-3 h-20 overflow-y-auto">
           {(connectionError || provider.error) && <p role="alert" className="text-sm leading-5 text-destructive">{connectionError ?? provider.error}</p>}

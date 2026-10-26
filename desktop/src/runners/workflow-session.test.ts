@@ -15,6 +15,23 @@ import { join } from "node:path"
 import { WorkspaceRepository } from "../main/workspace"
 import { TutorWorkflowRepository } from "../main/tutor-workflow"
 
+test("Tutor discovers teaching skills through headers and reads bodies only on demand", async () => {
+  const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
+  const chat = newChat(runner.id)
+  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const { session } = await createWorkflowTutorSession(job, [], "", () => {})
+  assert.match(session.instructions, /Make what you write, understandable to humans/)
+  assert.doesNotMatch(session.instructions, /## Vary the rhythm/)
+  assert.doesNotMatch(session.instructions, /## The Sycophancy Trap/)
+  assert.doesNotMatch(session.instructions, /MANAGE_TOPIC|MANAGE_TEST|MANAGE_GENERIC/)
+  assert.equal(session.tools.some((tool) => tool.type === "function" && tool.function.name.startsWith("topic_")), false)
+  const style = await session.execute("read_skill", { path: "skills/WRITING_STYLE.md" })
+  assert.equal(style.success, true, style.text)
+  assert.match(style.text, /## Vary the rhythm/)
+  const denied = await session.execute("read_skill", { path: "skills/MANAGE_TOPIC.md" })
+  assert.equal(denied.success, false)
+})
+
 test("Tutor receives a directory and teaching tools without scratchpad state or management access", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
@@ -30,6 +47,34 @@ test("Tutor receives a directory and teaching tools without scratchpad state or 
   assert.equal((await session.execute("read_scratchpad", { scratchpadId: "scratchpad_1" })).success, false)
   assert.equal((await session.execute("read_skill", { path: "skills/MANAGE_GENERIC.md" })).success, false)
   assert.equal((await session.execute("generic_updateScratchpad", { genericId: "scratchpad_1", summary: "Overwrite" })).success, false)
+})
+
+test("assuming a role injects its own management body and leaves general skills and templates on demand", async () => {
+  for (const type of ["topic", "test", "generic"] as const) {
+    const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
+    const chat = newChat(runner.id)
+    const target = newTopic("Assigned task", type)
+    target.planConfirmed = true
+    chat.topicHandles = [target.id]
+    const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: type, access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
+      request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Update the assigned scratchpad", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } },
+    })
+    const { session } = await createWorkflowRoleSession(job, role, async () => {}, () => {})
+    assert.match(session.instructions, new RegExp(`name: manage-${type}`))
+    assert.doesNotMatch(session.instructions, /## Vary the rhythm/)
+    for (const other of ["topic", "test", "generic"] as const) {
+      if (other !== type) {
+        assert.equal(session.tools.some((tool) => tool.type === "function" && tool.function.name.startsWith(`${other}_`)), false)
+        const denied = await session.execute("read_skill", { path: `skills/MANAGE_${other.toUpperCase()}.md` })
+        assert.equal(denied.success, false)
+      }
+    }
+    const template = await session.execute("read_skill", { path: `scratchpad_templates/${type}/schema.md` })
+    assert.equal(template.success, true, template.text)
+    const deniedHandoff = await session.execute("save_learning_state", chat.learning)
+    assert.equal(deniedHandoff.success, false, "Summary-only roles cannot publish a private handoff")
+  }
 })
 
 test("an existing open topic can save a teaching handoff after its creation turn", async () => {
@@ -223,6 +268,27 @@ test("planning section IDs produce canonical asset references owned by the host"
   assert.equal((await context.session.execute("select_topic_sections", { sectionIds: [section.id] })).success, true)
   assert.equal((await context.session.execute("submit_topic_plan", { title: "Vector spaces", sections: [{ sectionId: section.id, goals: [] }] })).success, true)
   assert.deepEqual(context.output?.evidence, [{ type: "pdf", path: "assets/vector-spaces-copy.pdf", pages: [{ from: 1, to: 1 }] }])
+})
+
+test("a tutorial-only upload stays reserved for practice instead of becoming curriculum", async () => {
+  const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
+  const chat = newChat(runner.id)
+  const material = { id: randomUUID(), name: "tutorial.txt", kind: "text" as const, text: "1. Vector spaces\nPRACTICE_QUESTION_SENTINEL: Which sets are vector spaces?", pages: [] }
+  chat.materials.push(material)
+  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: randomUUID(), scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "create", snapshot: null, baseVersion: null, operations: [],
+    request: { target: { mode: "create", type: "topic" }, task: "Plan vector spaces", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [material.id], readDependencies: [], relevantContext: "" } },
+  })
+  const context = await createWorkflowRoleSession(job, role, async () => { assert.fail("Practice-only material cannot create a curriculum") }, () => {})
+  const line = context.session.instructions.split("\n").find((line) => line.startsWith("Indexed curriculum sections: "))!
+  const sections = z.array(DocumentSectionSchema).parse(JSON.parse(line.slice("Indexed curriculum sections: ".length)))
+  assert.deepEqual(sections, [])
+  assert.match(context.session.instructions, /tutorial\.txt/)
+  assert.doesNotMatch(context.session.instructions, /PRACTICE_QUESTION_SENTINEL/)
+  const clarified = await context.session.execute("request_topic_clarification", { question: "Can you supply lecture notes for the guide?" })
+  assert.equal(clarified.success, true, clarified.text)
+  assert.equal(context.output?.needsClarification, true)
+  assert.deepEqual(context.output?.evidence, [])
 })
 
 test("confirmed topics retain lesson editing while existing drafts return to Tutor for confirmation", async () => {

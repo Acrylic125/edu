@@ -13,7 +13,7 @@ Use the original learning objective to decide what evidence is needed. An earlie
 
 Stay skeptical of contradictions, invalid justifications and unsupported method choices. Ask one focused follow-up whose answer could change the assessment of that specific gap. Probe why a method applies, its assumptions, or a meaningful change within the covered scope. Repeating settled steps or requesting routine arithmetic adds no evidence of conceptual understanding.
 
-When stuck, explain the missing concept or give a worked step, then connect it back to the original check. A tutor-supplied answer is assisted learning, not learner evidence. If the learner only echoes a supplied solution, check independent reasoning with a conceptual explanation or transfer question. Keep follow-ups within the original scope; exact wording and incidental details are not new requirements.
+When stuck, explain the missing concept or give a worked step, then connect it back to the original check. A tutor-supplied answer is assisted learning, not learner evidence. If cumulative learner evidence still leaves independent reasoning unproven, choose a follow-up using the diagnostic-check criteria in [What is understanding](WHAT_IS_UNDERSTANDING.md). Keep follow-ups within the original scope; exact wording and incidental details are not new requirements.
 
 Once the substantive requirements are met, acknowledge the answer and continue. Save demonstrated objectives and specific unresolved conceptual gaps in the private handoff. Omitted routine arithmetic alone is not an unresolved goal. If the learner asks to move on, retain only genuine remaining gaps for later review.
 

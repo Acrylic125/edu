@@ -71,6 +71,52 @@ test("a creation role cannot stage a different scratchpad type", async (t) => {
   }), /role|type/i)
 })
 
+test("returning a request for coordination cannot commit writes or publish a role reply", async (t) => {
+  const { workspace, job, workflows } = await fixture(t)
+  const topic = newTopic("Fractions", "generic")
+  await workspace.mutate((state) => state.topics.push(topic))
+  job.topics = [{ ...topic, assetDirectory: job.assetDirectory }]
+  job.chat.topicHandles = [topic.id]
+  const turn = await workflows.start(job)
+  const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{
+    target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Handle the latest request", requestedAccess: "write", replyToLearner: true,
+    context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
+  }])
+  const role = batch.jobs[0]
+  await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Needs another target", evidence: [], needsCoordination: true, response: { reply: "A provisional reply", learning: job.chat.learning } }), /not granted a direct learner reply/)
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", topicId: topic.id, summary: "Changed notes" })
+  await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Needs another target", evidence: [], needsCoordination: true }), /without staged writes/)
+  assert.deepEqual(workspace.topic(topic.id).state, topic.state)
+})
+
+test("direct role replies require an independent grant and committed writes without exposing their handoff in summaries", async (t) => {
+  const { workspace, job, workflows } = await fixture(t)
+  const scratchpad = newTopic("Fractions", "generic")
+  await workspace.mutate((state) => state.topics.push(scratchpad))
+  job.topics = [{ ...scratchpad, assetDirectory: job.assetDirectory }]
+  job.chat.topicHandles = [scratchpad.id]
+  const turn = await workflows.start(job)
+  const request = { target: { mode: "existing" as const, scratchpadHandle: "scratchpad_1" }, task: "Write the fraction notes", requestedAccess: "write" as const, replyToLearner: true,
+    context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
+  }
+  await assert.rejects(workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ ...request, requestedAccess: "read" }]), /independent write role/)
+  await assert.rejects(workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [request, request]), /independent write role/)
+  const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [request])
+  const role = batch.jobs[0]
+  await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Done", evidence: [] }), /reply and handoff/)
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", topicId: scratchpad.id, summary: "# Fractions\n\nOne half is 1/2." })
+  await workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Updated fraction notes", evidence: [], response: { reply: "Your fraction notes are ready.", learning: { ...job.chat.learning, privateAnswerKey: "PRIVATE_ROLE_KEY", workpad: "Saved fraction notes", nextAction: "Wait for the learner" } } })
+  await assert.rejects(workflows.presentRoleReply(turn.chatId, turn.turnId, batch.batchId), /committed/)
+  const receipt = await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
+  assert.equal(JSON.stringify(receipt).includes("PRIVATE_ROLE_KEY"), false)
+  assert.equal(JSON.stringify(receipt).includes("Your fraction notes are ready."), false)
+  const completed = await workflows.presentRoleReply(turn.chatId, turn.turnId, batch.batchId, 750)
+  assert.equal(completed.message.content, "Your fraction notes are ready.")
+  assert.equal(completed.message.durationMs, 750)
+  assert.deepEqual(await workflows.presentRoleReply(turn.chatId, turn.turnId, batch.batchId, 1000), completed)
+  assert.equal(workspace.chat(job.chat.id).messages.length, 2)
+})
+
 test("a reply waits for required batches and publishes its handoff and message only once", async (t) => {
   const { workspace, job, workflows } = await fixture(t)
   const scratchpad = newTopic("Fractions", "generic")

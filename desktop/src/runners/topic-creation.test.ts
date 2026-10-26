@@ -105,7 +105,7 @@ test("one planner creates a scoped topic with host-owned citations and confirmat
       return session.finish("Consider closure under addition.")
     }
     if (!session.instructions.includes("Asked a dynamic check")) {
-      await session.execute("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Guide the learner through 6.1 and ask the next check", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [job.chat.materials[0].id], readDependencies: [], relevantContext: "Learner confirmed" } }] })
+      await session.execute("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Guide the learner through 6.1 and ask the next check", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [], materialIds: [job.chat.materials[0].id], readDependencies: [], relevantContext: "Learner confirmed" } }] })
       return session.finish("")
     }
     const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "Check that adding two members stays inside the set.", pendingCheck: { topicId: "scratchpad_1", topicPartId: "tp-section-1", stepIndex: 0 }, nextAction: "Wait for the answer", workpad: "First dynamic check asked after confirmation" })

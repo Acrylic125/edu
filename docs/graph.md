@@ -2,89 +2,83 @@
 
 Status: implemented. `desktop/src/runners/tutor-graph.ts` defines the workflow. `desktop/src/main/tutor-workflow.ts` enforces its storage and permission contracts.
 
-An ongoing chat invokes one workflow for each learner turn. Tutor completes ordinary teaching and feedback in one native invocation. New scratchpad creation uses isolated role subgraphs. EdU manages context, checkpoints, role permissions, and durable commits. Codex, Claude Code, or Antigravity executes each Tutor or role task.
+An ongoing chat invokes one workflow for each learner turn. The host routes eligible confirmed-topic turns directly to a topic role. Tutor coordinates other requests and assumes a scratchpad role for every scratchpad read or write. Each role subgraph has its own model context, management instructions, and tool grants. The host checkpoints results and commits staged writes before publishing them.
 
 ## Topic creation
 
-Explicit `/new-topic` requests use the indexed creation flow in [Topic creation flow](topic_creation_flow.md). They route directly to one planner. Document OCR and indexing are local, cached operations. The host constructs citations from selected section IDs, commits the plan, and renders confirmation without resuming Tutor. Conversational creation still uses Tutor for intent identification, then the same planner. Confirmed teaching uses the single-invocation path below.
+Explicit `/new-topic` requests use the indexed creation flow in [Topic creation flow](topic_creation_flow.md). The host assumes the topic planning role directly. Document OCR and indexing are local, cached operations. The host constructs citations from selected section IDs, commits the plan, and renders confirmation without another Tutor invocation. Conversational creation uses Tutor to establish intent before assuming the role.
 
 ## Graph
 
 ```mermaid
 flowchart TB
-	Thread["Thread<br/>Ongoing conversation"] --> Route["Route explicit topic creation"]
-	Route -->|"ordinary teaching or feedback"| Single["One Tutor invocation<br/>Read, teach, assess, update, save handoff"]
-	Single --> Publish["Host commits staged writes<br/>Publishes stored lesson + question"] --> Done
-	Single -->|"new scratchpad requested"| AssumeRole
-	Route -->|"other creation or oversized history"| Prepare
-	Route -->|"/new-topic"| Plan["Index sources + one planner"]
-	Plan --> PlanCommit["Commit plan"] --> PlanReply["Host renders confirmation"] --> Done
-
-	subgraph TutorGraph["Tutor graph"]
-		Prepare["Prepare context<br/>Summary + recent messages + current state"]
-		Compact["Compact history<br/>Persist summary + covered message range"]
-		Tutor["Tutor<br/>Teaching tools + skills"]
-		AssumeRole["Assume role<br/>Scratchpad ID + task"]
-
-		Prepare -->|"fits budget"| Tutor
-		Prepare -->|"over budget"| Compact
-		Compact --> Prepare
-
-		subgraph RoleJobs["N role subgraphs, parallel when independent"]
-			Topic["Topic reader and writer<br/>Own tools + skills"]
-			Test["Test reader and writer<br/>Own tools + skills"]
-			Generic["Generic reader and writer<br/>Own tools + skills"]
-		end
-
-		Commit["Commit staged writes<br/>Deterministic host node"]
-		Reply["Save Tutor handoff + reply"]
-		Done(["Complete"])
-
-		Tutor -->|"scratchpad work"| AssumeRole
-		AssumeRole -->|topic| Topic
-		AssumeRole -->|test| Test
-		AssumeRole -->|generic| Generic
-		Topic --> Commit
-		Test --> Commit
-		Generic --> Commit
-		Commit -->|"committed results"| Prepare
-		Tutor -->|"final response"| Reply
-		Reply --> Done
+	Thread["Learner turn"] --> Route["Host routes request"]
+	Route -->|"eligible /new-topic"| Topic
+	Route -->|"eligible confirmed-topic turn"| Topic
+	Route -->|"other requests"| Prepare["Prepare coordinator context"]
+	Prepare -->|"fits budget"| Tutor["Tutor: skill headers and coordination tools"]
+	Prepare -->|"over budget"| Compact["Compact history and persist summary"]
+	Compact --> Prepare
+	Tutor -->|"delegate"| Assume["Host grants role jobs"]
+	subgraph Roles["Isolated role subgraphs, parallel when independent"]
+		Topic["Topic: indexed planner or scoped teaching"]
+		Test["Test: assigned target and test tools"]
+		Generic["Generic: assigned target and generic tools"]
 	end
+	Assume --> Topic
+	Assume --> Test
+	Assume --> Generic
+	Topic --> Commit["Host validates and commits the batch"]
+	Test --> Commit
+	Generic --> Commit
+	Commit -->|"one granted complete learner reply"| Publish["Host publishes stored reply and handoff"]
+	Commit -->|"topic plan or planning clarification"| PlanReply["Host presents plan or clarification"]
+	Commit -->|"summary or further coordination"| Prepare
+	Tutor -->|"final reply"| Save["Host saves handoff and reply"]
+	Publish --> Done(["Complete"])
+	PlanReply --> Done
+	Save --> Done
 ```
 
-The role branches select the appropriate type for each job. A batch can contain several jobs of the same type. Commit waits for every required job in that batch.
+Direct routes create host-granted jobs and enter the same topic role subgraph used by Tutor delegation. Each role runs preparation, native execution, and validation before commit. Commit waits for every required job in the batch. Context preparation and history compaction run before coordinator invocations. Original conversation records remain stored.
 
 ## Ordinary response latency
 
-Confirmed teaching, feedback, and ordinary chat route through `single_tutor`. Tutor reads sources, updates scratchpads, records the next dynamic question, and saves the private handoff in one native invocation. The host stages each mutation before reporting tool success. `single_publish` commits those stages and saves the handoff and reply. Checkpointing the model result before publication lets Retry finish publication without generating the lesson again.
+An eligible confirmed-topic turn uses one topic-role invocation, followed by commit and `presentRoleReply`. The host skips the routing Tutor invocation and publishes the role's stored response without a final Tutor rewrite.
 
-When `present` selects stored lesson blocks and the handoff is valid, the adapter ends generation and publishes those blocks with the recorded question. It does not ask a separate role for a summary or ask Tutor to rewrite the lesson.
+The direct route requires exactly one selected, unarchived, confirmed topic, no scratchpad command or creation request, and bounded conversation context. Topic selection uses explicit mentions, the confirmation target, a pending check, the opened topic, and recent message targets. An unrelated draft does not prevent routing to the selected confirmed topic.
 
-Codex conversation IDs are retained in the committed turn and restored on the next turn. Resumption requires matching tool schemas, executable, home, and tool version; incompatible scopes start fresh. A resumed turn sends only the new learner message. Interrupted invocations reconstruct from durable state rather than blindly replaying the native conversation.
+The route requires a summary of at most 20,000 characters. The serialized messages, learner state, and summary must fit within half the available input budget in UTF-8 bytes. Larger contexts return through coordinator preparation and compaction. Explicit `/new-topic` instructions route directly only when nonempty and at most 20,000 characters.
 
-Production traces on 2026-10-25 showed 111.9s and 93.6s responses using three sequential fresh sessions: routing Tutor, teaching role, then final Tutor. Planning was a separate 27.0s turn with one planner. The single-invocation path removes the two extra teaching calls and avoids storing repeated prepared copies of source data for ordinary turns.
+If a direct role needs another target or ungranted dependencies, it calls `finish_role` with `needsCoordination` before staging any writes. The host records the result and commits the empty batch, then returns to Tutor for coordination.
 
-A replay through Electron, the real worker, and Codex on a SQLite backup of the production workspace used the original request and pre-turn scratchpad state with `gpt-6.1-sol` at low reasoning effort. The first single-invocation replay took 51.9s. It exposed a second regression: an answer write and lesson edits were rejected until every page in the curriculum part had been reread. Recording an answer must not depend on rereading the whole source range. The corrected replay took 36.5s with one invocation and zero failed tool calls, compared with the recorded 93.6s turn. About 32.2s remained inside the native model turn; these are individual measurements, not latency guarantees. A subsequent live follow-up confirmed `resumed: true`.
+`desktop/src/runners/topic-continuation.test.ts` verifies that a confirmed-topic continuation uses one role invocation and no coordinator invocation. Historical latency measurements for the retired `single_tutor` path do not measure the current role path.
 
-A later production turn took 173.7s because the running `release/mac-arm64/EdU.app` still contained the earlier worker. Its archive had no `single_tutor` node or tool-version-24 resumption support, although the development build did. The trace contained seven fresh native sessions: initial routing, teaching, two additional delegation loops to redisplay existing blocks, and final reply generation. The first lesson and question writes completed about 55s into the turn.
+On 2026-10-26, an isolated replay of the captured section 6.2 teaching request completed in 52.3 seconds with one `gpt-6.1-sol` invocation and the same source assets. The original run was stopped at 130.5 seconds, including 68.8 seconds in the routing model before teaching began. The replay preserved the earlier answer, source references, pending check, and unfinished section 6.1 coverage. This is one comparison, not a latency guarantee.
 
-Replaying that exact 173.7s request and its pre-turn state through the rebuilt packaged worker on a workspace backup took 53.2s, using one native invocation and zero prepared-context copies. This is one cold-session sample; it still exceeds the historical 30–40s baseline. The verified package replaced the running stale application after confirming no learner turn was active.
+## Skills and role context
 
-`test:packaged` now runs the Electron workflow fixture against the worker inside the actual application archive, as well as the packaged OCR smoke test. The stale archive fails the teaching assertion with three invocations instead of one. A development `build` updates `out`; `package:dir` updates the application under `release`. An already-running packaged application needs the updated package and a restart.
+Tutor receives the name, description, and path of each teaching skill. It reads the body through `read_skill` when the description matches the task. Its initial directory contains the current targets; `list_scratchpads` discovers other handles through paginated metadata.
 
-Grounding checks apply when changing curriculum references or adding explicit source blocks. Ordinary progress writes do not revalidate unchanged curriculum citations. The model reads the source pages needed for the current explanation and question. The source-free planner's inspected-section requirement remains unchanged.
+Assuming a role enters its subgraph and injects that role's `MANAGE_TOPIC`, `MANAGE_TEST`, or `MANAGE_GENERIC` instructions. General teaching and writing skills remain header entries. Templates and schema references load through `read_skill` on demand. The host rejects skills, tools, materials, and scratchpads outside the role's grants.
 
+Roles receive the requested learner messages, assigned target, granted dependencies, and a compact current-state view. `read_topic_evidence` retrieves section history in bounded pages. Test discovery uses `test_getCoveredTopics` summaries before reading detailed evidence. Existing tests retain their saved source topics.
 
-### Mixed topics and streaming
+## Completing a role response
 
-A confirmed topic stays on the single-invocation route when the chat also contains an unrelated draft. Routing checks the current message's mentions, open topic, confirmation target, and pending question. Inherited draft topics remain readable without receiving teaching write grants. A request targeting the draft still requires planning or confirmation.
+Tutor can request `replyToLearner: true` for one independent write job that can finish the learner turn. The host rejects this flag on read-only or multi-job batches. The role stages its changes, saves a validated private handoff, and writes the learner-facing response. It can also finish with explicitly selected stored lesson blocks.
 
-New explanations stream as normal learner-facing response text. The host stores that same response as a markdown block for the active topic before committing the turn. It checkpoints the generated result first, so a publication retry neither regenerates nor duplicates the lesson. Explicit edits can still select existing stored blocks with `present`.
+The role result persists before commit. After commit, `presentRoleReply` saves the handoff and publishes that result without asking Tutor to rewrite it. Response content and private handoffs stay out of the batch summaries returned to Tutor. Summary-only jobs and tasks requiring more coordination return through the coordinator instead.
 
-Response previews are provisional and do not require the final private handoff. Final publication still requires valid saved progress and a committed batch. Role summaries remain hidden. Native text deltas pass through the worker and `runtime.reply` to the renderer. Creating explanations only inside tool arguments cannot produce learner-facing text deltas, so normal teaching avoids that path.
+New turns always execute scratchpad work through role subgraphs. The retired `single_tutor` and `single_publish` node names remain only to recover older checkpoints. Pending legacy work resumes inside its assigned role; already generated legacy output can finish publication without another model run.
 
-On 2026-10-25, a 124.9s teaching turn exposed the mixed-topic routing bug: an unrelated unconfirmed topic forced three sessions. The earlier source and packaged tests covered only a single confirmed topic. Regression coverage now includes the mixed-topic Electron path, native incremental previews before handoff, and retry-safe storage of streamed lesson text. Replaying that exact turn through the rebuilt packaged worker produced first visible text at 23.0s and completed at 53.6s, using one invocation. Incremental preview lengths increased while the turn was running. These are single-run measurements on a workspace backup.
+## Streaming and runtime updates
+
+Only learner-facing coordinator or explicitly granted role responses produce provisional previews. Role summaries remain hidden. Final publication requires committed writes and a validated handoff.
+
+The worker coalesces text deltas, and the main process publishes runtime-only updates at a 40 ms interval. Diagnostic events still append to the complete trace. Runtime updates retain existing workspace objects in the renderer. Durable changes send a full snapshot and cancel any pending runtime update so the final state stays current.
+
+The snapshot builder and runner-status reader copy runner records directly instead of cloning the entire workspace to obtain runners. Runtime events never rebuild the topic and chat projections.
 
 ## Ownership
 
@@ -103,13 +97,12 @@ The native runners retain their internal agent loops. LangGraph owns delegation 
 
 | Scope | Tools | Skills |
 | --- | --- | --- |
-| Single-invocation Tutor | Material access, tagged scratchpad readers and writers, teaching tools, `save_learning_state`, and delegation for new scratchpads. | Teaching and matching scratchpad management guidance. |
-| Creation coordinator | Material access, tutoring-only `read_skill`, `assume_role`, and `save_learning_state`. | Explanation, understanding, feedback, deliberate practice, and writing guidance. |
-| Topic role | Scoped topic readers and writers, plus explicitly granted material and dependency reads. | `MANAGE_TOPIC` and topic templates. |
-| Test role | Scoped test readers and writers, plus explicitly granted topic evidence and material reads. | `MANAGE_TEST` and test templates. |
-| Generic role | Scoped generic scratchpad readers and writers, plus explicitly granted dependency reads. | `MANAGE_GENERIC` and generic templates. |
+| Tutor coordinator | Material access, `list_scratchpads`, teaching-only `read_skill`, `assume_role`, and `save_learning_state`. | Teaching skill headers; bodies load on demand. |
+| Topic role | Scoped topic readers and writers, plus explicitly granted material and dependency reads. | `MANAGE_TOPIC` on entry; general skills and topic templates on demand. |
+| Test role | Scoped test readers and writers, plus explicitly granted topic evidence and material reads. | `MANAGE_TEST` on entry; general skills and test templates on demand. |
+| Generic role | Scoped generic scratchpad readers and writers, plus explicitly granted dependency reads. | `MANAGE_GENERIC` on entry; general skills and generic templates on demand. |
 
-The single-invocation Tutor receives current tagged scratchpad state and the matching reader and writer tools. Creation tools remain delegated. The delegation coordinator receives a directory and concise summaries; isolated creation roles receive their own state, management guides, and granted tools.
+The coordinator receives current target metadata and committed summaries. Roles receive only their assigned state, management guide, and granted tools. A role can save a private handoff only when explicitly granted a direct learner response.
 
 Skills provide instructions. Host tool handlers enforce access on every call, including `read_skill`. A role name or prompt alone does not establish isolation.
 
@@ -161,7 +154,7 @@ EdU controls compaction between graph nodes. Context growth inside an opaque nat
 
 ## Delegation and isolation
 
-`assume_role` is an executable delegation request. Tutor uses this tool to create a scratchpad. Ordinary teaching, recording an answer, and retrieving current learning position use the tools already granted to the single tutoring invocation. Task text cannot grant permissions.
+`assume_role` is an executable delegation request for scratchpad reads, writes, and creation. Ordinary teaching that updates a scratchpad enters the matching role subgraph. Task text cannot grant permissions.
 
 The host resolves an existing scratchpad's role from its stored type. For creation, the host allocates a stable scratchpad identity before invoking the requested creation role. It grants tools, skill access, materials, and read dependencies for that job.
 

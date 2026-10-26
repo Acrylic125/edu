@@ -3,12 +3,15 @@ import { createRoot } from "react-dom/client"
 import { flushSync } from "react-dom"
 import { StudyMarkdown } from "../../src/renderer/markdown"
 import { App } from "../../src/renderer/workspace"
+import { ProviderConnectionSetup } from "../../src/renderer/settings/settings"
 import { useWorkspace } from "../../src/renderer/store"
 import { useTopicViews } from "../../src/renderer/topic-views"
 import { useChatTabs } from "../../src/renderer/chat-tabs"
 import { SnapshotSchema } from "../../src/shared/contracts"
 import { ThemeProvider } from "@edu/ui/theme"
 import imageUrl from "./diagram.svg"
+import { testChatScroll } from "./chat-scroll"
+import { testTopicTerminology } from "./topic-terminology"
 
 const image = `![Example](<${new URL(imageUrl, location.href).pathname}>)`
 const diagram = "```mermaid\ngraph LR\nA --> B\n```"
@@ -26,6 +29,8 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testChatScroll(root, host)
+  await testTopicTerminology(root, host)
   const durations: { actual: number; base: number }[] = []
   const failures: string[] = []
   function render(notes: string, reply = "Working") {
@@ -147,6 +152,31 @@ async function runRenderingTests() {
   assert(host.querySelector(".js-plotly-plot") === workspacePlot, "Full workspace snapshots and commits must preserve scratchpad plots")
   assert(host.textContent?.includes("Committed lesson.") === true, "Full workspace commits must show updated content")
   console.log(`Full workspace benchmark: 12 IPC-style snapshots across 20 messages: ${workspaceElapsed.toFixed(1)} ms`)
+
+  for (const [source, label] of [["installed", "Installed Codex"], ["bundled", "Bundled fallback"], ["custom", "Custom binary"]] as const) {
+    const next = SnapshotSchema.parse({
+      ...snapshot,
+      providers: [{ ...snapshot.providers[0], runtime: { source, executable: "/example/codex/bin/codex" } }],
+    })
+    flushSync(() => root.render(<ThemeProvider><ProviderConnectionSetup snapshot={next} /></ThemeProvider>))
+    const runtime = host.querySelector('[aria-label="Codex runtime"]')
+    assert(runtime?.textContent?.includes(label) === true, `Codex settings must show the ${source} runtime source`)
+    assert(runtime?.textContent?.includes("/example/codex/bin/codex") === true, "Codex settings must show the actual executable path")
+    assert(runtime?.closest("details") === null, "Runtime details must be visible without opening advanced settings")
+  }
+  for (const [id, name, label] of [["claude", "Claude", "Installed Claude Code"], ["antigravity", "Antigravity", "Installed Antigravity CLI"]] as const) {
+    const next = SnapshotSchema.parse({ ...snapshot, providers: [{
+      id, name, connected: false, installed: true, models: [],
+      runtime: { source: "installed", executable: `/example/bin/${id}` },
+    }] })
+    flushSync(() => root.render(<ThemeProvider><ProviderConnectionSetup snapshot={next} /></ThemeProvider>))
+    const runtime = host.querySelector(`[aria-label="${name} runtime"]`)
+    assert(runtime?.textContent?.includes(label) === true, `${name} settings must show the installation source`)
+    assert(runtime?.textContent?.includes(`/example/bin/${id}`) === true, `${name} settings must show the executable path before connecting`)
+    delete next.providers[0].runtime
+    flushSync(() => root.render(<ThemeProvider><ProviderConnectionSetup snapshot={next} /></ThemeProvider>))
+    assert(host.querySelector(`[aria-label="${name} runtime"]`)?.textContent?.includes("Not detected") === true, `${name} settings must explain when no executable is found`)
+  }
 
   for (const failure of failures) console.error(`FAIL: ${failure}`)
   root.unmount()

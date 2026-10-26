@@ -21,6 +21,7 @@ export function createWorkflowClient(attemptId: string, send: (message: { type: 
     ready: async (chatId, turnId, jobId, output) => { await call({ operation: "ready", chatId, turnId, jobId, output }, z.null()) },
     commitBatch: (chatId, turnId, batchId) => call({ operation: "commitBatch", chatId, turnId, batchId }, BatchReceiptSchema),
     presentPlan: (chatId, turnId, batchId) => call({ operation: "presentPlan", chatId, turnId, batchId }, CompleteOutputSchema),
+    presentRoleReply: (chatId, turnId, batchId) => call({ operation: "presentRoleReply", chatId, turnId, batchId }, CompleteOutputSchema),
     saveHandoff: (chatId, turnId, tutorStepId, learning, providerSession) => call({ operation: "saveHandoff", chatId, turnId, tutorStepId, learning, providerSession }, z.string().uuid()),
     saveReply: (chatId, turnId, reply, handoffRef) => call({ operation: "saveReply", chatId, turnId, reply, handoffRef }, TurnReceiptSchema),
     complete: (chatId, turnId) => call({ operation: "complete", chatId, turnId }, CompleteOutputSchema),

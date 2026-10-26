@@ -10,6 +10,8 @@ import { WorkerJobSchema } from "../shared/contracts"
 import { createTutorGraph, type WorkflowNativeRunner } from "./tutor-graph"
 import { SqliteCheckpointSaver } from "./workflow-checkpointer"
 import { TopicStateSchema } from "../shared/topic-state"
+import { END, START, StateGraph, StateSchema } from "@langchain/langgraph"
+import { z } from "zod"
 
 test("Retry renders committed lesson blocks when the worker supplies its original job as connection settings", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "edu-committed-lesson-"))
@@ -36,6 +38,10 @@ test("Retry renders committed lesson blocks when the worker supplies its origina
     return saveHandoff(...args)
   })
   const native: WorkflowNativeRunner = async (input, session) => {
+    if (session.tools.some((tool) => tool.type === "function" && tool.function.name === "assume_role")) {
+      await session.execute("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Teach halves and reply", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [chat.messages[0].id], materialIds: [], readDependencies: [], relevantContext: "" } }] })
+      return session.finish("")
+    }
     roleRuns += 1
     const edit = await session.execute("topic_editContent", { topicId: "scratchpad_1", changes: [{ action: "add", block: { type: "markdown", id: "halves-lesson", sectionId: "tp-halves", content: [lesson] } }], present: ["halves-lesson"] })
     assert.equal(edit.success, true, edit.text)
@@ -104,6 +110,47 @@ test("a graph commits role work before Tutor continues and resumes a failed repl
   await resumed.invoke(null, config)
   assert.equal(recovered.complete(turn.chatId, turn.turnId).message.content, "Your fraction notes are ready.")
   assert.equal(reopened.stateSnapshot.topics.length, 1)
+})
+
+test("a checkpoint in the retired fast path resumes staged work inside its role subgraph", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-legacy-turn-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspace = new WorkspaceRepository(directory)
+  await workspace.load()
+  const runner = workspace.stateSnapshot.runners[0]
+  const chat = newChat(runner.id)
+  const target = newTopic("Fractions", "generic")
+  chat.topicHandles = [target.id]
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Update fraction notes", topicIds: [target.id], createdAt: new Date().toISOString() })
+  await workspace.mutate((state) => { state.chats.push(chat); state.topics.push(target) })
+  const workflows = new TutorWorkflowRepository(workspace)
+  const turn = await workflows.start(WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory }))
+  const batch = await workflows.assumeRole(chat.id, turn.turnId, turn.turnId, [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Finish the saved notes", requestedAccess: "write", context: { learnerMessageIds: [chat.messages[0].id], materialIds: [], readDependencies: [], relevantContext: "" } }])
+  await workflows.stage(chat.id, turn.turnId, batch.jobs[0].jobId, "original-notes", { type: "updateGeneric", topicId: target.id, summary: "# Fractions\n\nOriginal staged notes" })
+  const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))
+  t.after(() => saver.close())
+  const config = { configurable: { thread_id: turn.turnId }, durability: "sync" as const }
+  const legacy = new StateGraph(new StateSchema({ chatId: z.string(), turnId: z.string() }))
+    .addNode("single_tutor", async () => { throw new Error("Interrupted legacy run") })
+    .addEdge(START, "single_tutor").addEdge("single_tutor", END).compile({ checkpointer: saver })
+  await assert.rejects(legacy.invoke({ chatId: chat.id, turnId: turn.turnId }, config), /Interrupted legacy/)
+  let roleRuns = 0
+  await createTutorGraph(workflows, async (input, session) => {
+    if (session.tools.some((tool) => tool.type === "function" && tool.function.name === "finish_role")) {
+      roleRuns += 1
+      assert.match(session.instructions, /Earlier staged writes are already applied/)
+      const result = await session.execute("finish_role", { summary: "Recovered fraction notes", evidence: [] })
+      assert.equal(result.success, true, result.text)
+      return session.finish("")
+    }
+    assert.equal(session.tools.some((tool) => tool.type === "function" && tool.function.name === "generic_updateScratchpad"), false)
+    const saved = await session.execute("save_learning_state", { ...input.chat.learning, workpad: "Recovered the notes", nextAction: "Wait" })
+    assert.equal(saved.success, true, saved.text)
+    return session.finish("Your fraction notes are ready.")
+  }, saver, {}).invoke(null, config)
+  assert.equal(roleRuns, 1)
+  assert.match(workspace.topic(target.id).learning.notes, /Original staged notes/)
+  assert.equal(workflows.complete(chat.id, turn.turnId).message.content, "Your fraction notes are ready.")
 })
 
 test("compaction preserves recent messages and persists a covered history summary without deleting the conversation", async (t) => {

@@ -925,6 +925,7 @@ export function App() {
   } else {
     const documentMaterials = topicSourceMaterials(topic, snapshot.chats)
     const topicState = topic.state?.type === "topic" ? topic.state : undefined
+    const terminology = topicState?.document?.blocks.filter((block) => block.type === "term") ?? []
     const thread = topicState?.threadTutors.find((thread) => thread.id === chat?.id)
     const currentPart = topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
@@ -989,7 +990,7 @@ export function App() {
               )
             }
           >
-            <StudyMarkdown text={notes.before} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            <StudyMarkdown text={notes.before} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             {notes.directory && (
               <TopicDirectory
                 heading={notes.directory.heading}
@@ -1003,7 +1004,7 @@ export function App() {
                 onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
               />
             )}
-            {notes.after.trim() && <StudyMarkdown text={notes.after} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
+            {notes.after.trim() && <StudyMarkdown text={notes.after} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
           </LearningDocumentLayout>
         }
         chat={chatPane}

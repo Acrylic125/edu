@@ -19,6 +19,7 @@ import { TurnTrace } from "./trace"
 import { TurnTelemetry } from "./telemetry"
 import { dispatchWorkflowRequest, TutorWorkflowRepository } from "../main/tutor-workflow"
 import { WorkflowRequestSchema } from "../shared/tutor-workflow"
+import { selectTutorTopicIds } from "./tutor-evidence"
 
 export class RunnerManager {
   private codexProcesses = new Map<string, Map<string, number>>()
@@ -42,12 +43,13 @@ export class RunnerManager {
     ) => Promise<Pick<WorkerJob, "apiKey" | "codex" | "cli">>,
     private notify: () => void,
     private phoenixExporterInstalled = true,
+    private notifyRuntime: () => void = notify,
   ) {
     this.workflows = new TutorWorkflowRepository(repository)
   }
 
   get statuses() {
-    return this.repository.stateSnapshot.runners.flatMap((runner) => {
+    return this.repository.publicRunners.flatMap((runner) => {
       const executions = [...this.runtime.entries()].filter(([, runtime]) => runtime.runnerId === runner.id)
       if (!executions.length) return [{
         runnerId: runner.id,
@@ -289,7 +291,7 @@ export class RunnerManager {
       const job = WorkerJobSchema.parse({
         telemetry: { directory: telemetryDirectory, parent: telemetry.context },
         chat: { ...turnWorkspace.chats.find((item) => item.id === chat.id), providerSession: chat.providerSession },
-        topics: this.contextTopics(chat.id, turnWorkspace).map((topic) => ({
+        topics: this.contextTopics(chat.id, turnWorkspace, input).map((topic) => ({
           ...topic,
           assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
         })),
@@ -361,16 +363,10 @@ export class RunnerManager {
     }
   }
 
-  // Tags persist for the whole chat; the most recently tagged topics stay in context within the prompt budget.
-  private contextTopics(chatId: string, { chats, topics } = this.repository.stateSnapshot) {
-    const ids = [
-      ...new Set(
-        chats
-          .find((chat) => chat.id === chatId)
-          ?.messages.flatMap((message) => message.topicIds)
-          .reverse(),
-      ),
-    ].slice(0, 8)
+  private contextTopics(chatId: string, { chats, topics } = this.repository.stateSnapshot, input?: Pick<z.infer<typeof SendSchema>, "openedTopicId" | "confirmTopicId">) {
+    const chat = chats.find((chat) => chat.id === chatId)
+    if (!chat) return []
+    const ids = selectTutorTopicIds(chat, input?.openedTopicId, input?.confirmTopicId)
     return topics.filter((topic) => ids.includes(topic.id))
   }
 
@@ -408,12 +404,12 @@ export class RunnerManager {
         if (turn.attemptId !== event.attemptId) throw new Error("This workflow attempt has been superseded.")
         const diagnostic = this.traces.get(id)
         let durationMs: number | undefined
-        if ((request.operation === "saveReply" || request.operation === "presentPlan") && diagnostic) {
+        if ((request.operation === "saveReply" || request.operation === "presentPlan" || request.operation === "presentRoleReply") && diagnostic) {
           durationMs = Math.max(0, performance.now() - diagnostic.startedAt)
         }
         const result = await dispatchWorkflowRequest(this.workflows, request, durationMs)
         child.postMessage({ type: "workflow_response", requestId: event.requestId, result: z.json().parse(JSON.parse(JSON.stringify(result ?? null))) })
-        if (request.operation === "commitBatch" || request.operation === "saveReply" || request.operation === "presentPlan") this.notify()
+        if (request.operation === "commitBatch" || request.operation === "saveReply" || request.operation === "presentPlan" || request.operation === "presentRoleReply") this.notify()
       } catch (error) {
         child.postMessage({ type: "workflow_response", requestId: event.requestId, error: error instanceof Error ? error.message : "Workflow request failed." })
       } finally {
@@ -424,17 +420,17 @@ export class RunnerManager {
     }
     if (event.type === "trace") {
       trace?.record(event.event, event.details)
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "reply") {
       runtime.reply = event.text
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "activity") {
       runtime.activity = event.activity
-      this.notify()
+      this.notifyRuntime()
       return
     }
     if (event.type === "title") {

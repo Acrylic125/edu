@@ -3,6 +3,7 @@ import {
   Channel,
   MaterialDraftSchema,
   SnapshotSchema,
+  RuntimeUpdateSchema,
   type DesktopBridge,
 } from "../shared/contracts"
 
@@ -17,6 +18,11 @@ const bridge: DesktopBridge = {
     ) => listener(SnapshotSchema.parse(payload))
     ipcRenderer.on(Channel.update, receive)
     return () => ipcRenderer.removeListener(Channel.update, receive)
+  },
+  subscribeRuntime: (listener) => {
+    const receive = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof RuntimeUpdateSchema.parse>[0]) => listener(RuntimeUpdateSchema.parse(payload))
+    ipcRenderer.on(Channel.runtimeUpdate, receive)
+    return () => ipcRenderer.removeListener(Channel.runtimeUpdate, receive)
   },
   connect: (provider) => ipcRenderer.invoke(Channel.connect, provider),
   disconnect: (provider) => ipcRenderer.invoke(Channel.disconnect, provider),

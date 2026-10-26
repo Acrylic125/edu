@@ -47,6 +47,10 @@ export const ProviderStatusSchema = z.object({
   error: z.string().optional(),
   models: z.array(ProviderModelSchema),
   settings: ProviderSettingsSchema.optional(),
+  runtime: z.object({
+    executable: z.string(),
+    source: z.enum(["installed", "bundled", "custom"]),
+  }).optional(),
 })
 export const CodexConnectionSchema = z.object({
   executable: z.string(),
@@ -240,6 +244,7 @@ export const SnapshotSchema = z.object({
   connected: z.boolean(),
   providers: z.array(ProviderStatusSchema),
 })
+export const RuntimeUpdateSchema = SnapshotSchema.pick({ runtime: true })
 export const CreateTopicSchema = z.object({
   title: z.string().trim().min(1).max(30_000),
   runnerId: IdSchema.optional(),
@@ -343,6 +348,7 @@ export const Channel = {
   copyText: "prune:copy-text",
   snapshot: "prune:snapshot",
   update: "prune:update",
+  runtimeUpdate: "prune:runtime-update",
   connect: "prune:connect",
   disconnect: "prune:disconnect",
   cancelConnection: "prune:cancel-connection",
@@ -379,6 +385,7 @@ export type DesktopBridge = {
   copyText: (text: string) => Promise<void>
   snapshot: () => Promise<Snapshot>
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void
+  subscribeRuntime: (listener: (update: z.infer<typeof RuntimeUpdateSchema>) => void) => () => void
   connect: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
   disconnect: (provider?: z.infer<typeof ProviderIdSchema>) => Promise<void>
   cancelConnection: (

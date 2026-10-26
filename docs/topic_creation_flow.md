@@ -44,7 +44,7 @@ Select, research, and submit are steps within the same planner invocation. There
 
 An explicit `/new-topic` request with a nonempty instruction routes directly to the planner. The planner clarifies missing subject, scope, or learner information before submitting a topic. An empty command returns to Tutor for clarification. Requests too large for the direct task boundary use the normal context preparation path.
 
-Conversational creation requests still use Tutor to identify intent and delegate planning. Ordinary tutoring uses one Tutor invocation with direct teaching tools and durable staged writes. Both creation routes use the same planner and commit contracts.
+Conversational creation requests still use Tutor to identify intent and delegate planning. Eligible confirmed-topic turns route directly to one isolated topic role with scoped teaching tools and durable staged writes. Other requests use Tutor for coordination. Both creation routes use the same planner and commit contracts.
 
 Explicit topic creation also skips model-generated chat naming. The committed topic supplies the chat title when the chat has no established title.
 
@@ -84,7 +84,7 @@ The host stages the validated topic and ends the planner invocation immediately.
 
 After commit, `presentPlan` builds the reply from the saved curriculum, goals, and source references. It saves the private handoff and assistant message with `awaiting_plan_confirmation`. The message retains the measured turn duration. Replaying presentation returns the existing receipt and message.
 
-A plan revision uses the same planner. Teaching mutations remain blocked until learner confirmation. Confirmed topics use one Tutor invocation to read sources, teach, record progress and dynamic questions, and save the private handoff. New explanations stream as response text, which the host saves into the active topic before publishing. Explicit edits can present existing lesson blocks. Neither path needs a second model response. Unrelated draft topics do not force confirmed teaching back through delegation.
+A plan revision uses the same planner. Teaching mutations remain blocked until learner confirmation. Eligible confirmed-topic turns use one topic-role invocation to read sources, teach, record progress and dynamic questions, and save the private handoff. New explanations stream as response text, which the host saves into the active topic before publishing. Explicit edits can present existing lesson blocks. The host commits and publishes the role response without a Tutor rewrite. Unrelated draft topics do not force a selected confirmed topic back through coordinator routing. See [Ordinary response latency](graph.md#ordinary-response-latency) for routing limits and coordination fallback.
 
 Creation produces no lesson blocks, assessment questions, answer keys, or fixed sequence of checks. During teaching, the tutor selects a source exercise or generates the next question from the current section and learner progress.
 
@@ -98,7 +98,7 @@ An isolated real-model replay on 2026-10-25 used the original request and attach
 
 The topic retained the requested title and three sections, with references to deck pages 5–11, 12–14, and 15–16. It reached `awaiting_plan_confirmation` without a repair call or generated questions.
 
-A later actual application trace measured 27.0 seconds through the one-planner path. That is separate from the 93.6–111.9 second teaching regression documented in [Tutor graph design](graph.md#ordinary-response-latency).
+A later actual application trace measured 27.0 seconds through the one-planner path. These planning measurements are separate from the confirmed-topic teaching route described in [Tutor graph design](graph.md#ordinary-response-latency).
 
 The original recorded run took 148.9 seconds. The intermediate implementation with model readers took 110.7 seconds. The new replay is a single sample, not a latency guarantee. Index preparation moves to attachment import for new files and is reused for subsequent topics.
 

@@ -4,78 +4,32 @@ import { z } from "zod"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import type { WorkerJob } from "../shared/contracts"
 import { BatchReceiptSchema, RoleJobSchema, RoleRequestSchema, RoleSummarySchema } from "../shared/tutor-workflow"
-import { ScratchpadMutationSchema } from "../shared/scratchpad-state"
+import { ScratchpadMutationSchema, scratchpadReferences } from "../shared/scratchpad-state"
 import { createTutorSession } from "./tutor"
 import { createTopicHandles, mapTopicReferenceIds, TopicHandleSchema } from "./topic-handles"
 import { scratchpadToolDefinitions } from "./scratchpad-tools"
 import { createTopicPlannerSession } from "./topic-planner"
+import { scratchpadContext, selectTutorTopicIds } from "./tutor-evidence"
+import { readSkillCatalog, teachingSkills } from "./tutor-skills"
+import { visualizationInstructions } from "../shared/visualization"
+import { chatTeachingInstructions } from "./chat-teaching"
 
-const teachingSkills = ["skills/FEEDBACK_AND_DELIBERATE.md", "skills/WHAT_IS_UNDERSTANDING.md", "skills/WRITING_STYLE.md", "skills/UNSLOP.md"] as const
 const DelegateSchema = z.object({ requests: z.array(RoleRequestSchema).min(1).max(12) }).strict()
 
-export async function createSingleTutorSession(job: WorkerJob, roles: z.infer<typeof RoleJobSchema>[], persist: (mutation: z.infer<typeof ScratchpadMutationSchema>) => Promise<void>, recordRead: (id: string, firstPage: number, lastPage: number) => Promise<void>, activity: (message: string) => void) {
-  let writes = roles.reduce((count, role) => count + role.operations.length, 0)
-  const base = await createTutorSession(job, activity, undefined, {
-    operations: roles.flatMap((role) => role.operations.map((operation) => operation.mutation)), readEvidence: roles.flatMap((role) => role.readEvidence), recordRead,
-    async persist(mutation) { await persist(mutation); writes += 1 },
-  })
-  const delegated = Promise.withResolvers<void>()
-  let requests: z.infer<typeof RoleRequestSchema>[] | undefined
-  const tools: ChatCompletionTool[] = base.tools.filter((tool) => {
-    if (tool.type !== "function") return false
-    const domain = scratchpadToolDefinitions.find((entry) => entry.name === tool.function.name)
-    return !domain?.writer || (roles.some((role) => role.role === domain.role) && !domain.creation)
-  })
-  tools.push({ type: "function", function: { name: "assume_role", description: "Delegate creation of a new scratchpad before making changes to the current one. Complete ordinary teaching, reading, feedback, questions, and progress updates directly with the supplied tools.", parameters: z.toJSONSchema(DelegateSchema) } })
-  const names = new Set(tools.flatMap((tool) => tool.type === "function" ? [tool.function.name] : []))
-  const session = {
-    ...base,
-    tools,
-    resumeProviderSession: true,
-    completion: Promise.race([base.completion, delegated.promise]),
-    instructions: `${base.instructions}\nComplete the learner's tutoring turn in this invocation: explain, evaluate answers, update the scratchpad, and ask the next dynamic check using the supplied tools. Do not delegate ordinary teaching or generate a separate role summary. Save the private handoff with save_learning_state. Write the chat explanation as a normal learner-facing response so it streams. Save new or revised topic walkthroughs separately with topic_editContent, following the scratchpad format in MANAGE_TOPIC.md. Omit present for these scratchpad edits so the chat keeps its own explanation. If the learner requests a new scratchpad, use assume_role before making changes to this one.`,
-    async execute(name: string, input: Parameters<typeof base.execute>[1]) {
-      try {
-        if (requests) throw new Error("Creation has been delegated. End this invocation.")
-        if (!names.has(name)) throw new Error("This tool is not granted to the current tutoring turn.")
-        if (name === "assume_role") {
-          if (writes) throw new Error("Finish the current tutoring changes before delegating a new scratchpad. Do not discard staged work.")
-          const candidate = DelegateSchema.parse(input).requests
-          if (candidate.some((request) => request.target.mode !== "create")) throw new Error("Use the supplied tools for teaching and reading existing scratchpads. Delegate only creation.")
-          requests = candidate
-          delegated.resolve()
-          return { success: true, text: "Creation delegated. End this invocation.", images: [] }
-        }
-        const result = await base.execute(name, input)
-        if (result.success && name === "save_learning_state" && base.hasReply("")) delegated.resolve()
-        return result
-      } catch (error) {
-        return { success: false, text: error instanceof Error ? error.message : "Invalid tutoring operation.", images: [] }
-      }
-    },
-    get saved() { return requests !== undefined || base.saved },
-    get saveError() { if (!requests) return base.saveError },
-    hasReply(reply: string) { return requests !== undefined || base.hasReply(reply) },
-    previewReply(reply: string) { if (!requests) return base.previewReply(reply); return "" },
-    finish(reply: string) {
-      if (requests) return { reply: "", learning: job.chat.learning, topicUpdates: [], topicMutations: [] }
-      return base.finish(reply)
-    },
-  }
-  return { session, get requests() { return requests } }
-}
-
 export async function createWorkflowTutorSession(job: WorkerJob, batches: z.infer<typeof BatchReceiptSchema>[], summary: string, activity: (message: string) => void, priorMutations: z.infer<typeof ScratchpadMutationSchema>[] = []) {
-  const base = await createTutorSession(job, activity, undefined, { priorMutations })
+  const base = await createTutorSession(job, activity, undefined, { priorMutations, skillPaths: teachingSkills })
   const handles = createTopicHandles(job)
   const handoff = structuredClone(job.chat.learning)
   if (handoff.pendingCheck) handoff.pendingCheck.topicId = handles.referenceHandle(handoff.pendingCheck.topicId)
-  const guides = await Promise.all(teachingSkills.map(async (path) => `${path}\n${await readFile(join(job.skillDirectory, path), "utf8")}`))
-  const directory = [...new Map([...job.topics, ...job.workspaceTopics].map((topic) => [topic.id, topic])).values()].map((topic) => ({
+  const catalog = await readSkillCatalog(job.skillDirectory, teachingSkills)
+  const focusedIds = new Set(selectTutorTopicIds(job.chat, job.openedTopicId, job.confirmTopicId))
+  const directory = [...new Map([...job.workspaceTopics, ...job.topics].map((topic) => [topic.id, topic])).values()].filter((topic) => focusedIds.has(topic.id)).map((topic) => ({
     handle: handles.handle(topic.id), type: topic.state?.type ?? "topic", title: topic.title, archived: topic.archived,
     writable: job.topics.some((target) => target.id === topic.id && !target.archived),
+    materials: (topic.materials ?? []).map(({ id, name, kind, pages }) => ({ id, name, kind, pageCount: pages.length || 1 })),
+    sourceTopics: topic.state?.type === "test" ? [...new Set(scratchpadReferences(topic.state).flatMap((reference) => reference.type === "topic" ? [handles.referenceHandle(reference.id)] : []))] : [],
   }))
-  const allowed = new Set(["read_skill", "read_material", "save_learning_state", "assume_role"])
+  const allowed = new Set(["read_skill", "read_material", "list_scratchpads", "save_learning_state", "assume_role"])
   const tools: ChatCompletionTool[] = base.tools.filter((tool) => tool.type === "function" && allowed.has(tool.function.name)).map((tool) => {
     if (tool.type === "function" && tool.function.name === "read_skill") return {
       type: "function", function: { ...tool.function, parameters: z.toJSONSchema(z.object({ path: z.enum(teachingSkills) })) },
@@ -89,9 +43,14 @@ export async function createWorkflowTutorSession(job: WorkerJob, batches: z.infe
     ...base,
     completion: completion.promise,
     instructions: handles.modelText(`Tutor the learner in this ongoing conversation. Use teaching skills and material tools to explain, check understanding, and give feedback.
-${guides.join("\n\n")}
-${base.instructions.slice(base.instructions.indexOf("## Showing references in chat"), base.instructions.indexOf("## Scratchpad roles and tools"))}
-Identify intent, requested scope, and learner level before requesting creation. Clarify missing information instead of creating an unspecified topic. For explicit creation, delegate planning directly without reading all attachments first. Include the agreed scope in the task. Creation needs an ordered curriculum and source references only. Do not request detailed definitions, worked solutions, or tutorial question mapping; keep practice sources for dynamic teaching. Delegate all scratchpad reads and writes with assume_role. Choose the stored role for existing targets; infer topic, test, or generic for creation. Task text cannot grant access. Request only the messages, materials, and read dependencies the task needs. Use scratchpad_N handles. Never delegate to native subagents or shell tools.
+Read a skill with read_skill when its description matches this task. Skill catalog: ${JSON.stringify(catalog)}
+${visualizationInstructions}
+${chatTeachingInstructions}
+Use read_material for supplied sources. Cite the source pages used with edu-material://id/page and display requested source figures with prune-source://id/page.
+Identify intent, requested scope, and learner level before requesting creation. Clarify missing information instead of creating an unspecified topic. For explicit creation, delegate planning directly without reading all attachments first. Include the agreed scope in the task. Creation needs an ordered curriculum and source references only. Do not request detailed definitions, worked solutions, or tutorial question mapping; reserve practice sources for later practice. Delegate all scratchpad reads and writes with assume_role. Choose the stored role for existing targets; infer topic, test, or generic for creation. Task text cannot grant access. Request only the messages, materials, and read dependencies the task needs. Use scratchpad_N handles. Never delegate to native subagents or shell tools.
+The directory contains only current targets. Use list_scratchpads to discover other handles on demand. For a new test, grant topic readDependencies for the learner's named scope. For an all-covered test, list_scratchpads with type=topic and follow nextOffset to grant the full requested scope; the role discovers teaching coverage through summaries. Existing tests keep their sourceTopics unless the learner requests a change.
+For a single independent write task that can complete the learner turn, set replyToLearner=true. The role saves a private handoff and writes the learner reply; the host publishes it after commit. Leave it false for read tasks, multiple jobs, or work requiring later coordination.
+For slide-based teaching, grant the target's relevant material IDs from the directory and the learner messages needed to continue the lesson. Include the requested source scope in the task. The reply role must continue the saved source position and teach the current source content in chat.
 After assume_role, end this invocation without a learner reply. The graph checkpoints the requests, runs the roles, and commits before resuming Tutor. Only committed summaries and evidence return here.
 After a topic plan commits, present its sections and save phase awaiting_plan_confirmation with no pending question or answer key. Save the private handoff with save_learning_state before a final learner reply. Use pendingCheck to refer to recorded checks. Keep answer keys private. A topic plan needs learner confirmation before teaching. Continue the learner's original request after delegation; keep workflow details out of the lesson.
 Chat ID: ${job.chat.id}
@@ -122,7 +81,7 @@ Chat materials: ${JSON.stringify(job.chat.materials.map(({ id, name, kind, pages
     get saveError() { if (!requests) return base.saveError },
     hasReply(reply: string) { return requests !== undefined || base.hasReply(reply) },
     previewReply(reply: string) { if (requests) return ""; return base.previewReply(reply) },
-    finish(reply: string) {
+    finish(reply = "") {
       if (requests) return { reply: "", learning: job.chat.learning, topicUpdates: [], topicMutations: [] }
       return base.finish(reply)
     },
@@ -147,6 +106,17 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   scoped.chat.messages = source.chat.messages.filter((message) => role.request.context.learnerMessageIds.includes(message.id))
     .map((message) => ({ ...message, materialIds: message.materialIds?.filter((id) => materialIds.has(id)) }))
   scoped.chat.learning = { ...source.chat.learning, phase: "ready_to_continue", outline: [], currentSection: "", pendingQuestion: "", pendingCheck: undefined, responseQuestion: undefined, privateAnswerKey: "", notes: "", workpad: "", nextAction: role.request.task }
+  const focusedIds = selectTutorTopicIds(source.chat, source.openedTopicId, source.confirmTopicId)
+  const continuesChat = role.request.replyToLearner === true && role.access === "write" && role.mode === "existing" && focusedIds.includes(role.scratchpadId)
+    && (!source.chat.learning.pendingCheck || source.chat.learning.pendingCheck.topicId === role.scratchpadId)
+  let chatInstructions = ""
+  if (role.request.replyToLearner && role.access === "write") chatInstructions = chatTeachingInstructions
+  if (continuesChat) {
+    scoped.chat.learning = structuredClone(source.chat.learning)
+    const handoff = structuredClone(scoped.chat.learning)
+    if (handoff.pendingCheck) handoff.pendingCheck.topicId = role.scratchpadHandle
+    chatInstructions += `\nPrivate chat handoff: ${JSON.stringify(handoff)}`
+  }
   scoped.chat.scratchpadRequested = false
   scoped.chat.providerSession = undefined
   scoped.chat.materials = source.chat.materials.filter((material) => materialIds.has(material.id))
@@ -163,10 +133,15 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   scoped.confirmTopicId = undefined
   if (role.role === "topic" && role.access === "write" && (role.mode === "create" || !role.snapshot?.planConfirmed))
     return createTopicPlannerSession(scoped, role, { creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist, readEvidence: role.readEvidence, recordRead }, activity)
-  const base = await createTutorSession(scoped, activity, undefined, { creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist, readEvidence: role.readEvidence, recordRead })
-  const skillPaths = [`skills/MANAGE_${role.role.toUpperCase()}.md`, "skills/UNSLOP.md", "skills/WRITING_STYLE.md",
+  const skillPaths = [`skills/MANAGE_${role.role.toUpperCase()}.md`, ...teachingSkills,
     `scratchpad_templates/${role.role}/schema.md`, `scratchpad_templates/${role.role}/tools.md`, `scratchpad_templates/${role.role}/scratchpad_${role.role}.md`]
-  const guides = await Promise.all(skillPaths.map(async (path) => `${path}\n${await readFile(join(source.skillDirectory, path), "utf8")}`))
+  let hasWrites = role.operations.length > 0
+  const base = await createTutorSession(scoped, activity, undefined, { creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist: async (mutation) => {
+    await persist(mutation)
+    hasWrites = true
+  }, readEvidence: role.readEvidence, recordRead, skillPaths })
+  const management = await readFile(join(source.skillDirectory, skillPaths[0]), "utf8")
+  const catalog = await readSkillCatalog(source.skillDirectory, teachingSkills)
   const roleTools = scratchpadToolDefinitions.filter((tool) => {
     if (tool.role !== role.role || (tool.writer && role.access !== "write") || (tool.creation && role.mode !== "create")) return false
     return true
@@ -180,13 +155,14 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   let recoveryInstructions = ""
   if (role.operations.length)
     recoveryInstructions = `Earlier staged writes are already applied to ${role.scratchpadHandle}. Read its current state with read_scratchpad before changing it. Preserve those writes instead of recreating the scratchpad. Reviewed pages remain verified; reread only sources needed to complete or change the task.`
-  const allowed = new Set(["read_skill", "read_material", "read_scratchpad", "finish_role", ...roleTools.map((tool) => tool.name)])
+  const allowed = new Set(["read_skill", "read_material", "read_scratchpad", "read_topic_evidence", "finish_role", ...roleTools.map((tool) => tool.name)])
   if (role.role === "test") allowed.add("test_getCoveredTopics")
+  if (role.request.replyToLearner && role.access === "write") allowed.add("save_learning_state")
   const tools: ChatCompletionTool[] = base.tools.filter((tool) => tool.type === "function" && allowed.has(tool.function.name)).map((tool) => {
     if (tool.type === "function" && tool.function.name === "read_skill") return { type: "function", function: { ...tool.function, parameters: z.toJSONSchema(z.object({ path: z.enum(skillPaths) })) } }
     return tool
   })
-  tools.push({ type: "function", function: { name: "finish_role", description: "Finish this bounded task with a concise summary and source evidence. The host validates and commits the staged work.", parameters: z.toJSONSchema(RoleSummarySchema, {
+  tools.push({ type: "function", function: { name: "finish_role", description: "Finish this bounded task with a concise summary and source evidence. The host validates and commits the staged work.", parameters: z.toJSONSchema(RoleSummarySchema.omit({ response: true }), {
     override({ jsonSchema }) {
       const properties = jsonSchema.properties
       if (properties?.type && typeof properties.type === "object" && properties.type.const === "topic" && properties.id)
@@ -197,7 +173,7 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   const session = {
     ...base,
     completion: completion.promise,
-    instructions: `Complete this ${role.role} scratchpad task with the supplied role tools.\n${guides.join("\n\n")}\nTask: ${role.request.task}\nRelevant context: ${role.request.context.relevantContext}\nTarget: ${role.scratchpadHandle}; access: ${role.access}; mode: ${role.mode}.\n${phaseInstructions}\n${recoveryInstructions}\nUse only this target for writes. Read dependencies: ${JSON.stringify(role.request.context.readDependencies)}. For non-planning tasks, use finish_role when done. Do not save a Tutor handoff or produce a learner lesson.\nFile references must use the exact referencePath below, including assets/. Material IDs are for read_material and source blocks, not file reference paths.\n${base.instructions.slice(base.instructions.indexOf("Current thread:"), base.instructions.indexOf("- threadTutors"))}\nCurrent target: ${JSON.stringify(role.snapshot && { title: role.snapshot.title, state: role.snapshot.state, notes: role.snapshot.learning.notes, planConfirmed: role.snapshot.planConfirmed })}\nGranted materials: ${JSON.stringify(materialDirectory)}`,
+    instructions: `Complete this ${role.role} scratchpad task with the supplied role tools.\n${management}\nRead the matching skill with read_skill when needed. Skill catalog: ${JSON.stringify(catalog)}\nRole references available through read_skill: ${JSON.stringify(skillPaths.filter((path) => !path.startsWith("skills/")))}\nTask: ${role.request.task}\nRelevant context: ${role.request.context.relevantContext}\nTarget: ${role.scratchpadHandle}; access: ${role.access}; mode: ${role.mode}.\n${phaseInstructions}\n${chatInstructions}\n${recoveryInstructions}\nUse only this target for writes. Read dependencies: ${JSON.stringify(role.request.context.readDependencies)}. For summary tasks, call finish_role when done. Reply to learner: ${role.request.replyToLearner === true}. When true, complete the assigned work, save_learning_state, and write a normal learner-facing reply so it streams. The host commits before publication. Summary tasks return only summary and evidence; their previews remain hidden.\nFile references must use the exact referencePath below, including assets/. Material IDs are for read_material and source blocks, not file reference paths.\nCurrent thread: ${scoped.chat.id}. Use only scratchpad_N handles. read_topic_evidence retrieves section history on demand. Source reads remain limited to Granted materials. Cite used pages with edu-material://id/page and requested figures with prune-source://id/page. ${visualizationInstructions}\nCurrent target: ${JSON.stringify(role.snapshot && { title: role.snapshot.title, planConfirmed: role.snapshot.planConfirmed, ...scratchpadContext(role.snapshot, scoped.chat) })}\nGranted materials: ${JSON.stringify(materialDirectory)}`,
     tools,
     async execute(name: string, input: Parameters<typeof base.execute>[1]) {
       try {
@@ -216,14 +192,24 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
         }
         if (name === "finish_role") {
           if (output) return { success: true, text: "Role already ready for host validation and commit.", images: [] }
-          const candidate = RoleSummarySchema.parse(mapTopicReferenceIds(z.json().parse(input), (handle) => {
+          const candidate = RoleSummarySchema.omit({ response: true }).parse(mapTopicReferenceIds(z.json().parse(input), (handle) => {
             if (handle === role.scratchpadHandle) return role.scratchpadId
             const id = handles.resolve(handle, false)
             if (!readIds.has(id)) throw new Error("Evidence must refer to a granted scratchpad.")
             return id
           }))
+          if (candidate.needsCoordination) {
+            if (role.mode !== "existing" || hasWrites || candidate.needsClarification)
+              throw new Error("Return a request for coordination only from an existing-target role before making any writes.")
+            output = candidate
+            completion.resolve()
+            return { success: true, text: "Request returned to Tutor for coordination. End this invocation.", images: [] }
+          }
           if (base.saveError && !candidate.needsClarification) throw new Error(base.saveError)
-          output = candidate
+          if (role.request.replyToLearner && !candidate.needsClarification) {
+            if (!base.saved || !base.hasReply("")) throw new Error("Save the handoff and write a normal learner reply, or select stored lesson blocks before finish_role.")
+            output = { ...candidate, response: base.finish("") }
+          } else output = candidate
           completion.resolve()
           return { success: true, text: "Role ready for host validation and commit. End the invocation.", images: [] }
         }
@@ -233,15 +219,17 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
         return { success: false, text: error instanceof Error ? error.message : "Invalid tool arguments.", images: [] }
       }
     },
-    get saved() { return output !== undefined },
+    get saved() { return output !== undefined || (role.request.replyToLearner === true && base.saved) },
     get saveError() { if (!output?.needsClarification) return base.saveError },
-    hasReply() { return output !== undefined },
-    previewReply() { return "" },
+    hasReply(reply: string) { return output !== undefined || (role.request.replyToLearner === true && base.hasReply(reply)) },
+    previewReply(reply: string) { if (role.request.replyToLearner) return base.previewReply(reply); return "" },
     recoveryMessage() {
       return [base.saveError ?? "", phaseInstructions, recoveryInstructions, "Complete the assigned task and call finish_role with its summary and evidence. Repair rejected writes only with tools allowed in the current phase."].filter((text) => text.length > 0).join("\n")
     },
-    finish() {
+    finish(reply = "") {
+      if (!output && role.request.replyToLearner) output = { summary: `Completed ${role.role} task.`, evidence: [{ type: "topic", id: role.scratchpadId }], response: base.finish(reply) }
       if (!output) throw new Error("The role did not finish its task.")
+      if (output.response) return { ...output.response, topicUpdates: [], topicMutations: [] }
       return { reply: output.summary, learning: scoped.chat.learning, topicUpdates: [], topicMutations: [] }
     },
   }

@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { ToolSchema } from "@modelcontextprotocol/sdk/types.js"
-import { IdSchema, LearningStateSchema, MessageSchema, ProviderSessionSchema, TopicSchema, WorkerJobSchema } from "./contracts"
+import { IdSchema, LearningStateSchema, MessageSchema, ProviderSessionSchema, TopicSchema, WorkerJobSchema, WorkerResultSchema } from "./contracts"
 import { ScratchpadMutationSchema, ScratchpadTypeSchema } from "./scratchpad-state"
 import { TopicReferenceSchema } from "./topic-state"
 
@@ -12,6 +12,7 @@ export const RoleRequestSchema = z.object({
   ]),
   task: z.string().trim().min(1).max(20_000),
   requestedAccess: z.enum(["read", "write"]),
+  replyToLearner: z.boolean().optional().describe("Complete this learner turn in the role and return its final reply and private handoff. Use only for one independent write job with no remaining coordination."),
   context: z.object({
     learnerMessageIds: z.array(IdSchema), materialIds: z.array(IdSchema),
     readDependencies: z.array(HandleSchema), relevantContext: z.string().max(20_000),
@@ -20,6 +21,8 @@ export const RoleRequestSchema = z.object({
 export const RoleSummarySchema = z.object({
   summary: z.string().trim().min(1).max(20_000), evidence: z.array(TopicReferenceSchema).max(1000),
   needsClarification: z.boolean().optional().describe("True when missing scope or reliable sources prevent creation. Return the specific gap to Tutor without creating a topic."),
+  needsCoordination: z.boolean().optional().describe("Return an existing-target request to Tutor when it needs creation, another target, or ungranted dependencies. Set before making any writes and summarize the requested action."),
+  response: WorkerResultSchema.pick({ reply: true, learning: true }).optional(),
 }).strict()
 export const RoleJobSchema = z.object({
   jobId: IdSchema, stageId: IdSchema, scratchpadId: IdSchema, scratchpadHandle: HandleSchema,
@@ -36,7 +39,7 @@ export const RoleJobSchema = z.object({
 })
 export const BatchReceiptSchema = z.object({
   receiptId: IdSchema, batchId: IdSchema, committedAt: z.iso.datetime(),
-  results: z.array(RoleSummarySchema.extend({ jobId: IdSchema, scratchpadId: IdSchema, scratchpadHandle: HandleSchema, role: ScratchpadTypeSchema, version: z.string() })),
+  results: z.array(RoleSummarySchema.omit({ response: true }).extend({ jobId: IdSchema, scratchpadId: IdSchema, scratchpadHandle: HandleSchema, role: ScratchpadTypeSchema, version: z.string() })),
 })
 export const RoleBatchSchema = z.object({
   batchId: IdSchema, tutorStepId: IdSchema, jobs: z.array(RoleJobSchema), receipt: BatchReceiptSchema.optional(),
@@ -93,6 +96,7 @@ export const WorkflowRequestSchema = z.discriminatedUnion("operation", [
   TurnKeySchema.extend({ operation: z.literal("ready"), jobId: IdSchema, output: RoleSummarySchema }),
   TurnKeySchema.extend({ operation: z.literal("commitBatch"), batchId: IdSchema }),
   TurnKeySchema.extend({ operation: z.literal("presentPlan"), batchId: IdSchema }),
+  TurnKeySchema.extend({ operation: z.literal("presentRoleReply"), batchId: IdSchema }),
   TurnKeySchema.extend({ operation: z.literal("saveHandoff"), tutorStepId: IdSchema, learning: LearningStateSchema, providerSession: ProviderSessionSchema.optional() }),
   TurnKeySchema.extend({ operation: z.literal("saveReply"), reply: z.string().min(1).max(200_000), handoffRef: IdSchema }),
   TurnKeySchema.extend({ operation: z.literal("complete") }),

@@ -66,6 +66,9 @@ export async function initializeWorkspace() {
     changed = true
     useWorkspace.getState().setSnapshot(snapshot)
   })
+  window.prune.subscribeRuntime(({ runtime }) => {
+    useWorkspace.setState((state) => ({ snapshot: { ...state.snapshot, runtime } }))
+  })
   try {
     const snapshot = await window.prune.snapshot()
     if (!changed) useWorkspace.getState().setSnapshot(snapshot)

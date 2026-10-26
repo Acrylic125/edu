@@ -48,6 +48,8 @@ export class TutorWorkflowRepository {
   async assumeRole(chatId: string, turnId: string, tutorStepId: string, input: z.infer<typeof RoleRequestSchema>[]) {
     this.get(chatId, turnId)
     const requests = z.array(RoleRequestSchema).min(1).max(12).parse(input)
+    if (requests.some((request) => request.replyToLearner) && (requests.length !== 1 || requests[0].requestedAccess !== "write"))
+      throw new Error("A direct learner reply requires one independent write role.")
     const turn = await this.workspace.updateWorkflow(turnId, (turn) => {
       if (turn.batches.some((batch) => batch.tutorStepId === tutorStepId)) return
       const source = committedSource(turn)
@@ -124,8 +126,14 @@ export class TutorWorkflowRepository {
     await this.workspace.updateWorkflow(turnId, (turn) => {
       const job = turn.batches.flatMap((batch) => batch.jobs).find((job) => job.jobId === jobId)
       if (!job) throw new Error("Role job not found.")
+      if (output.response && (!job.request.replyToLearner || job.access !== "write" || output.needsClarification || output.needsCoordination))
+        throw new Error("This role is not granted a direct learner reply.")
+      if (job.request.replyToLearner && !output.response && !output.needsClarification && !output.needsCoordination)
+        throw new Error("The role must supply its completed learner reply and handoff.")
       if (job.mode === "create" && !job.operations.length && !output.needsClarification) throw new Error("The creation role has not staged its scratchpad.")
       if (output.needsClarification && job.operations.length) throw new Error("A clarification result cannot include staged writes.")
+      if (output.needsCoordination && (job.mode !== "existing" || job.operations.length || output.needsClarification))
+        throw new Error("Only an existing-target role without staged writes can return a request for coordination.")
       job.output = RoleSummarySchema.parse(output)
       job.status = "ready"
     })
@@ -165,10 +173,13 @@ export class TutorWorkflowRepository {
       }
       batch.receipt = {
         receiptId: randomUUID(), batchId, committedAt: new Date().toISOString(),
-        results: batch.jobs.map((job) => ({ ...RoleSummarySchema.parse(job.output), jobId: job.jobId,
-          scratchpadId: job.scratchpadId, scratchpadHandle: job.scratchpadHandle, role: job.role,
-          version: scratchpadVersion(state.topics.find((topic) => topic.id === job.scratchpadId) ?? null),
-        })),
+        results: batch.jobs.map((job) => {
+          const { response: _response, ...summary } = RoleSummarySchema.parse(job.output)
+          return { ...summary, jobId: job.jobId,
+            scratchpadId: job.scratchpadId, scratchpadHandle: job.scratchpadHandle, role: job.role,
+            version: scratchpadVersion(state.topics.find((topic) => topic.id === job.scratchpadId) ?? null),
+          }
+        }),
       }
     })
     return turn.batches.find((batch) => batch.batchId === batchId)!.receipt!
@@ -213,6 +224,19 @@ export class TutorWorkflowRepository {
     })
     const handoff = await this.saveHandoff(chatId, turnId, batch.tutorStepId, learning)
     await this.saveReply(chatId, turnId, reply, handoff, durationMs)
+    return this.complete(chatId, turnId)
+  }
+
+  async presentRoleReply(chatId: string, turnId: string, batchId: string, durationMs?: number) {
+    const turn = this.get(chatId, turnId)
+    if (turn.receipt) return this.complete(chatId, turnId)
+    const batch = turn.batches.find((batch) => batch.batchId === batchId)
+    const job = batch?.jobs[0]
+    const response = job?.output?.response
+    if (!batch?.receipt || batch.jobs.length !== 1 || !job?.request.replyToLearner || !response)
+      throw new Error("A committed independent role reply is required.")
+    const handoff = await this.saveHandoff(chatId, turnId, job.jobId, response.learning)
+    await this.saveReply(chatId, turnId, response.reply, handoff, durationMs)
     return this.complete(chatId, turnId)
   }
 
@@ -378,7 +402,7 @@ export class TutorWorkflowRepository {
   }
 }
 
-type HostMethods = Pick<TutorWorkflowRepository, "get" | "assumeRole" | "stage" | "recordRead" | "ready" | "commitBatch" | "saveHandoff" | "saveReply" | "complete" | "saveContext" | "saveSummary" | "beginInvocation" | "endInvocation" | "presentPlan">
+type HostMethods = Pick<TutorWorkflowRepository, "get" | "assumeRole" | "stage" | "recordRead" | "ready" | "commitBatch" | "saveHandoff" | "saveReply" | "complete" | "saveContext" | "saveSummary" | "beginInvocation" | "endInvocation" | "presentPlan" | "presentRoleReply">
 export type WorkflowHost = { [Method in keyof HostMethods]: (...args: Parameters<HostMethods[Method]>) => Promise<Awaited<ReturnType<HostMethods[Method]>>> | ReturnType<HostMethods[Method]> }
 
 export function dispatchWorkflowRequest(repository: TutorWorkflowRepository, request: z.infer<typeof WorkflowRequestSchema>, durationMs?: number) {
@@ -393,6 +417,7 @@ export function dispatchWorkflowRequest(repository: TutorWorkflowRepository, req
     case "ready": return repository.ready(chatId, turnId, request.jobId, request.output)
     case "commitBatch": return repository.commitBatch(chatId, turnId, request.batchId)
     case "presentPlan": return repository.presentPlan(chatId, turnId, request.batchId, durationMs)
+    case "presentRoleReply": return repository.presentRoleReply(chatId, turnId, request.batchId, durationMs)
     case "saveHandoff": return repository.saveHandoff(chatId, turnId, request.tutorStepId, request.learning, request.providerSession)
     case "saveReply": return repository.saveReply(chatId, turnId, request.reply, request.handoffRef, durationMs)
     case "complete": return repository.complete(chatId, turnId)

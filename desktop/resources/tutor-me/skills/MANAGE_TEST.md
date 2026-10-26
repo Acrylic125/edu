@@ -16,10 +16,10 @@ description: Manage scratchpads of type, "test". Extract "type" from `{scratchpa
 ## Creating Test
 
 Steps:
-1. Establish the covered scope with `test_getCoveredTopics`. Use `topics: null` for all workspace topics unless the learner named a narrower scope. Include earlier teaching across tutor threads, not just the open scratchpad or latest lesson.
-2. Use completed parts as covered. For partial parts, read their recorded questions, answers and taught content to identify the concepts actually introduced. Planned goals, attached pages and activation alone do not establish that a concept has been taught. Exclude untouched parts and untaught portions of active parts. If teaching evidence is missing or ambiguous, clarify what was covered before asking questions about it.
+1. Discover the covered scope with `test_getCoveredTopics`. For a new test, use `topics: null` for all granted workspace topics unless the learner named a narrower scope. Follow `nextOffset` until the requested inventory is complete. The inventory summarizes coverage across tutor threads without loading their lesson text or answer history.
+2. Use completed parts as covered. Before selecting questions for a partial part, call `read_topic_evidence` with its topic and part IDs. Read its recorded questions, answers, and lesson blocks to identify the concepts introduced. Follow `nextOffset` for the required evidence. Inventory objectives describe the plan; actual teaching evidence establishes partial coverage. Exclude untouched parts and untaught portions of active parts. If teaching evidence is missing or ambiguous, clarify the covered scope.
 3. Create the test with references to the source topics and objectives drawn from this covered scope. When scope is already clear from the request and evidence, proceed; otherwise validate the objectives with the learner.
-4. Save the agreed scope and a per-part coverage tally in the private handoff. Preserve it across turns; refresh teaching evidence when the learner asks to expand the test.
+4. Save the source topic references in the test and a per-part coverage tally in the private handoff. On later turns, `topics: null` uses those saved source topics. Preserve the agreed scope; supply an explicit topic list when the learner requests a change.
 
 ## Explaining
 When needed, [explain in this style](WRITING_STYLE.md).
@@ -29,8 +29,8 @@ When needed, [explain in this style](WRITING_STYLE.md).
 Ask one question at a time. Select questions dynamically across the full agreed covered scope.
 
 Before each question:
-1. Read existing questions from both the source topics and the test to avoid reusing walkthrough checks or previous test questions, and reconstruct the coverage tally. Read mistakes for the source topics involved.
-2. Choose an eligible part with the fewest questions so far. Rotate across all covered parts before repeating one; use past mistakes to break ties. Recency does not increase a part's priority. Count a cross-topic question against each part it actually assesses.
+1. Restore the saved coverage tally and inspect the coverage inventory for the agreed source topics. Read the test's existing questions to avoid repeating an assessment.
+2. Choose an eligible part with the fewest questions so far. Read that part with `read_topic_evidence` to check its earlier walkthrough questions, answers, and mistakes. Rotate across all covered parts before repeating one; use past mistakes to break ties. Recency does not increase a part's priority. Count a cross-topic question against each part it actually assesses.
 3. Select a question using the Question Sources rules below. Verify every required concept and prerequisite against the covered scope, including for mixed-topic exercises.
 4. Add the question with references to its source topics, goals matching the covered concepts, and its source reference. Save the updated tally and next part in the private handoff. Continue using the agreed scope when resuming an existing test; correct any earlier out-of-scope selection.
 

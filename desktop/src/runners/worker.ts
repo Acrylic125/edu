@@ -9,6 +9,7 @@ import { createWorkflowClient } from "./workflow-client"
 import { SqliteCheckpointSaver } from "./workflow-checkpointer"
 import { parseScratchpadCommand } from "../shared/scratchpad-commands"
 import { createTutorGraph, type WorkflowNativeRunner } from "./tutor-graph"
+import { createBatchedUpdate } from "../shared/batched-update"
 
 let busy = false
 let workflowClient: ReturnType<typeof createWorkflowClient> | undefined
@@ -27,6 +28,8 @@ process.parentPort.on("message", async (event) => {
   }
   busy = true
   let telemetry: TurnTelemetry | undefined
+  let reply = ""
+  const replyUpdates = createBatchedUpdate(() => process.parentPort.postMessage({ type: "reply", text: reply }))
   const flushTelemetry = async (failed: boolean) => {
     try {
       await telemetry?.finish(failed)
@@ -43,8 +46,11 @@ process.parentPort.on("message", async (event) => {
     })
     const activity = (activity: string) =>
       process.parentPort.postMessage({ type: "activity", activity })
-    const onReply = (text: string) =>
-      process.parentPort.postMessage({ type: "reply", text })
+    const onReply = (text: string) => {
+      if (text === reply) return
+      reply = text
+      replyUpdates.schedule()
+    }
     const diagnostic: Diagnostic = (event, details) =>
       process.parentPort.postMessage({ type: "trace", event, details })
     const processChanged = (pid: number | null) =>
@@ -100,6 +106,7 @@ process.parentPort.on("message", async (event) => {
       workflowClient = undefined
     }
     await flushTelemetry(false)
+    replyUpdates.flush()
     process.parentPort.postMessage({ type: "workflow_complete", turnId: job.workflow.turnId })
   } catch (error) {
     if (error instanceof TutorPublicationError)
@@ -109,6 +116,7 @@ process.parentPort.on("message", async (event) => {
     if (error instanceof Error) message = error.message
     process.parentPort.postMessage({ type: "error", error: message })
   } finally {
+    replyUpdates.cancel()
     workflowClient?.close()
     workflowClient = undefined
     busy = false

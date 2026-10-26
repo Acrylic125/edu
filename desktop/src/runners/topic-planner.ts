@@ -10,6 +10,7 @@ import { ScratchpadNameSchema, TopicPartSchema, TopicReferenceSchema } from "../
 import { RoleJobSchema, RoleSummarySchema } from "../shared/tutor-workflow"
 import { extractMaterial, indexDocument, materialDigest } from "../main/material-extraction"
 import { createTutorSession } from "./tutor"
+import { readSkillCatalog, teachingSkills } from "./tutor-skills"
 
 const SelectSectionsSchema = z.object({ sectionIds: z.array(DocumentSectionSchema.shape.id).min(1).max(100), includeVisuals: z.boolean().default(false) }).strict()
 const SubmitPlanSchema = z.object({
@@ -26,10 +27,9 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
     ...job.workspaceTopics.flatMap((topic) => (topic.materials ?? []).map((material) => [material.id, { material, directory: topic.assetDirectory ?? job.assetDirectory }] as const)),
   ]).values()].filter(({ material }) => role.request.context.materialIds.includes(material.id))
   const practiceIds = new Set(available.filter(({ material }) => /tutorial|worksheet|problem[ _-]*set|practice[ _-]*sheet|assignment/i.test(`${material.name}\n${(material.pages[0] ?? material.text).slice(0, 250)}`)).map(({ material }) => material.id))
-  const hasCurriculum = available.some(({ material }) => !practiceIds.has(material.id))
   const indexed = available.map((source) => ({ ...source, practice: practiceIds.has(source.material.id) }))
   for (const source of indexed) {
-    if (hasCurriculum && practiceIds.has(source.material.id)) {
+    if (source.practice) {
       continue
     }
     let material = source.material
@@ -54,14 +54,16 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
     source.practice = practice
   }
   const curriculum = indexed.filter((source) => !source.practice)
-  // A worksheet can itself be the requested curriculum when it is the only source.
-  if (!curriculum.length) curriculum.push(...indexed)
   const indexedJob = structuredClone(job)
   const replaceMaterial = (material: WorkerJob["chat"]["materials"][number]) => indexed.find((source) => source.material.id === material.id)?.material ?? material
   indexedJob.chat.materials = indexedJob.chat.materials.map(replaceMaterial)
   for (const topic of indexedJob.topics) topic.materials = topic.materials.map(replaceMaterial)
   for (const topic of indexedJob.workspaceTopics) topic.materials = topic.materials?.map(replaceMaterial)
-  const base = await createTutorSession(indexedJob, activity, undefined, persist)
+  const skillPaths = ["skills/MANAGE_TOPIC.md", ...teachingSkills,
+    "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/tools.md", "scratchpad_templates/topic/scratchpad_topic.md"]
+  const base = await createTutorSession(indexedJob, activity, undefined, { ...persist, skillPaths })
+  const management = await readFile(join(job.skillDirectory, "skills/MANAGE_TOPIC.md"), "utf8")
+  const catalog = await readSkillCatalog(job.skillDirectory, teachingSkills)
   const sections = new Map<string, { section: z.infer<typeof DocumentSectionSchema>; reference: z.infer<typeof TopicReferenceSchema>; materialId?: string; text?: string }>()
   for (const { material } of curriculum) {
     for (const section of material.documentIndex?.sections ?? []) {
@@ -79,6 +81,7 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
   let errorMessage: string | undefined
   let webReads = 0
   const tools: ChatCompletionTool[] = [
+    { type: "function", function: { name: "read_skill", description: "Read a topic role skill or reference when needed.", parameters: z.toJSONSchema(z.object({ path: z.enum(skillPaths) })) } },
     { type: "function", function: { name: "select_topic_sections", description: "Read indexed curriculum sections in one batch. Supply only the IDs needed for the requested scope. The host supplies their text and records source evidence. Request images only to resolve ambiguous headings or figures.", parameters: z.toJSONSchema(SelectSectionsSchema) } },
     { type: "function", function: { name: "inspect_web_source", description: "Fetch and inspect an actual source page after native web search. Returns a host-issued section ID and its content. Use that ID in the plan. A URL from search results alone cannot be cited.", parameters: z.toJSONSchema(WebSourceSchema) } },
     { type: "function", function: { name: "submit_topic_plan", description: "Save the proposed curriculum using reviewed section IDs. The host constructs part IDs, file paths, page ranges, and citations. No reference fields are accepted. This ends planning immediately; the host presents confirmation after commit.", parameters: z.toJSONSchema(SubmitPlanSchema) } },
@@ -89,10 +92,13 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
     completion: completion.promise,
     tools,
     instructions: `Create a curriculum for the learner's request. This invocation identifies scope, reads the needed sources, and submits the plan. If the subject or scope is unclear, use request_topic_clarification before creating anything.
+${management}
+Read the relevant general skill on demand. Skill catalog: ${JSON.stringify(catalog)}
+Topic references available through read_skill: ${JSON.stringify(skillPaths.filter((path) => !path.startsWith("skills/")))}
 Task: ${role.request.task}
 Context: ${role.request.context.relevantContext}
 Indexed curriculum sections: ${JSON.stringify([...sections.values()].map(({ section, materialId }) => ({ ...section, materialId })))}
-Practice attachments retained automatically: ${JSON.stringify(indexed.filter((source) => source.practice && !curriculum.includes(source)).map(({ material }) => ({ name: material.name, pageCount: material.pages.length || 1 })))}
+Practice attachments retained automatically: ${JSON.stringify(indexed.filter((source) => source.practice).map(({ material }) => ({ name: material.name, pageCount: material.pages.length || 1 })))}
 Select the requested section IDs together with select_topic_sections. Preserve their source order, headings, and continuation ranges. Do not navigate by guessing page numbers or spawn section readers. OCR is a navigation aid; inspect source images if a heading is unclear. Do not inspect or cite deferred practice attachments just to preserve them.
 If no suitable curriculum source is supplied, use native web search, then inspect_web_source for candidate official documentation, textbooks, university materials, or primary publications. Use at most two search rounds. If sources remain unavailable, ask a focused clarification.
 Submit a concise plan with submit_topic_plan: title, selected section IDs, and one or two essential learning goals per section with concise understoodWhen criteria. Use a name override only to clarify a source heading. The host owns references and page ranges. Do not generate questions, answer keys, worked lessons, a handoff, or a final learner reply. These belong to teaching after confirmation.`,
@@ -100,6 +106,7 @@ Submit a concise plan with submit_topic_plan: title, selected section IDs, and o
     async execute(name: string, input: Parameters<typeof base.execute>[1]) {
       try {
         if (output) throw new Error("Planning has ended.")
+        if (name === "read_skill") return base.execute(name, input)
         if (name === "select_topic_sections") {
           const { sectionIds, includeVisuals } = SelectSectionsSchema.parse(input)
           const selected = sectionIds.map((id) => {

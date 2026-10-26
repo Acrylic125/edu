@@ -2,12 +2,14 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
-import { app } from "electron"
+import { dirname, join, resolve } from "node:path"
+import { app, BrowserWindow, ipcMain } from "electron"
 import { setTimeout } from "node:timers/promises"
 import { newChat, newTopic, WorkspaceRepository } from "../src/main/workspace"
 import { RunnerManager } from "../src/runners/manager"
 import { TutorWorkflowRepository } from "../src/main/tutor-workflow"
+import { Channel, RuntimeUpdateSchema, SnapshotSchema } from "../src/shared/contracts"
+import { createBatchedUpdate } from "../src/shared/batched-update"
 
 async function main() {
   await app.whenReady()
@@ -42,30 +44,25 @@ async function main() {
     if (!blocked.isError) throw new Error("Premature teaching was allowed");
     await call("submit_topic_plan", { title: "Vector spaces plan", sections: sections.map((section) => ({ sectionId: section.id, goals: [] })) });
     await new Promise(() => {});
-  } else if (input.includes("Complete the learner's tutoring turn in this invocation")) {
-    const target = input.match(/Opened scratchpad: (scratchpad_[0-9]+)/)?.[1];
-    if (!target) throw new Error("Missing tagged topic handle");
+  } else if (input.includes("Complete this topic scratchpad task")) {
+    const target = input.match(/Target: (scratchpad_[0-9]+)/)?.[1];
+    if (!target) throw new Error("Missing role handle");
+    const blocked = await call("test_getQuestions", { testId: target }, true);
+    if (!blocked.isError) throw new Error("Topic role received test tools");
+    if (input.includes("## Vary the rhythm")) throw new Error("General skill bodies were eagerly injected");
+    await call("read_skill", { path: "skills/WRITING_STYLE.md" });
     await call("read_material", { id: materials[0].id, firstPage: 1, lastPage: 1 });
     await call("topic_activatePart", { topicId: target, topicPartId: "tp-section-1" });
     await call("topic_editContent", { topicId: target, changes: [{ action: "add", block: { type: "markdown", id: "closure-lesson", content: ["Consider closure under addition."] } }], present: ["closure-lesson"] });
     await call("topic_recordQuestion", { topicId: target, topicPartId: "tp-section-1", question: "Does your example satisfy closure under addition?" });
     await call("save_learning_state", { phase: "awaiting_answer", outline: [], currentSection: "Vector spaces", pendingQuestion: "", privateAnswerKey: "Adding two members must remain inside the set.", nextAction: "Wait for the learner answer", notes: "", workpad: "Asked a dynamic check after confirmation." });
+    await call("finish_role", { summary: "Completed the first section", evidence: [] });
     await new Promise(() => {});
-  } else if (input.includes("Complete this topic scratchpad task") && input.includes("Before activating a part")) {
-    const target = input.match(/Target: (scratchpad_[0-9]+)/)?.[1];
-    await call("read_material", { id: materials[0].id, firstPage: 1, lastPage: 1 });
-    await call("topic_activatePart", { topicId: target, topicPartId: "tp-section-1" });
-    await call("topic_recordQuestion", { topicId: target, topicPartId: "tp-section-1", question: "Does your example satisfy closure under addition?" });
-    await call("finish_role", { summary: "Asked first dynamic check", evidence: [] });
-    await new Promise(() => {});
-  } else if (input.includes("Asked first dynamic check")) {
-    await call("save_learning_state", { phase: "awaiting_answer", outline: [], currentSection: "Vector spaces", pendingQuestion: "", privateAnswerKey: "Adding two members must remain inside the set.", nextAction: "Wait for the learner answer", notes: "", workpad: "Asked a dynamic check after confirmation." });
-    reply = "Consider closure under addition.";
   } else if (input.includes("Start the confirmed topic")) {
     const directoryLine = input.split("\\n").find((line) => line.startsWith("Scratchpad directory: "));
     const targets = JSON.parse(directoryLine.slice("Scratchpad directory: ".length));
     const target = targets.find((target) => target.title === "Vector spaces plan");
-    await call("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: target.handle }, task: "Guide confirmed topic and ask one dynamic check", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [materials[0].id], readDependencies: [], relevantContext: "Learner confirmed" } }] });
+    await call("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: target.handle }, task: "Guide confirmed topic and ask one dynamic check", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [], materialIds: [materials[0].id], readDependencies: [], relevantContext: "Learner confirmed" } }] });
   } else if (input.includes("Proposed plan saved")) {
     await call("save_learning_state", { phase: "awaiting_plan_confirmation", outline: [], currentSection: "", pendingQuestion: "", privateAnswerKey: "", nextAction: "Wait for plan confirmation", notes: "", workpad: "The source-ordered PDF plan is ready for confirmation." });
     reply = "Please confirm the vector spaces plan.";
@@ -90,7 +87,9 @@ async function main() {
     const chat = newChat(runner.id)
     chat.titleGenerated = true
     await workspace.mutate((state) => { state.runners = [runner]; state.chats.push(chat) })
-    manager = new RunnerManager(workspace, resolve(process.argv[2] ?? ".test-out/worker.js"), resolve(process.argv[3] ?? "resources/tutor-me"), async () => ({ apiKey: "", cli: { provider: "claude", executable, directory } }), () => {})
+    let fullUpdates = 0
+    let runtimeUpdates = 0
+    manager = new RunnerManager(workspace, resolve(process.argv[2] ?? ".test-out/worker.js"), resolve(process.argv[3] ?? "resources/tutor-me"), async () => ({ apiKey: "", cli: { provider: "claude", executable, directory } }), () => { fullUpdates += 1 }, true, () => { runtimeUpdates += 1 })
     const waitFor = async (status: "error" | "ready") => {
       for (let attempt = 0; attempt < 400; attempt++) {
         const runtime = manager!.statuses.find((runtime) => runtime.chatId === chat.id)
@@ -157,8 +156,34 @@ async function main() {
     assert.equal(taught.planConfirmed, true)
     assert.equal(taught.state?.type === "topic" && taught.state.threadTutors.some((thread) => thread.progress["tp-section-1"]?.steps.length === 1), true)
     assert.equal(workspace.chat(planChat.id).learning.phase, "awaiting_answer")
-    assert.equal(new TutorWorkflowRepository(workspace).get(planChat.id, teachingTurnId).nativeInvocations.length, 1, "Ordinary teaching must not add routing or final-summary invocations")
-    console.log("PASS: learner confirms plan → one native invocation → stored lesson and dynamic check persist")
+    assert.equal(new TutorWorkflowRepository(workspace).get(planChat.id, teachingTurnId).nativeInvocations.length, 1, "Confirmed teaching must reach its isolated role without a routing model or final Tutor rewrite")
+    assert.ok(runtimeUpdates > fullUpdates, "Tool activity and diagnostics must use runtime updates instead of full workspace snapshots")
+    console.log("PASS: learner confirms plan → Tutor assumes topic role → isolated work commits → reply publishes without rewriting")
+    console.log(`PASS: ${runtimeUpdates} activity/trace updates use the runtime channel; ${fullUpdates} durable/lifecycle updates use workspace snapshots`)
+    let preload = resolve(".test-out/preload/index.js")
+    if (process.argv[2]) preload = join(dirname(process.argv[2]), "../preload/index.js")
+    const renderer = new BrowserWindow({ show: false, webPreferences: { preload, contextIsolation: true, sandbox: true, backgroundThrottling: false } })
+    ipcMain.handle(Channel.snapshot, () => ({ runners: workspace.publicRunners, topics: workspace.publicTopics, chats: workspace.publicChats, runtime: manager!.statuses, connected: true, providers: [] }))
+    try {
+      await renderer.loadURL("data:text/html,<title>EdU runtime bridge test</title>")
+      const snapshot = SnapshotSchema.parse(await renderer.webContents.executeJavaScript("window.prune.snapshot()"))
+      assert.ok(snapshot.chats.some((saved) => saved.id === planChat.id))
+      await renderer.webContents.executeJavaScript("window.runtimeReceived = new Promise(resolve => window.prune.subscribeRuntime(resolve)); true")
+      let reply = ""
+      const updates = createBatchedUpdate(() => renderer.webContents.send(Channel.runtimeUpdate, { runtime: [{ runnerId: runner.id, chatId: planChat.id, status: "running", activity: "Streaming", reply }] }))
+      for (let index = 0; index < 1000; index++) {
+        reply = `Token ${index}`
+        updates.schedule()
+      }
+      updates.flush()
+      const received = RuntimeUpdateSchema.parse(await renderer.webContents.executeJavaScript("window.runtimeReceived"))
+      assert.equal(received.runtime[0].reply, "Token 999")
+      assert.deepEqual(Object.keys(received), ["runtime"])
+      console.log("PASS: the sandboxed preload loads snapshots and receives the latest batched runtime update without workspace data")
+    } finally {
+      ipcMain.removeHandler(Channel.snapshot)
+      renderer.destroy()
+    }
   } catch (error) {
     console.error(error)
     exitCode = 1

@@ -11,6 +11,8 @@ void app.whenReady().then(async () => {
   window.webContents.on("console-message", (event) => console.log(event.message))
   try {
     await window.loadFile(join(__dirname, "../renderer/index.html"))
+    // Hidden windows need renderer focus for Chromium to expose keyboard focus states.
+    window.webContents.focus()
     await window.webContents.executeJavaScript("window.renderingTests ?? Promise.reject(new Error('Rendering tests did not start'))")
     app.exit(0)
   } catch (error) {

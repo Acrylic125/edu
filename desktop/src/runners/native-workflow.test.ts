@@ -5,9 +5,9 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
 import { z } from "zod"
-import { newChat } from "../main/workspace"
+import { newChat, newTopic } from "../main/workspace"
 import { WorkerJobSchema } from "../shared/contracts"
-import { createSingleTutorSession, createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
+import { createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
 import { RoleJobSchema } from "../shared/tutor-workflow"
 import { materialDigest } from "../main/material-extraction"
 import { runCodexTutorTurn } from "./codex"
@@ -118,14 +118,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `, { mode: 0o700 })
   const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory, codex: { executable, home: directory } })
-  const first = await createSingleTutorSession(job, [], async () => {}, async () => {}, () => {})
+  const first = await createWorkflowTutorSession(job, [], "", () => {})
+  first.session.resumeProviderSession = true
   const previewsBeforeSave: string[] = []
   const result = await runCodexTutorTurn(job, () => {}, () => {}, () => {}, undefined, (text) => { if (!first.session.saved && text) previewsBeforeSave.push(text) }, first.session)
   assert.deepEqual(previewsBeforeSave, ["A ", "A response"], "Provider deltas must reach the learner before the handoff is saved")
   job.chat.providerSession = result.providerSession
   job.chat.messages.push({ id: randomUUID(), role: "assistant", content: result.reply, createdAt: new Date().toISOString(), topicIds: [] })
   job.chat.messages.push({ id: randomUUID(), role: "user", content: "Second learner message", createdAt: new Date().toISOString(), topicIds: [] })
-  const second = await createSingleTutorSession(job, [], async () => {}, async () => {}, () => {})
+  const second = await createWorkflowTutorSession(job, [], "", () => {})
+  second.session.resumeProviderSession = true
   await runCodexTutorTurn(job, () => {}, () => {}, () => {}, undefined, () => {}, second.session)
   const requests = (await readFile(log, "utf8")).trim().split("\n").map((line) => z.object({ method: z.string().optional(), params: z.json().optional() }).parse(JSON.parse(line)))
   assert.equal(requests.filter((request) => request.method === "thread/start").length, 1)
@@ -133,4 +135,20 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const input = requests.filter((request) => request.method === "turn/start").at(-1)?.params
   assert.match(JSON.stringify(input), /Second learner message/)
   assert.equal(JSON.stringify(input).includes("First learner message"), false)
+  const target = newTopic("Response notes", "generic")
+  job.topics = [{ ...target, assetDirectory: directory }]
+  job.chat.topicHandles = [target.id]
+  const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "generic", access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
+    request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Reply to the learner", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [job.chat.messages.at(-1)!.id], materialIds: [], readDependencies: [], relevantContext: "" } },
+  })
+  const child = await createWorkflowRoleSession(job, role, async () => {}, () => {})
+  const rolePreviews: string[] = []
+  const roleResult = await runCodexTutorTurn(child.job, () => {}, () => {}, () => {}, undefined, (text) => { if (text) rolePreviews.push(text) }, child.session)
+  assert.ok(rolePreviews.includes("A "))
+  assert.ok(rolePreviews.includes("A response"))
+  assert.equal(roleResult.reply, "A response")
+  assert.equal(child.output?.response?.reply, "A response")
+  const afterRole = (await readFile(log, "utf8")).trim().split("\n").map((line) => z.object({ method: z.string().optional() }).parse(JSON.parse(line)))
+  assert.equal(afterRole.filter((request) => request.method === "thread/start").length, 2, "The role must start an isolated provider context")
+  assert.equal(afterRole.filter((request) => request.method === "thread/resume").length, 1, "The role must not resume the coordinator's provider thread")
 })

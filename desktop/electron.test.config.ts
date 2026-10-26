@@ -9,4 +9,11 @@ export default defineConfig({
       rollupOptions: { input: { workflow: resolve("test/workflow-electron.ts"), worker: resolve("src/runners/worker.ts") } },
     },
   },
+  preload: {
+    build: {
+      outDir: ".test-out/preload",
+      externalizeDeps: false,
+      rollupOptions: { input: { index: resolve("src/main/preload.ts") } },
+    },
+  },
 })

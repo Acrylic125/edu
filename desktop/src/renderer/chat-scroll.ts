@@ -9,9 +9,23 @@ const ScrollPositionSchema = z.object({
 export function useChatScroll(chatId: string) {
   const viewport = useRef<HTMLDivElement | null>(null)
   const atBottom = useRef(true)
+  const lastPosition = useRef({ top: 0, bottom: 0 })
   const followBottom = useCallback(() => {
     const element = viewport.current
-    if (element && atBottom.current) element.scrollTop = element.scrollHeight
+    if (!element) return
+    const top = element.scrollTop
+    const bottom = element.scrollHeight - element.clientHeight
+    const reachedBottom = bottom - top <= 2
+    // Scroll and resize callbacks can arrive in either order when a visual loads.
+    if (top < lastPosition.current.top) {
+      atBottom.current = reachedBottom
+    } else if (top > lastPosition.current.top && (reachedBottom || Math.abs(lastPosition.current.bottom - top) <= 2)) {
+      atBottom.current = true
+    }
+    if (atBottom.current) {
+      element.scrollTop = element.scrollHeight
+    }
+    lastPosition.current = { top: element.scrollTop, bottom }
   }, [])
 
   const ref = useCallback((element: HTMLDivElement | null) => {
@@ -26,11 +40,15 @@ export function useChatScroll(chatId: string) {
     }
     atBottom.current = saved.atBottom
     element.scrollTop = saved.top
+    lastPosition.current = {
+      top: element.scrollTop,
+      bottom: element.scrollHeight - element.clientHeight,
+    }
     followBottom()
 
     function save() {
       if (!element) return
-      atBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop <= 2
+      followBottom()
       try {
         localStorage.setItem(`edu:chat-scroll:${chatId}`, JSON.stringify({
           top: element.scrollTop,
