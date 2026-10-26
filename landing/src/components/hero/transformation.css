@@ -55,8 +55,8 @@ transformation-hero {
 .hero-question { position: absolute; top: 0.35em; left: var(--punctuation-left, 3.6em); color: var(--book-gold-dark); opacity: calc(1 - var(--hero-word-2, 1)); }
 .hero-description { display: grid; margin-top: 1.5rem; transform: translateY(calc((1 - var(--hero-word-2, 1)) * var(--hero-subtext-rise, 40px) * -1)); }
 .hero-description p { grid-area: 1 / 1; color: var(--muted-foreground); font-size: 1.0625rem; line-height: 1.7; }
-.hero-before { opacity: calc(1 - var(--hero-copy-progress)); filter: blur(calc(var(--hero-copy-progress) * 12px)); transform: translateY(calc(var(--hero-copy-progress) * -12px)); }
-.hero-after { opacity: var(--hero-copy-progress); filter: blur(calc((1 - var(--hero-copy-progress)) * 12px)); transform: translateY(calc((1 - var(--hero-copy-progress)) * 12px)); }
+.hero-before { opacity: calc(1 - var(--hero-copy-progress)); transform: translateY(calc(var(--hero-copy-progress) * -12px)); }
+.hero-after { opacity: var(--hero-copy-progress); transform: translateY(calc((1 - var(--hero-copy-progress)) * 12px)); }
 .hero-actions { margin-top: 1.75rem; }
 .hero-actions .action {
   border-color: color-mix(in srgb, var(--primary) calc((1 - var(--hero-progress)) * 100%), transparent);
