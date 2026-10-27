@@ -79,7 +79,7 @@ function VisualizationMarkdownDiv({ node, children }: ComponentPropsWithoutRef<"
 function MarkdownImage({ src, alt, title }: ComponentPropsWithoutRef<"img"> & ExtraProps) {
   const { materials = [] } = useContext(MarkdownReferences)
   const source = resolveMaterialLink(src ?? "", materials)
-  if (source) src = `prune-source://${source.id}/${source.page}`
+  if (source) src = `edu-source://${source.id}/${source.page}`
   return (
     <MediaPreview
       label={alt || "Image preview"}
@@ -230,7 +230,7 @@ const MarkdownContent = memo(function MarkdownContent({ text, materials, showSou
       <Markdown
         skipHtml
         urlTransform={(url) =>
-          /^(prune-source:\/\/[a-f0-9-]+\/\d+|edu-material:\/\/[a-f0-9-]+\/\d+|edu-topic:\/\/[a-f0-9-]+)$/.test(url)
+          /^(edu-source:\/\/[a-f0-9-]+\/\d+|edu-material:\/\/[a-f0-9-]+\/\d+|edu-topic:\/\/[a-f0-9-]+)$/.test(url)
             ? url
             : defaultUrlTransform(url)
         }

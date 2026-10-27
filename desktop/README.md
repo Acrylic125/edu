@@ -76,7 +76,7 @@ To create a local app bundle without macOS signing, run `pnpm package:dir`.
 Set an absolute user-data path when starting the app:
 
 ```sh
-PRUNE_DATA_DIR='/absolute/path/to/edu-dev' pnpm dev
+EDU_DATA_DIR='/absolute/path/to/edu-dev' pnpm dev
 ```
 
 ## Preview the renderer

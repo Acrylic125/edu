@@ -8,7 +8,7 @@ import { useTopicViews } from "../../src/renderer/topic-views"
 import { SendSchema, SnapshotSchema } from "../../src/shared/contracts"
 
 export async function testChatAttachments(root: Root, host: HTMLElement) {
-  const original = window.prune
+  const original = window.edu
   try {
     for (const hasHistory of [true, false]) {
       const chatId = crypto.randomUUID()
@@ -23,8 +23,8 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
           ? [{ id: crypto.randomUUID(), role: "user", content: "Check my answer", createdAt }]
           : [] }],
       })
-      const sent: Parameters<NonNullable<typeof window.prune>["send"]>[0][] = []
-      window.prune = {
+      const sent: Parameters<NonNullable<typeof window.edu>["send"]>[0][] = []
+      window.edu = {
         ...original!,
         snapshot: async () => structuredClone(snapshot),
         pasteMaterials: async () => [material],
@@ -58,7 +58,7 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
       const expected = hasHistory ? "" : "Help me understand the attached materials: answer.png."
       if (sent[0].content !== expected) throw new Error(`Image-only message with history=${hasHistory}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(sent[0].content)}`)
       if (hasHistory && !sent[0].materialIds?.length) throw new Error("Image-only follow-ups must identify the attachment")
-      snapshot.chats[0].messages.push({ id: crypto.randomUUID(), role: "user", content: sent[0].content,
+      snapshot.chats[0].messages.push({ id: sent[0].messageId ?? crypto.randomUUID(), role: "user", content: sent[0].content,
         materialIds: snapshot.chats[0].materials.map((item) => item.id), createdAt, topicIds: [] })
       flushSync(() => useWorkspace.getState().setSnapshot(structuredClone(snapshot)))
       if (!composer.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled) throw new Error("Previously sent attachments must not enable an empty message")
@@ -66,7 +66,7 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
     }
     console.log("PASS: image-only messages add the learning prompt only before the first turn")
   } finally {
-    window.prune = original
+    window.edu = original
     flushSync(() => root.render(null))
   }
 }

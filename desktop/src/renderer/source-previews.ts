@@ -14,12 +14,12 @@ export function sourcePreviews({ enabled, materials }: {
       if (node.type === "image") {
         const source = resolveMaterialLink(node.url, materials)
         let url = node.url
-        if (source) url = `prune-source://${source.id}/${source.page}`
+        if (source) url = `edu-source://${source.id}/${source.page}`
         displayed.add(url)
       }
       if (node.type === "link") {
         const source = resolveMaterialLink(node.url, materials)
-        if (source) cited.set(`prune-source://${source.id}/${source.page}`, source)
+        if (source) cited.set(`edu-source://${source.id}/${source.page}`, source)
       }
       if ("children" in node) node.children.forEach(visit)
     }

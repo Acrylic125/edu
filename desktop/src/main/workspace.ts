@@ -123,7 +123,7 @@ export class WorkspaceRepository {
       }
       this.state = { ...this.state, topics: await this.readTopics() }
       if (saved.needsMigration) await this.commit(this.state)
-      await this.pruneObsoleteFiles()
+      await this.removeObsoleteFiles()
       return this.state
     }
     const settings = await readOptionalFile(join(this.directory, "settings.json"))
@@ -175,7 +175,7 @@ export class WorkspaceRepository {
       // Keep the legacy transaction until every migrated topic and chat can be read back.
       this.state = WorkspaceSchema.parse({ ...this.state, topics: await this.readTopics(), chats: this.database.load()?.state.chats ?? [] })
     }
-    await this.pruneObsoleteFiles()
+    await this.removeObsoleteFiles()
     return this.state
   }
 
@@ -212,7 +212,7 @@ export class WorkspaceRepository {
     }
   }
 
-  private async pruneObsoleteFiles() {
+  private async removeObsoleteFiles() {
     const saved = this.database.load()
     if (!saved || saved.filesPending) throw new Error("Workspace cleanup requires a verified database commit.")
     const settings = WorkspaceSchema.pick({ runners: true, providerSettings: true })
@@ -576,7 +576,7 @@ export class WorkspaceRepository {
     }
     const portable = (text: string) =>
       text.replace(
-        /prune-source:\/\/([a-f0-9-]+)\/(\d+)/g,
+        /edu-source:\/\/([a-f0-9-]+)\/(\d+)/g,
         "assets/source-$1-$2.png",
       )
     // The private handoff stays in app storage; learner exports never include checked answer keys.

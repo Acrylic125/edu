@@ -8,6 +8,11 @@ export const useWorkspace = create<{
   loaded: boolean
   providerSetupComplete: boolean
   error: string | null
+  pendingMessages: {
+    chatId: string
+    message: Snapshot["chats"][number]["messages"][number]
+    materials: Pick<Snapshot["chats"][number]["materials"][number], "id" | "name">[]
+  }[]
   setSnapshot: (snapshot: Snapshot) => void
   setError: (error: string | null) => void
 }>((set, get) => ({
@@ -22,6 +27,7 @@ export const useWorkspace = create<{
   loaded: false,
   providerSetupComplete: false,
   error: null,
+  pendingMessages: [],
   setSnapshot: (snapshot) => {
     const activeChatId = useChatTabs.getState().activeId
     const previousChat = get().snapshot.chats.find((chat) => chat.id === activeChatId)
@@ -33,9 +39,11 @@ export const useWorkspace = create<{
       if (createdId && snapshot.topics.some((topic) => topic.id === createdId)) useTopicViews.getState().select(createdId)
     }
     const providerConnected = snapshot.providers.some((provider) => provider.connected)
+    const savedMessageIds = new Set(snapshot.chats.flatMap((chat) => chat.messages.map((message) => message.id)))
     // Keep access for this window after setup, even if a provider later disconnects.
     set((state) => ({
       snapshot,
+      pendingMessages: state.pendingMessages.filter((pending) => !savedMessageIds.has(pending.message.id)),
       // The initial account checks must settle before a disconnected snapshot can require setup.
       loaded: state.loaded || providerConnected || snapshot.providers.every((provider) => !provider.loading),
       providerSetupComplete: state.providerSetupComplete || providerConnected,
@@ -45,11 +53,11 @@ export const useWorkspace = create<{
 }))
 
 export function desktop() {
-  if (!window.prune)
+  if (!window.edu)
     throw new Error(
       "Open the EdU desktop app to connect accounts and run tutors.",
     )
-  return window.prune
+  return window.edu
 }
 
 export function desktopErrorMessage(error: Error) {
@@ -57,20 +65,20 @@ export function desktopErrorMessage(error: Error) {
 }
 
 export async function initializeWorkspace() {
-  if (!window.prune) {
+  if (!window.edu) {
     useWorkspace.setState({ loaded: true })
     return
   }
   let changed = false
-  window.prune.subscribe((snapshot) => {
+  window.edu.subscribe((snapshot) => {
     changed = true
     useWorkspace.getState().setSnapshot(snapshot)
   })
-  window.prune.subscribeRuntime(({ runtime }) => {
+  window.edu.subscribeRuntime(({ runtime }) => {
     useWorkspace.setState((state) => ({ snapshot: { ...state.snapshot, runtime } }))
   })
   try {
-    const snapshot = await window.prune.snapshot()
+    const snapshot = await window.edu.snapshot()
     if (!changed) useWorkspace.getState().setSnapshot(snapshot)
   } catch (error) {
     useWorkspace.setState({

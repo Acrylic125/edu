@@ -1,3 +1,4 @@
+import { clipboardMaterialIds, messageCopyText } from "../shared/message-clipboard"
 import { messageText } from "../shared/message-text"
 import { useEffect, useRef, useState, type ComponentProps } from "react"
 import {
@@ -61,7 +62,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@edu/ui/collapsible"
 import { Badge } from "@edu/ui/badge"
 import { z } from "zod"
-import { providerDefaultModels, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
+import { providerDefaultModels, MessageSchema, PastedImageSchema, type MaterialDraftSchema, type RunnerSchema, type Snapshot } from "../shared/contracts"
 import { mostRecentTopic } from "../shared/recent-topic"
 import { topicMention } from "../shared/topic-mentions"
 import { parseTopicDirectory } from "../shared/topic-directory"
@@ -81,13 +82,14 @@ function ConfirmPlanButton(props: Pick<ComponentProps<"button">, "disabled" | "o
 }
 
 export function App() {
-  const { snapshot, loaded, providerSetupComplete, error, setError } = useWorkspace()
+  const { snapshot, pendingMessages, loaded, providerSetupComplete, error, setError } = useWorkspace()
   const [setupProvider, setSetupProvider] = useState<Snapshot["providers"][number]["id"]>()
   const [view, setView] = useState<"learn" | "settings">("learn")
   const { activeId: topicId, select: selectTopic } = useTopicViews()
   const { activeId: chatId, openIds, select: selectChat, close: closeChat } = useChatTabs()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [imageDrafts, setImageDrafts] = useState<Record<string, (z.infer<typeof MaterialDraftSchema> & { previewUrl: string })[]>>({})
+  const [reattachedIds, setReattachedIds] = useState<Record<string, string[]>>({})
   const [topicMaterials, setTopicMaterials] = useState<z.infer<typeof MaterialDraftSchema>[]>([])
   // Lexical owns the editor content, so replacing a draft from outside remounts its composer.
   const [resets, setResets] = useState<Record<string, number>>({})
@@ -104,7 +106,7 @@ export function App() {
   const [fileSelection, setFileSelection] = useState<string>()
   const [fileSelectionError, setFileSelectionError] = useState<{ key: string; message: string }>()
   const fileSelectionId = useRef<symbol | undefined>(undefined)
-  const [submitting, setSubmitting] = useState<string>()
+  const [submitting, setSubmitting] = useState<{ key: string; draft: string }>()
   const responding = useRef(new Set<string>())
   const draftValues = useRef(drafts)
   draftValues.current = drafts
@@ -112,9 +114,12 @@ export function App() {
   const thread = useChatScroll(chatId)
   const topic = snapshot.topics.find((item) => item.id === topicId)
   const chat = snapshot.chats.find((item) => item.id === chatId)
+  const chatKey = chat?.id ?? "new-chat"
+  const pendingChatMessages = pendingMessages.filter((pending) => pending.chatId === chatKey)
+  const messages = [...(chat?.messages ?? []), ...pendingChatMessages.map((pending) => pending.message)]
   const messageCheckLabels = new Map<string, string>()
   let checkLabel = "Check your understanding"
-  for (const message of chat?.messages ?? []) {
+  for (const message of messages) {
     if (message.role === "user" && message.topicIds.length > 0) {
       const hasTest = snapshot.topics.some((item) => message.topicIds.includes(item.id) && item.state?.type === "test")
       checkLabel = hasTest ? "TEST" : "Check your understanding"
@@ -130,7 +135,6 @@ export function App() {
     ...snapshot.topics.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
   ]
   const hasChat = topic !== undefined || snapshot.chats.length > 0 || openIds?.includes("new")
-  const chatKey = chat?.id ?? "new-chat"
 
   let newRunner: string | undefined = runnerId || snapshot.runners[0]?.id
   if (runnerChoice)
@@ -254,6 +258,49 @@ export function App() {
     setFocused(key)
   }
 
+  function restoreDraft(key: string, submittedDraft: string) {
+    if (!submittedDraft) return
+    const currentDraft = draftValues.current[key] ?? ""
+    let restored = submittedDraft
+    if (currentDraft) restored += `\n\n${currentDraft}`
+    replaceDraft(key, restored)
+  }
+
+  function stageMessage(key: string, content: string, materials: z.infer<typeof MaterialDraftSchema>[] = []) {
+    const message = MessageSchema.parse({
+      id: crypto.randomUUID(),
+      role: "user",
+      content,
+      createdAt: new Date().toISOString(),
+      materialIds: materials.map((material) => material.id),
+    })
+    useWorkspace.setState((state) => ({
+      pendingMessages: [...state.pendingMessages, { chatId: key, message, materials }],
+    }))
+    return message
+  }
+
+  function movePendingMessage(messageId: string, key: string) {
+    useWorkspace.setState((state) => ({
+      pendingMessages: state.pendingMessages.map((pending) => {
+        if (pending.message.id === messageId) return { ...pending, chatId: key }
+        return pending
+      }),
+    }))
+  }
+
+  function finishSubmission(messageId: string, key: string, draft: string, success: boolean) {
+    if (success) return
+    const saved = useWorkspace.getState().snapshot.chats.some((chat) =>
+      chat.messages.some((message) => message.id === messageId),
+    )
+    useWorkspace.setState((state) => ({
+      pendingMessages: state.pendingMessages.filter((pending) => pending.message.id !== messageId),
+    }))
+    // Workflow setup can fail after the user message has already been saved.
+    if (!saved) restoreDraft(key, draft)
+  }
+
   async function newRunnerId() {
     if (!runnerChoice && newRunner) return newRunner
     const match = snapshot.runners.find(
@@ -272,20 +319,26 @@ export function App() {
     return id
   }
 
-  async function ensureChat() {
-    if (chat) return chat.id
-    const id = await desktop().createChat({ runnerId: await newRunnerId() })
-    openChat(id)
+  function moveNewChatDraft(id: string) {
     setImageDrafts((current) => ({
       ...current,
       "new-chat": [],
       [id]: current["new-chat"] ?? [],
     }))
-    setDrafts((current) => ({
-      ...current,
+    draftValues.current = {
+      ...draftValues.current,
       "new-chat": "",
-      [id]: current["new-chat"] ?? "",
-    }))
+      [id]: draftValues.current["new-chat"] ?? "",
+    }
+    setDrafts(draftValues.current)
+    setFocused(id)
+  }
+
+  async function ensureChat() {
+    if (chat) return chat.id
+    const id = await desktop().createChat({ runnerId: await newRunnerId() })
+    moveNewChatDraft(id)
+    openChat(id)
     return id
   }
 
@@ -295,7 +348,7 @@ export function App() {
     const pendingImages = imageDrafts[chatKey] ?? []
     if (!content.trim()) {
       const sentMaterialIds = new Set(chat?.messages.flatMap((message) => message.materialIds ?? []))
-      const materials = [...(chat?.materials.filter((material) => !sentMaterialIds.has(material.id)) ?? []), ...pendingImages]
+      const materials = [...(chat?.materials.filter((material) => (!sentMaterialIds.has(material.id) || reattachedIds[chatKey]?.includes(material.id))) ?? []), ...pendingImages]
       if (materials.length === 0) return
       content = ""
       if (!chat?.messages.length) {
@@ -303,26 +356,32 @@ export function App() {
       }
     }
     let sentId = chatKey
-    const submittedDraft = drafts[chatKey] ?? ""
-    setSubmitting(chatKey)
+    const submission = { key: chatKey, draft: drafts[chatKey] ?? "" }
+    const sentMaterialIds = new Set(chat?.messages.flatMap((message) => message.materialIds ?? []))
+    const materials = [...(chat?.materials.filter((material) => (!sentMaterialIds.has(material.id) || reattachedIds[chatKey]?.includes(material.id))) ?? []), ...pendingImages]
+    const message = stageMessage(chatKey, content, materials)
+    setSubmitting(submission)
+    replaceDraft(chatKey, "")
     try {
       const success = await perform(async () => {
         sentId = await ensureChat()
+        movePendingMessage(message.id, sentId)
+        setSubmitting({ ...submission, key: sentId })
         if (pendingImages.length > 0) {
           await desktop().importMaterials({ kind: "chat", id: sentId }, pendingImages.map((image) => image.id))
           setImageDrafts((current) => ({ ...current, [chatKey]: [], [sentId]: [] }))
         }
         let materialIds: string[] | undefined
-        if (!content.trim()) {
+        if (!content.trim() || reattachedIds[chatKey]?.length) {
           // Imports assign new IDs, so attachment-only turns must use the saved materials.
           const current = (await desktop().snapshot()).chats.find((item) => item.id === sentId)
           const sentMaterialIds = new Set(current?.messages.flatMap((message) => message.materialIds ?? []))
-          materialIds = current?.materials.filter((material) => !sentMaterialIds.has(material.id)).map((material) => material.id)
+          materialIds = current?.materials.filter((material) => !sentMaterialIds.has(material.id) || reattachedIds[chatKey]?.includes(material.id)).map((material) => material.id)
         }
-        await desktop().send({ chatId: sentId, content, materialIds, openedTopicId: topic?.id })
+        await desktop().send({ chatId: sentId, messageId: message.id, content, materialIds, openedTopicId: topic?.id })
       })
-      // Typing stays available during submission; never erase edits made while IPC is pending.
-      if (success && draftValues.current[sentId] === submittedDraft) replaceDraft(sentId, "")
+      finishSubmission(message.id, sentId, submission.draft, success)
+      if (success) setReattachedIds((current) => ({ ...current, [chatKey]: [] }))
     } finally {
       setSubmitting(undefined)
     }
@@ -333,9 +392,11 @@ export function App() {
     if (!chat || message?.id !== messageId || !message.responseQuestion?.options.includes(option)) return
     if (chatRunnerBusy || busy || !chatModelConnected || responding.current.has(messageId)) return
     responding.current.add(messageId)
-    setSubmitting(chat.id)
+    const pending = stageMessage(chat.id, option)
+    setSubmitting({ key: chat.id, draft: option })
     try {
-      await perform(() => desktop().send({ chatId: chat.id, content: option, openedTopicId: topic?.id }))
+      const success = await perform(() => desktop().send({ chatId: chat.id, messageId: pending.id, content: option, openedTopicId: topic?.id }))
+      finishSubmission(pending.id, chat.id, "", success)
     } finally {
       responding.current.delete(messageId)
       setSubmitting(undefined)
@@ -345,16 +406,24 @@ export function App() {
   async function confirmPlan(target: Snapshot["topics"][number]) {
     if (target.planConfirmed || !target.learning.outline.length || chatRunnerBusy || busy || !chatModelConnected || responding.current.has(target.id)) return
     responding.current.add(target.id)
+    const content = `${topicMention(target.id, target.title)} I confirm this learning plan. Begin at the suggested starting point.`
+    const pending = stageMessage(chatKey, content)
+    let sentId = chatKey
     try {
-      await perform(async () => {
+      const success = await perform(async () => {
         const id = await ensureChat()
+        sentId = id
+        movePendingMessage(pending.id, id)
         await desktop().send({
           chatId: id,
-          content: `${topicMention(target.id, target.title)} I confirm this learning plan. Begin at the suggested starting point.`,
+          messageId: pending.id,
+          content,
           confirmTopicId: target.id,
           openedTopicId: target.id,
         })
       })
+      finishSubmission(pending.id, sentId, "", success)
+      if (success) openTopic(target.id)
     } finally {
       responding.current.delete(target.id)
     }
@@ -368,13 +437,24 @@ export function App() {
       content = `Help me work with the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
     }
     openTopic()
-    let createdChat: string | undefined
-    let submittedMessage = ""
-    setSubmitting("new-topic")
+    let sentKey = "new-chat"
+    const submission = { key: sentKey, draft: drafts["new-topic"] ?? "" }
+    const message = stageMessage("new-chat", content, topicMaterials)
+    setSubmitting(submission)
+    replaceDraft("new-topic", "")
+    setFocused("new-chat")
+    openChat()
     const success = await perform(async () => {
       const runner = await newRunnerId()
       const chatId = await desktop().createChat({ runnerId: runner, scratchpadRequested: true })
-      createdChat = chatId
+      moveNewChatDraft(chatId)
+      sentKey = chatId
+      movePendingMessage(message.id, chatId)
+      setSubmitting({ ...submission, key: chatId })
+      transitionWorkspace(() => {
+        selectTopic(undefined)
+        selectChat(chatId)
+      })
       let materialIds: string[] = []
       if (topicMaterials.length > 0) {
         await desktop().importMaterials({ kind: "chat", id: chatId }, topicMaterials.map((material) => material.id))
@@ -383,19 +463,10 @@ export function App() {
         setTopicMaterials([])
         setImageDrafts((current) => ({ ...current, "new-topic": [] }))
       }
-      const message = content
-      submittedMessage = message
-      transitionWorkspace(() => {
-        selectTopic(undefined)
-        selectChat(chatId)
-      })
-      // The new-topic composer is replaced by the topic, so a failed send keeps the request in its chat.
-      replaceDraft("new-topic", "")
-      replaceDraft(chatId, message)
-      await desktop().send({ chatId, content: message, materialIds })
+      await desktop().send({ chatId, messageId: message.id, content, materialIds })
     })
     setSubmitting(undefined)
-    if (success && createdChat && draftValues.current[createdChat] === submittedMessage) replaceDraft(createdChat, "")
+    finishSubmission(message.id, sentKey, submission.draft, success)
   }
 
   async function attachMaterials(mode: "topic" | "chat") {
@@ -440,7 +511,7 @@ export function App() {
     const existing = mode === "chat" ? chat : undefined
     const pendingImages = imageDrafts[key] ?? []
     const sentMaterialIds = new Set(existing?.messages.flatMap((message) => message.materialIds ?? []))
-    const materials = mode === "topic" ? topicMaterials : [...(existing?.materials.filter((material) => !sentMaterialIds.has(material.id)) ?? []), ...pendingImages]
+    const materials = mode === "topic" ? topicMaterials : [...(existing?.materials.filter((material) => (!sentMaterialIds.has(material.id) || reattachedIds[key]?.includes(material.id))) ?? []), ...pendingImages]
     const draft = drafts[key] ?? ""
     let runnerBusy = chatRunnerBusy
     let model = chatModel
@@ -463,6 +534,20 @@ export function App() {
         const materials = await desktop().dropMaterials(files)
         const id = await ensureChat()
         await desktop().importMaterials({ kind: "chat", id }, materials.map((material) => material.id))
+      })
+    }
+    async function pasteCopiedMaterials(ids: string[]) {
+      await perform(async () => {
+        if (mode === "topic") {
+          setTopicMaterials(await desktop().reuseMaterials(ids, topicMaterials.map((material) => material.id)))
+          return
+        }
+        const existingIds = ids.filter((id) => existing?.materials.some((material) => material.id === id))
+        const missingIds = ids.filter((id) => !existingIds.includes(id))
+        const drafts = missingIds.length ? await desktop().reuseMaterials(missingIds) : []
+        const id = await ensureChat()
+        if (drafts.length) await desktop().importMaterials({ kind: "chat", id }, drafts.map((material) => material.id))
+        setReattachedIds((current) => ({ ...current, [id]: [...new Set([...(current[id] ?? []), ...existingIds])] }))
       })
     }
     async function pasteImages(files: File[]) {
@@ -496,7 +581,7 @@ export function App() {
     }
     const provider = snapshot.providers.find((provider) => provider.id === model.provider)
     const providerDisconnected = !provider?.connected && !provider?.loading
-    const submittingComposer = submitting === key
+    const submittingComposer = submitting?.key === key
     let submitLabel = "Send message"
     if (submittingComposer) {
       submitLabel = "Sending message"
@@ -508,6 +593,11 @@ export function App() {
         aria-label={mode === "topic" ? "New scratchpad composer" : "Chat composer"}
         newTopicMode={mode === "topic"}
         onPasteCapture={(event) => {
+          const copiedIds = clipboardMaterialIds(event.clipboardData.getData("text/html"))
+          if (copiedIds.length) {
+            if (!attachmentBusy) void pasteCopiedMaterials(copiedIds)
+            return
+          }
           const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"))
           if (images.length === 0) return
           event.preventDefault()
@@ -576,6 +666,29 @@ export function App() {
                   setSetupProvider(model.provider)
                   transitionWorkspace(() => setView("settings"))
                 }}>Connect provider</button>
+              </div>
+            )}
+            {mode === "chat" && materials.some((material) => !pendingImages.some((image) => image.id === material.id)) && (
+              <div className="flex flex-wrap gap-1.5 px-4 pt-3" aria-label="Attached materials">
+                {materials.filter((material) => !pendingImages.some((image) => image.id === material.id)).map((material) => (
+                  <span key={material.id} title={material.name} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs">
+                    <FileText className="size-3" />{materialDisplayName(material, labelMaterials)}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${material.name}`}
+                      disabled={attachmentBusy}
+                      className="rounded-sm hover:bg-accent disabled:opacity-50"
+                      onClick={() => {
+                        void perform(async () => {
+                          if (!sentMaterialIds.has(material.id)) await desktop().removeChatMaterial(existing!.id, material.id)
+                          setReattachedIds((current) => ({ ...current, [key]: (current[key] ?? []).filter((id) => id !== material.id) }))
+                        })
+                      }}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </span>
+                ))}
               </div>
             )}
             {pendingImages.length > 0 && (
@@ -733,6 +846,12 @@ export function App() {
     onSelect: openChat,
     onNew: () => openChat(),
     onClose: closeChat,
+    onCopyId: (id: string) => {
+      setError(null)
+      void desktop().copyText(id).catch((failure) => {
+        setError(desktopErrorMessage(failure))
+      })
+    },
   }
   const recentTopic = mostRecentTopic(snapshot)
   const newTopicContent = (
@@ -759,7 +878,7 @@ export function App() {
         />
         <div className="min-h-0 flex-1">
       <ChatPanel composer={composer("chat")}>
-        {!chat || (chat.messages.length === 0 && !chatRunning && !chatError) ? (
+        {messages.length === 0 && !chatRunning && !chatError ? (
           <ChatEmptyState
             title="Start a chat"
             description={topic
@@ -769,8 +888,8 @@ export function App() {
           />
         ) : (
           <ChatConversation key={chatId} ref={thread} className="px-4">
-            {chat.messages.map((message) => (
-              <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={window.prune?.copyText} durationMs={message.durationMs}>
+            {messages.map((message) => (
+              <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={(text) => desktop().copyText(messageCopyText(message, text), message.role === "user" ? message.materialIds : undefined)} durationMs={message.durationMs}>
                 {message.role === "user" && message.materialIds?.length ? (
                   <div className="mb-2 flex flex-wrap gap-1" aria-label="Attached files">
                     {(message.materialIds ?? []).flatMap((id) => {
@@ -795,7 +914,7 @@ export function App() {
                         <MediaPreview
                           key={material.id}
                           label={material.name}
-                          preview={<img src={`prune-source://${material.id}/1`} alt={material.name} />}
+                          preview={<img src={`edu-source://${material.id}/1`} alt={material.name} />}
                         >
                           {(open) => (
                             <button
@@ -805,7 +924,7 @@ export function App() {
                               className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                               onClick={open}
                             >
-                              <img src={`prune-source://${material.id}/1`} alt={material.name} className="max-h-48 max-w-full object-contain" />
+                              <img src={`edu-source://${material.id}/1`} alt={material.name} className="max-h-48 max-w-full object-contain" />
                             </button>
                           )}
                         </MediaPreview>
@@ -813,6 +932,12 @@ export function App() {
                     })}
                   </div>
                 ) : null}
+                {pendingChatMessages.find((pending) => pending.message.id === message.id)?.materials.filter((material) => !chatMaterials.some((saved) => saved.id === material.id)).map((material) => (
+                  <span key={material.id} className="mb-2 mr-1 inline-flex max-w-48 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                    <FileText className="size-3 shrink-0" />
+                    <span className="truncate">{material.name}</span>
+                  </span>
+                ))}
                 <StudyMarkdown
                   text={message.content}
                   checkLabel={messageCheckLabels.get(message.id)}
@@ -823,16 +948,16 @@ export function App() {
                   labelMaterials={labelMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                 />
-                {message.role === "assistant" && message.id === chat.messages.at(-1)?.id && awaitingPlanConfirmation && draftPlans.map((plan) => (
+                {message.role === "assistant" && message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation && draftPlans.map((plan) => (
                   <div key={plan.id} className="mt-4" role="group" aria-label={`Confirm learning plan for ${plan.title}`}>
                     <p className="mb-3 text-sm text-muted-foreground">Review the plan for {plan.title}. You can ask for changes in chat.</p>
                     <ConfirmPlanButton disabled={busy || chatRunnerBusy || !chatModelConnected} onClick={() => { void confirmPlan(plan) }} />
                   </div>
                 ))}
-                {message.role === "assistant" && message.responseQuestion && !(message.id === chat.messages.at(-1)?.id && awaitingPlanConfirmation) && (
+                {message.role === "assistant" && message.responseQuestion && !(message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation) && (
                   <fieldset
                     className="mt-4 flex min-w-0 flex-col gap-2"
-                    disabled={message.id !== chat.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting === chat.id}
+                    disabled={message.id !== chat?.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting?.key === chat?.id}
                   >
                     <legend className="mb-2 text-sm font-medium">{message.responseQuestion.prompt}</legend>
                     {message.responseQuestion.options.map((option) => (
@@ -868,7 +993,7 @@ export function App() {
                 {runtime.activity}
               </ChatThinking>
             )}
-            {chatError && (
+            {chat && chatError && (
               <div
                 className="my-4 rounded-lg border border-destructive/30 p-3 text-sm text-destructive"
                 role="alert"
@@ -891,7 +1016,7 @@ export function App() {
                 </button>
               </div>
             )}
-            {chatError && runtime?.traceId && (
+            {chat && chatError && runtime?.traceId && (
               <details className="my-4 rounded-lg border border-border text-xs text-muted-foreground">
                 <summary className="cursor-pointer px-3 py-2.5">
                   Diagnostics · {runtime.traceId.slice(0, 8)}

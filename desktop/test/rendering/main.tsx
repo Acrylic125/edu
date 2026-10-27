@@ -1,3 +1,4 @@
+import { testPlanConfirmation } from "./plan-confirmation"
 import { testTestScratchpad } from "./test-scratchpad"
 import { Profiler } from "react"
 import { createRoot } from "react-dom/client"
@@ -11,9 +12,13 @@ import { useChatTabs } from "../../src/renderer/chat-tabs"
 import { SnapshotSchema } from "../../src/shared/contracts"
 import { ThemeProvider } from "@edu/ui/theme"
 import imageUrl from "./diagram.svg"
+import { testMessageClipboard } from "./message-clipboard"
 import { testChatAttachments } from "./chat-attachments"
+import { testChatSubmission } from "./chat-submission"
+import { testModelPicker } from "./model-picker"
 import { testScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
 import { testChatTabs } from "./chat-tabs"
+import { testThreadContextMenu } from "./thread-context-menu"
 import { testChatScroll } from "./chat-scroll"
 import { testTopicTerminology } from "./topic-terminology"
 
@@ -33,10 +38,15 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testPlanConfirmation(root, host)
+  await testChatSubmission(root, host)
+  await testModelPicker(root, host)
+  await testMessageClipboard(root, host)
   await testChatAttachments(root, host)
   testTestScratchpad(root, host)
   await testScratchpadMismatchBanner(root, host)
   await testChatTabs(root, host)
+  await testThreadContextMenu(root, host)
   await testChatScroll(root, host)
   await testTopicTerminology(root, host)
   const durations: { actual: number; base: number }[] = []
@@ -112,7 +122,7 @@ async function runRenderingTests() {
   assert(opened === `New topic:${topicId}`, "Memoized Markdown must use current topic callbacks")
   assert(host.querySelector('section[aria-label="TEST"]') !== null, "Understanding-check labels must update through memoized Markdown")
   renderReferences("New topic", "new.pdf", true, "TEST")
-  assert(host.querySelector(`img[src="prune-source://${materialId}/1"]`) !== null, "Source preview changes must invalidate Markdown")
+  assert(host.querySelector(`img[src="edu-source://${materialId}/1"]`) !== null, "Source preview changes must invalidate Markdown")
   const sourceLink = host.querySelector<HTMLAnchorElement>(`a[href="edu-material://${materialId}/1"]`)!
   assert(sourceLink.title === "new.pdf", "Material metadata must update")
   sourceLink.click()

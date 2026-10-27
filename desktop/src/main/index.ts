@@ -1,3 +1,4 @@
+import { CopiedMessageSchema, messageClipboardHtml } from "../shared/message-clipboard"
 import { randomUUID } from "node:crypto"
 import { access, constants, mkdir, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
@@ -5,6 +6,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  ClipboardItem,
   dialog,
   ipcMain,
   Menu,
@@ -22,7 +24,6 @@ import {
   ImportMaterialsSchema,
   MaterialDraftIdsSchema,
   PastedMaterialsSchema,
-  MessageSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
   RunnerInputSchema,
@@ -43,21 +44,18 @@ import { createBatchedUpdate } from "../shared/batched-update"
 const environment = z
   .object({
     ELECTRON_RENDERER_URL: z.string().url().optional(),
-    PRUNE_DATA_DIR: z.string().refine(isAbsolute).optional(),
+    EDU_DATA_DIR: z.string().refine(isAbsolute).optional(),
   })
   .parse(process.env)
 app.setName("EdU")
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: "prune-source",
+    scheme: "edu-source",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
 ])
-if (environment.PRUNE_DATA_DIR)
-  app.setPath("userData", environment.PRUNE_DATA_DIR)
-else
-  // Preserve existing workspaces and keychain accounts through the EdU rename.
-  app.setPath("userData", join(app.getPath("appData"), "prune-desktop"))
+if (environment.EDU_DATA_DIR) app.setPath("userData", environment.EDU_DATA_DIR)
+else app.setPath("userData", join(app.getPath("appData"), "edu"))
 let window: BrowserWindow | undefined
 let manager: RunnerManager | undefined
 let providers: ProviderRegistry | undefined
@@ -83,7 +81,7 @@ else {
         : join(app.getAppPath(), "..", "phoenix")
       const phoenixExporterInstalled = await installPhoenixExporter(phoenixResources, directory)
       const materialDrafts = new MaterialDrafts()
-      protocol.handle("prune-source", async (request) => {
+      protocol.handle("edu-source", async (request) => {
         const url = new URL(request.url)
         const id = IdSchema.safeParse(url.hostname)
         const page = z.coerce.number().int().min(1).max(1000).safeParse(/^\/(\d+)$/.exec(url.pathname)?.[1])
@@ -158,7 +156,8 @@ else {
       }
       ipcMain.handle(Channel.copyText, async (event, raw) => {
         trusted(event)
-        await clipboard.writeText(MessageSchema.shape.content.parse(raw))
+        const { text, materialIds } = CopiedMessageSchema.parse(raw)
+        await clipboard.write([new ClipboardItem({ "text/plain": text, "text/html": messageClipboardHtml(text, materialIds) })])
       })
       ipcMain.handle(Channel.snapshot, async (event) => {
         trusted(event)
@@ -362,6 +361,20 @@ else {
           throw new Error("Drop files from your computer to attach them.")
         return materialDrafts.add(draftIds, paths)
       })
+      ipcMain.handle(Channel.reuseMaterials, async (event, raw) => {
+        trusted(event)
+        const { materialIds, draftIds } = z.object({ materialIds: MaterialDraftIdsSchema, draftIds: MaterialDraftIdsSchema }).parse(raw)
+        const { topics, chats } = repository.stateSnapshot
+        const paths = materialIds.map((id) => {
+          for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+            const owner = owners.find((item) => item.materials.some((material) => material.id === id))
+            const material = owner?.materials.find((item) => item.id === id)
+            if (owner && material) return join(directory, collection, owner.id, "assets", material.name)
+          }
+          throw new Error("A copied attachment is no longer available in this workspace.")
+        })
+        return materialDrafts.add(draftIds, paths)
+      })
       ipcMain.handle(Channel.pasteMaterials, async (event, raw) => {
         trusted(event)
         const { images, draftIds } = PastedMaterialsSchema.parse(raw)
@@ -370,6 +383,20 @@ else {
       ipcMain.handle(Channel.discardMaterials, (event, raw) => {
         trusted(event)
         materialDrafts.discard(MaterialDraftIdsSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.removeChatMaterial, async (event, raw) => {
+        trusted(event)
+        const { chatId, materialId } = z.object({ chatId: IdSchema, materialId: IdSchema }).parse(raw)
+        if (runnerManager.statuses.some((runtime) => runtime.chatId === chatId && runtime.status === "running"))
+          throw new Error("Wait for the current lesson before removing sources.")
+        await repository.mutate((workspace) => {
+          const chat = workspace.chats.find((item) => item.id === chatId)
+          if (!chat) throw new Error("Chat not found.")
+          if (chat.messages.some((message) => message.materialIds?.includes(materialId)))
+            throw new Error("This attachment has already been sent.")
+          chat.materials = chat.materials.filter((material) => material.id !== materialId)
+        })
+        notify()
       })
       ipcMain.handle(Channel.importMaterials, async (event, raw) => {
         trusted(event)

@@ -259,7 +259,7 @@ export class RunnerManager {
           .filter((material) => !sentMaterialIds.has(material.id))
           .map((material) => material.id)
         current.messages.push({
-          id: randomUUID(),
+          id: input.messageId ?? randomUUID(),
           role: "user",
           content: input.content,
           materialIds,
@@ -269,6 +269,7 @@ export class RunnerManager {
         // Other chats can create topics before dispatch; their IDs must not shift this turn's handle mapping.
         turnWorkspace = structuredClone(workspace)
       })
+      this.notify()
       const child = this.processes.get(id)
       if (!child) throw new Error("Runner did not start. Try again.")
       this.runtime.set(id, {

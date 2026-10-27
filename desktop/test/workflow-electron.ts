@@ -89,7 +89,13 @@ async function main() {
     await workspace.mutate((state) => { state.runners = [runner]; state.chats.push(chat) })
     let fullUpdates = 0
     let runtimeUpdates = 0
-    manager = new RunnerManager(workspace, resolve(process.argv[2] ?? ".test-out/worker.js"), resolve(process.argv[3] ?? "resources/tutor-me"), async () => ({ apiKey: "", cli: { provider: "claude", executable, directory } }), () => { fullUpdates += 1 }, true, () => { runtimeUpdates += 1 })
+    const messageId = randomUUID()
+    let notifiedBeforeWorkflow = false
+    manager = new RunnerManager(workspace, resolve(process.argv[2] ?? ".test-out/worker.js"), resolve(process.argv[3] ?? "resources/tutor-me"), async () => ({ apiKey: "", cli: { provider: "claude", executable, directory } }), () => {
+      fullUpdates += 1
+      const saved = workspace.chat(chat.id)
+      if (saved.messages.some((message) => message.id === messageId) && !saved.activeTurnId) notifiedBeforeWorkflow = true
+    }, true, () => { runtimeUpdates += 1 })
     const waitFor = async (status: "error" | "ready") => {
       for (let attempt = 0; attempt < 400; attempt++) {
         const runtime = manager!.statuses.find((runtime) => runtime.chatId === chat.id)
@@ -98,7 +104,9 @@ async function main() {
       }
       throw new Error(`Timed out waiting for ${status}: ${JSON.stringify(manager!.statuses)}`)
     }
-    await manager.send({ chatId: chat.id, content: "/new-generic Create fraction notes" })
+    await manager.send({ chatId: chat.id, messageId, content: "/new-generic Create fraction notes" })
+    assert.equal(workspace.chat(chat.id).messages[0].id, messageId, "The saved user message must retain its client ID")
+    assert.equal(notifiedBeforeWorkflow, true, "The saved user message must be published before workflow setup")
     const failure = await waitFor("error")
     const failedTurnId = failure.turnId
     assert.ok(failedTurnId, JSON.stringify(failure))
@@ -166,9 +174,9 @@ async function main() {
     ipcMain.handle(Channel.snapshot, () => ({ runners: workspace.publicRunners, topics: workspace.publicTopics, chats: workspace.publicChats, runtime: manager!.statuses, connected: true, providers: [] }))
     try {
       await renderer.loadURL("data:text/html,<title>EdU runtime bridge test</title>")
-      const snapshot = SnapshotSchema.parse(await renderer.webContents.executeJavaScript("window.prune.snapshot()"))
+      const snapshot = SnapshotSchema.parse(await renderer.webContents.executeJavaScript("window.edu.snapshot()"))
       assert.ok(snapshot.chats.some((saved) => saved.id === planChat.id))
-      await renderer.webContents.executeJavaScript("window.runtimeReceived = new Promise(resolve => window.prune.subscribeRuntime(resolve)); true")
+      await renderer.webContents.executeJavaScript("window.runtimeReceived = new Promise(resolve => window.edu.subscribeRuntime(resolve)); true")
       let reply = ""
       const updates = createBatchedUpdate(() => renderer.webContents.send(Channel.runtimeUpdate, { runtime: [{ runnerId: runner.id, chatId: planChat.id, status: "running", activity: "Streaming", reply }] }))
       for (let index = 0; index < 1000; index++) {

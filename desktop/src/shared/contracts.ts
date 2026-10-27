@@ -253,6 +253,7 @@ export const CreateChatSchema = z.object({ runnerId: IdSchema, scratchpadRequest
 export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
+  messageId: IdSchema.optional(),
   materialIds: z.array(IdSchema).optional(),
   content: z.string().max(30_000),
   confirmTopicId: IdSchema.optional(),
@@ -345,34 +346,36 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
 export const Channel = {
-  copyText: "prune:copy-text",
-  snapshot: "prune:snapshot",
-  update: "prune:update",
-  runtimeUpdate: "prune:runtime-update",
-  connect: "prune:connect",
-  disconnect: "prune:disconnect",
-  cancelConnection: "prune:cancel-connection",
-  refreshProviders: "prune:refresh-providers",
-  saveProvider: "prune:save-provider",
-  updateRunner: "prune:update-runner",
-  addRunner: "prune:add-runner",
-  removeRunner: "prune:remove-runner",
-  startRunner: "prune:start-runner",
-  stopRunner: "prune:stop-runner",
-  createTopic: "prune:create-topic",
-  createChat: "prune:create-chat",
-  archiveTopic: "prune:archive-topic",
-  send: "prune:send",
-  retry: "prune:retry",
-  importMaterials: "prune:import-materials",
-  selectMaterials: "prune:select-materials",
-  dropMaterials: "prune:drop-materials",
-  pasteMaterials: "prune:paste-materials",
-  discardMaterials: "prune:discard-materials",
-  exportNotes: "prune:export-notes",
-  openDiagnostics: "prune:open-diagnostics",
-  openWorkspace: "prune:open-workspace",
-  openMaterial: "prune:open-material",
+  copyText: "edu:copy-text",
+  reuseMaterials: "edu:reuse-materials",
+  snapshot: "edu:snapshot",
+  update: "edu:update",
+  runtimeUpdate: "edu:runtime-update",
+  connect: "edu:connect",
+  disconnect: "edu:disconnect",
+  cancelConnection: "edu:cancel-connection",
+  refreshProviders: "edu:refresh-providers",
+  saveProvider: "edu:save-provider",
+  updateRunner: "edu:update-runner",
+  addRunner: "edu:add-runner",
+  removeRunner: "edu:remove-runner",
+  startRunner: "edu:start-runner",
+  stopRunner: "edu:stop-runner",
+  createTopic: "edu:create-topic",
+  createChat: "edu:create-chat",
+  archiveTopic: "edu:archive-topic",
+  send: "edu:send",
+  retry: "edu:retry",
+  importMaterials: "edu:import-materials",
+  removeChatMaterial: "edu:remove-chat-material",
+  selectMaterials: "edu:select-materials",
+  dropMaterials: "edu:drop-materials",
+  pasteMaterials: "edu:paste-materials",
+  discardMaterials: "edu:discard-materials",
+  exportNotes: "edu:export-notes",
+  openDiagnostics: "edu:open-diagnostics",
+  openWorkspace: "edu:open-workspace",
+  openMaterial: "edu:open-material",
 } as const
 
 export type Snapshot = z.infer<typeof SnapshotSchema>
@@ -382,7 +385,8 @@ export type Chat = z.infer<typeof ChatSchema>
 export type LearningState = z.infer<typeof LearningStateSchema>
 export type WorkerJob = z.infer<typeof WorkerJobSchema>
 export type DesktopBridge = {
-  copyText: (text: string) => Promise<void>
+  copyText: (text: string, materialIds?: string[]) => Promise<void>
+  reuseMaterials: (materialIds: string[], draftIds?: string[]) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   snapshot: () => Promise<Snapshot>
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void
   subscribeRuntime: (listener: (update: z.infer<typeof RuntimeUpdateSchema>) => void) => () => void
@@ -410,6 +414,7 @@ export type DesktopBridge = {
   dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   pasteMaterials: (images: z.infer<typeof PastedImageSchema>[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   discardMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
+  removeChatMaterial: (chatId: string, materialId: string) => Promise<void>
   importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>, draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
   exportNotes: (topicId: string) => Promise<void>
   openDiagnostics: (chatId: string) => Promise<void>

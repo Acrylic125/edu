@@ -8,7 +8,8 @@ import {
 } from "../shared/contracts"
 
 const bridge: DesktopBridge = {
-  copyText: (text) => ipcRenderer.invoke(Channel.copyText, text),
+  copyText: (text, materialIds = []) => ipcRenderer.invoke(Channel.copyText, { text, materialIds }),
+  reuseMaterials: async (materialIds, draftIds = []) => MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.reuseMaterials, { materialIds, draftIds })),
   snapshot: async () =>
     SnapshotSchema.parse(await ipcRenderer.invoke(Channel.snapshot)),
   subscribe: (listener) => {
@@ -54,6 +55,7 @@ const bridge: DesktopBridge = {
   pasteMaterials: async (images, draftIds = []) =>
     MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.pasteMaterials, { images, draftIds })),
   discardMaterials: (draftIds) => ipcRenderer.invoke(Channel.discardMaterials, draftIds),
+  removeChatMaterial: (chatId, materialId) => ipcRenderer.invoke(Channel.removeChatMaterial, { chatId, materialId }),
   importMaterials: (owner, draftIds = []) =>
     ipcRenderer.invoke(Channel.importMaterials, { owner, draftIds }),
   exportNotes: (topicId) => ipcRenderer.invoke(Channel.exportNotes, topicId),
@@ -64,4 +66,4 @@ const bridge: DesktopBridge = {
   openMaterial: (materialId) =>
     ipcRenderer.invoke(Channel.openMaterial, materialId),
 }
-contextBridge.exposeInMainWorld("prune", bridge)
+contextBridge.exposeInMainWorld("edu", bridge)

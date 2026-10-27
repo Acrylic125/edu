@@ -17,7 +17,7 @@ export function testTestScratchpad(root: Root, host: HTMLElement) {
   })
   flushSync(() => root.render(<TestScratchpad state={state} materials={[{ id, name, kind: "image" }]} />))
   const image = host.querySelector("img")
-  if (image?.getAttribute("src") !== `prune-source://${id}/1`) throw new Error("Handwritten answer asset must render as a source image")
+  if (image?.getAttribute("src") !== `edu-source://${id}/1`) throw new Error("Handwritten answer asset must render as a source image")
   if (host.querySelector("h2")?.textContent !== "Question 1") throw new Error("Questions must use numbered headings")
   if (host.textContent?.includes(state.questions[0].title)) throw new Error("Question subtitles must be omitted")
   if (host.textContent?.includes("Tutor notes") || host.textContent?.includes("Q2 assessment")) throw new Error("Tutor notes must not be shown")
@@ -28,13 +28,13 @@ export function testTestScratchpad(root: Root, host: HTMLElement) {
     `![Handwritten answer](assets/${name})\n\n[Source](assets/${name})`,
   ]) {
     flushSync(() => root.render(<TestScratchpad state={{ ...state, questions: [{ ...state.questions[0], answer }] }} materials={[{ id, name, kind: "image" }]} />))
-    if (host.querySelectorAll("img").length !== 1 || host.querySelector("img")?.getAttribute("src") !== `prune-source://${id}/1`) {
+    if (host.querySelectorAll("img").length !== 1 || host.querySelector("img")?.getAttribute("src") !== `edu-source://${id}/1`) {
       throw new Error(`Answer must resolve its image once: ${answer}`)
     }
   }
   flushSync(() => host.querySelector<HTMLImageElement>("img")!.click())
   const preview = document.querySelector("dialog")
-  if (!preview?.open || preview.querySelector("img")?.getAttribute("src") !== `prune-source://${id}/1`) throw new Error("Answer image must open a magnifiable preview")
+  if (!preview?.open || preview.querySelector("img")?.getAttribute("src") !== `edu-source://${id}/1`) throw new Error("Answer image must open a magnifiable preview")
   flushSync(() => preview.querySelector<HTMLButtonElement>('[aria-label="Close preview"]')!.click())
   console.log("PASS: test scratchpad headings, hidden metadata, image references and magnification")
 

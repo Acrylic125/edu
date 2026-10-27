@@ -210,7 +210,7 @@ export class CodexAppServer {
     await this.request(
       "initialize",
       {
-        clientInfo: { name: "prune_desktop", title: "EdU", version: "0.1.0" },
+        clientInfo: { name: "edu_desktop", title: "EdU", version: "0.1.0" },
         capabilities: { experimentalApi: true },
       },
       z.object({}).passthrough(),

@@ -126,6 +126,7 @@ export function ProviderModelPicker({
   function priority(entry: typeof choices[number]) {
     if (entry.provider === value.provider && entry.id === value.model) return 3
     if (entry.favorite) return 2
+    if (entry.provider === "codex" && ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"].includes(entry.id)) return 1
     if (entry.id === providerDefaultModels[entry.provider]) return 1
     return 0
   }
