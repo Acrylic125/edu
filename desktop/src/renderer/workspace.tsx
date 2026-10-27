@@ -10,6 +10,7 @@ import {
   ArchiveRestore,
   AtSign,
   BookOpen,
+  ClipboardCheck,
   Check,
   ChevronRight,
   Clock3,
@@ -890,6 +891,7 @@ export function App() {
     chatSuggestions = [
       { label: "Continue learning", prompt: "Continue from where we last left off", icon: BookOpen },
       { label: "Practice", prompt: "Create a practice of what we have covered", icon: PencilLine },
+      { label: "Test me", prompt: `/new-test ${topicMention(scratchpad.id, scratchpad.title)}`, icon: ClipboardCheck },
     ]
   } else if (scratchpad?.state?.type === "test") {
     chatSuggestions = [
