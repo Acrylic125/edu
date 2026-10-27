@@ -1,6 +1,15 @@
 import { join, dirname } from "node:path"
 import { z } from "zod"
-import { WorkflowRecordSchema } from "../shared/tutor-workflow"
+import { RoleRequestSchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
+import { createTopicHandles } from "./topic-handles"
+
+export function validateRoleRequestAccess(source: Parameters<typeof createTopicHandles>[0], requests: z.infer<typeof RoleRequestSchema>[]) {
+  const handles = createTopicHandles(source)
+  for (const request of requests) {
+    if (request.target.mode === "existing") handles.resolve(request.target.scratchpadHandle, request.requestedAccess === "write")
+    for (const handle of request.context.readDependencies) handles.resolve(handle, false)
+  }
+}
 
 export function committedSource(turn: z.infer<typeof WorkflowRecordSchema>) {
   const source = structuredClone(turn.source)

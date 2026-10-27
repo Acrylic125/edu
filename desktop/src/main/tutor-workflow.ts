@@ -110,7 +110,7 @@ export class TutorWorkflowRepository {
     const turn = await this.workspace.updateWorkflow(turnId, (turn) => {
       if (turn.batches.some((batch) => batch.tutorStepId === tutorStepId)) return
       const source = committedSource(turn)
-      const handles = createTopicHandles({ ...source, apiKey: "" })
+      const handles = createTopicHandles(source)
       const jobs = requests.map((request) => {
         if (request.context.learnerMessageIds.some((id) => !source.chat.messages.some((message) => message.id === id)))
           throw new Error("The role requested a message outside its pinned context.")

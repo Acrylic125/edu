@@ -293,3 +293,61 @@ test("Retry repairs a legacy invalid creation delegation instead of replaying it
   assert.equal(workflows.get(chat.id, turn.turnId).batches.length, 1)
   assert.equal(workspace.stateSnapshot.scratchpads.length, 1)
 })
+
+test("Retry repairs a checkpointed archived test write and creates a fresh test", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-invalid-delegation-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const workspace = new WorkspaceRepository(directory)
+  await workspace.load()
+  const runner = workspace.stateSnapshot.runners[0]
+  const chat = newChat(runner.id)
+  chat.messages.push({ id: randomUUID(), role: "user", content: "/new-test Test me on MIPS Part 1", createdAt: new Date().toISOString(), scratchpadIds: [] })
+  await workspace.mutate((state) => state.chats.push(chat))
+  const archived = newScratchpad("Previous MIPS test", "test")
+  archived.archived = true
+  chat.scratchpadHandles = [archived.id]
+  await workspace.mutate((state) => state.scratchpads.push(archived))
+  const archivedBefore = workspace.stateSnapshot.scratchpads.find((target) => target.id === archived.id)
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], workspaceScratchpads: [{ ...archived, notes: archived.learning.notes }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const workflows = new TutorWorkflowRepository(workspace)
+  const turn = await workflows.start(job)
+  const request = { target: { mode: "existing" as const, scratchpadHandle: "scratchpad_1" }, task: "Create a test on MIPS Part 1", requestedAccess: "write" as const, replyToLearner: true,
+    context: { learnerMessageIds: [chat.messages[0].id], materialIds: [], readDependencies: [], relevantContext: "" } }
+  const path = join(directory, "checkpoints.sqlite")
+  const saver = new SqliteCheckpointSaver(path)
+  const config = { configurable: { thread_id: turn.turnId }, durability: "sync" as const }
+  const legacy = new StateGraph(new StateSchema({ chatId: z.string(), turnId: z.string(), decision: TutorDecisionSchema.optional() }))
+    .addNode("tutor", async () => ({ decision: TutorDecisionSchema.parse({ action: "delegate", requests: [request] }) }))
+    .addNode("assume_role", async () => { await workflows.assumeRole(chat.id, turn.turnId, turn.turnId, [request]); return {} })
+    .addEdge(START, "tutor").addEdge("tutor", "assume_role").addEdge("assume_role", END).compile({ checkpointer: saver })
+  await assert.rejects(legacy.invoke({ chatId: chat.id, turnId: turn.turnId }, config), /Allowed write targets: none/)
+  saver.close()
+  const resumed = new SqliteCheckpointSaver(path)
+  t.after(() => resumed.close())
+  let tutorRuns = 0
+  let roleRuns = 0
+  await createTutorGraph(workflows, async (input, session) => {
+    if (session.tools.some((tool) => tool.type === "function" && tool.function.name === "assume_role")) {
+      tutorRuns += 1
+      assert.match(session.instructions, /rejected delegation/i)
+      assert.match(session.instructions, /Allowed write targets: none/)
+      const delegated = await session.execute("assume_role", { requests: [{ ...request, target: { mode: "create", type: "test" } }] })
+      assert.equal(delegated.success, true, delegated.text)
+      return session.finish("")
+    }
+    roleRuns += 1
+    const created = await session.execute("test_createTest", { test: { type: "test", version: "19-10-2026", name: "MIPS Part 1", goals: [], questions: [], references: [], content: [] } })
+    assert.equal(created.success, true, created.text)
+    const saved = await session.execute("save_learning_state", { ...input.chat.learning, workpad: "Created MIPS test", nextAction: "Wait for learner" })
+    assert.equal(saved.success, true, saved.text)
+    return session.finish("Your MIPS test is ready.")
+  }, resumed, {}).invoke(null, config)
+  assert.equal(tutorRuns, 1)
+  assert.equal(roleRuns, 1)
+  assert.equal(workflows.complete(chat.id, turn.turnId).message.content, "Your MIPS test is ready.")
+  assert.equal(workflows.get(chat.id, turn.turnId).batches.length, 1)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 2)
+  const archivedAfter = workspace.stateSnapshot.scratchpads.find((target) => target.id === archived.id)
+  assert.equal(archivedAfter?.archived, true)
+  assert.deepEqual(archivedAfter?.state, archivedBefore?.state)
+})
