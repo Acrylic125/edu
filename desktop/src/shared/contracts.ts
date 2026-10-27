@@ -160,6 +160,12 @@ export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true
   scratchpadRequested: z.boolean().default(false),
   ownerScratchpadId: IdSchema.optional(),
   messages: z.array(MessageSchema),
+  movedRequests: z.array(z.object({
+    messageId: IdSchema,
+    messageIndex: z.number().int().nonnegative(),
+    chatId: IdSchema,
+    scratchpadId: IdSchema.optional(),
+  })).default([]),
   scratchpadHandles: z.array(IdSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
   activeTurnId: IdSchema.optional(),

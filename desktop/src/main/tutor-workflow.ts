@@ -86,6 +86,11 @@ export class TutorWorkflowRepository {
     await this.workspace.mutateWorkflow(turnId, (turn, state) => {
       const chat = state.chats.find((chat) => chat.id === chatId)
       if (!chat || chat.activeTurnId !== turnId || turn.status !== "running") throw new Error("The creation request is no longer active.")
+      chat.movedRequests.push({
+        messageId: message.id,
+        messageIndex: chat.messages.findIndex((message) => message.id === turn.learnerMessageId),
+        chatId: staged.id,
+      })
       chat.messages = chat.messages.filter((message) => message.id !== turn.learnerMessageId)
       chat.activeTurnId = undefined
       chat.failedTurnId = undefined
@@ -224,6 +229,14 @@ export class TutorWorkflowRepository {
         for (const operation of job.operations) applyScratchpadMutation(state, chatId, operation.mutation)
         job.committedSnapshot = state.scratchpads.find((scratchpad) => scratchpad.id === job.scratchpadId)
         job.status = "committed"
+      }
+      const ownerId = state.chats.find((chat) => chat.id === chatId)?.ownerScratchpadId
+      if (ownerId) {
+        for (const chat of state.chats) {
+          for (const request of chat.movedRequests) {
+            if (request.chatId === chatId) request.scratchpadId = ownerId
+          }
+        }
       }
       batch.receipt = {
         receiptId: randomUUID(), batchId, committedAt: new Date().toISOString(),

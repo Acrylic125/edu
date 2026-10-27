@@ -38,6 +38,9 @@ export async function testStaging(root: Root, host: HTMLElement) {
   const firstId = snapshot.chats[0].id
   const secondId = snapshot.chats[1].id
   const ownedId = snapshot.chats[2].id
+  snapshot.chats[2].movedRequests.push({
+    messageId: crypto.randomUUID(), messageIndex: 1, chatId: secondId, scratchpadId: ownerId,
+  })
   let deleted = ""
   let receiveSnapshot = (_snapshot: Snapshot) => {}
   window.edu = {
@@ -62,6 +65,19 @@ export async function testStaging(root: Root, host: HTMLElement) {
       root.render(<ThemeProvider><App /></ThemeProvider>)
     })
     await settle()
+    const movedNotice = Array.from(host.querySelectorAll('div')).find((element) => element.classList.contains('text-yellow-700') && element.textContent?.startsWith('Moved request to'))
+    if (!movedNotice) throw new Error("Moved requests must leave a yellow notice in the source thread")
+    const destination = movedNotice.querySelector('button')!
+    if (destination.textContent?.trim() !== "Thread owner") throw new Error("The moved request must resolve its scratchpad title by ID")
+    const renamed = "Renamed scratchpad with a very long title that should be truncated in the moved request notice"
+    snapshot.scratchpads.find((scratchpad) => scratchpad.id === ownerId)!.title = renamed
+    flushSync(() => receiveSnapshot(structuredClone(snapshot)))
+    await settle()
+    if (destination.textContent?.trim() !== renamed || destination.title !== renamed) throw new Error("Moved request notices must follow scratchpad renames")
+    if (!destination.classList.contains("truncate") || !destination.classList.contains("max-w-48")) throw new Error("Long destination names must use a bounded, truncated label")
+    flushSync(() => destination.click())
+    await settle()
+    if (useTopicViews.getState().activeId !== ownerId) throw new Error("Moved request links must open the destination scratchpad by ID")
     let menu = await menuFor(host.querySelector<HTMLElement>('[role="tab"][title="Owned thread"]')!)
     if (menu.some((item) => item.textContent?.includes("Delete"))) throw new Error("Owned threads must not offer Delete")
     flushSync(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))

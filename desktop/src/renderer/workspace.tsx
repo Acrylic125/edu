@@ -5,6 +5,7 @@ import { replyContainsResponseQuestion } from "./response-choice"
 import { useEffect, useRef, useState, type ComponentProps } from "react"
 import {
   ArrowUp,
+  ArrowRight,
   Archive,
   ArchiveRestore,
   AtSign,
@@ -124,6 +125,10 @@ export function App() {
   const chatKey = chat?.id ?? newChatKey
   const pendingChatMessages = pendingMessages.filter((pending) => pending.chatId === chatKey)
   const messages = [...(chat?.messages ?? []), ...pendingChatMessages.map((pending) => pending.message)]
+  const conversation = [
+    ...messages.map((message, index) => ({ order: index * 2 + 1, message, move: undefined })),
+    ...(chat?.movedRequests ?? []).map((move) => ({ order: move.messageIndex * 2, message: undefined, move })),
+  ].sort((a, b) => a.order - b.order)
   const messageCheckLabels = new Map<string, string>()
   let checkLabel = "Check your understanding"
   for (const message of messages) {
@@ -914,7 +919,7 @@ export function App() {
           </button>
         </div>
       )}>
-        {messages.length === 0 && !chatRunning && !chatError ? (
+        {conversation.length === 0 && !chatRunning && !chatError ? (
           <ChatEmptyState
             title="Start a chat"
             suggestions={chatSuggestions}
@@ -925,92 +930,122 @@ export function App() {
           />
         ) : (
           <ChatConversation key={chatId} ref={thread} className="px-4">
-            {messages.map((message) => (
-              <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={(text) => desktop().copyText(messageCopyText(message, text), message.role === "user" ? message.materialIds : undefined)} durationMs={message.durationMs}>
-                {message.role === "user" && message.materialIds?.length ? (
-                  <div className="mb-2 flex flex-wrap gap-1" aria-label="Attached files">
-                    {(message.materialIds ?? []).flatMap((id) => {
-                      const material = chatMaterials.find((material) => material.id === id)
-                      return material ? [material] : []
-                    }).map((material) => {
-                      if (material.kind !== "image") {
-                        return (
-                          <button
-                            key={material.id}
-                            type="button"
-                            title={material.name}
-                            className="inline-flex h-6 max-w-48 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted"
-                            onClick={() => { void perform(() => desktop().openMaterial(material.id)) }}
-                          >
-                            <FileText className="size-3 shrink-0" />
-                            <span className="truncate">{materialDisplayName(material, labelMaterials)}</span>
-                          </button>
-                        )
-                      }
-                      return (
-                        <MediaPreview
-                          key={material.id}
-                          label={material.name}
-                          preview={<img src={`edu-source://${material.id}/1`} alt={material.name} />}
-                        >
-                          {(open) => (
-                            <button
-                              type="button"
-                              aria-label={`Preview ${material.name}`}
-                              aria-haspopup="dialog"
-                              className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                              onClick={open}
-                            >
-                              <img src={`edu-source://${material.id}/1`} alt={material.name} className="max-h-48 max-w-full object-contain" />
-                            </button>
-                          )}
-                        </MediaPreview>
-                      )
-                    })}
-                  </div>
-                ) : null}
-                {pendingChatMessages.find((pending) => pending.message.id === message.id)?.materials.filter((material) => !chatMaterials.some((saved) => saved.id === material.id)).map((material) => (
-                  <span key={material.id} className="mb-2 mr-1 inline-flex max-w-48 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                    <FileText className="size-3 shrink-0" />
-                    <span className="truncate">{material.name}</span>
-                  </span>
-                ))}
-                <StudyMarkdown
-                  text={message.content}
-                  checkLabel={messageCheckLabels.get(message.id)}
-                  showSourcePreviews={message.role === "assistant"}
-                  scratchpads={snapshot.scratchpads}
-                  onOpenScratchpad={openTopic}
-                  materials={chatMaterials}
-                  labelMaterials={labelMaterials}
-                  onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
-                />
-                {message.role === "assistant" && message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation && draftPlans.map((plan) => (
-                  <div key={plan.id} className="mt-4" role="group" aria-label={`Confirm learning plan for ${plan.title}`}>
-                    <p className="mb-3 text-sm text-muted-foreground">Review the plan for {plan.title}. You can ask for changes in chat.</p>
-                    <ConfirmPlanButton disabled={busy || chatRunnerBusy || !chatModelConnected} onClick={() => { void confirmPlan(plan) }} />
-                  </div>
-                ))}
-                {message.role === "assistant" && message.responseQuestion && !(message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation) && (
-                  <fieldset
-                    className="mt-4 flex min-w-0 flex-col gap-2"
-                    disabled={message.id !== chat?.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting?.key === chat?.id}
-                  >
-                    <legend className={replyContainsResponseQuestion(message.content, message.responseQuestion) ? "sr-only" : "mb-2 text-sm font-medium"}>{message.responseQuestion.prompt}</legend>
-                    {message.responseQuestion.options.map((option) => (
+            {conversation.map(({ message, move }) => {
+              if (move) {
+                const destination = snapshot.scratchpads.find((item) => item.id === move.scratchpadId)
+                let title = "Staging"
+                if (move.scratchpadId) title = destination?.title || "Scratchpad unavailable"
+                return (
+                  <div key={move.messageId} className="my-4 flex items-center gap-4 text-xs text-yellow-700 dark:text-yellow-300/80">
+                    <div className="h-px min-w-4 flex-1 bg-border" />
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <ArrowRight aria-hidden="true" className="size-3 shrink-0" />
+                      <span className="shrink-0">Moved request to</span>
                       <button
-                        key={option}
                         type="button"
-                        className="rounded-md border border-border px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
-                        onClick={() => { void respondToQuestion(message.id, option) }}
+                        title={title}
+                        disabled={move.scratchpadId !== undefined && !destination}
+                        className="max-w-48 truncate text-left underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:no-underline"
+                        onClick={() => {
+                          if (destination) openTopic(destination.id)
+                          else openChat(move.chatId)
+                        }}
                       >
-                        {option}
+                        {title}
                       </button>
-                    ))}
-                  </fieldset>
-                )}
-              </ChatMessage>
-            ))}
+                    </span>
+                    <div className="h-px min-w-4 flex-1 bg-border" />
+                  </div>
+                )
+              }
+              if (!message) return null
+              return (
+                <ChatMessage key={message.id} role={message.role} copyText={messageText(message)} onCopy={(text) => desktop().copyText(messageCopyText(message, text), message.role === "user" ? message.materialIds : undefined)} durationMs={message.durationMs}>
+                  {message.role === "user" && message.materialIds?.length ? (
+                    <div className="mb-2 flex flex-wrap gap-1" aria-label="Attached files">
+                      {(message.materialIds ?? []).flatMap((id) => {
+                        const material = chatMaterials.find((material) => material.id === id)
+                        return material ? [material] : []
+                      }).map((material) => {
+                        if (material.kind !== "image") {
+                          return (
+                            <button
+                              key={material.id}
+                              type="button"
+                              title={material.name}
+                              className="inline-flex h-6 max-w-48 items-center gap-1 rounded-md border border-border px-2 text-xs text-muted-foreground hover:bg-muted"
+                              onClick={() => { void perform(() => desktop().openMaterial(material.id)) }}
+                            >
+                              <FileText className="size-3 shrink-0" />
+                              <span className="truncate">{materialDisplayName(material, labelMaterials)}</span>
+                            </button>
+                          )
+                        }
+                        return (
+                          <MediaPreview
+                            key={material.id}
+                            label={material.name}
+                            preview={<img src={`edu-source://${material.id}/1`} alt={material.name} />}
+                          >
+                            {(open) => (
+                              <button
+                                type="button"
+                                aria-label={`Preview ${material.name}`}
+                                aria-haspopup="dialog"
+                                className="max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                                onClick={open}
+                              >
+                                <img src={`edu-source://${material.id}/1`} alt={material.name} className="max-h-48 max-w-full object-contain" />
+                              </button>
+                            )}
+                          </MediaPreview>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+                  {pendingChatMessages.find((pending) => pending.message.id === message.id)?.materials.filter((material) => !chatMaterials.some((saved) => saved.id === material.id)).map((material) => (
+                    <span key={material.id} className="mb-2 mr-1 inline-flex max-w-48 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                      <FileText className="size-3 shrink-0" />
+                      <span className="truncate">{material.name}</span>
+                    </span>
+                  ))}
+                  <StudyMarkdown
+                    text={message.content}
+                    checkLabel={messageCheckLabels.get(message.id)}
+                    showSourcePreviews={message.role === "assistant"}
+                    scratchpads={snapshot.scratchpads}
+                    onOpenScratchpad={openTopic}
+                    materials={chatMaterials}
+                    labelMaterials={labelMaterials}
+                    onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
+                  />
+                  {message.role === "assistant" && message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation && draftPlans.map((plan) => (
+                    <div key={plan.id} className="mt-4" role="group" aria-label={`Confirm learning plan for ${plan.title}`}>
+                      <p className="mb-3 text-sm text-muted-foreground">Review the plan for {plan.title}. You can ask for changes in chat.</p>
+                      <ConfirmPlanButton disabled={busy || chatRunnerBusy || !chatModelConnected} onClick={() => { void confirmPlan(plan) }} />
+                    </div>
+                  ))}
+                  {message.role === "assistant" && message.responseQuestion && !(message.id === chat?.messages.at(-1)?.id && awaitingPlanConfirmation) && (
+                    <fieldset
+                      className="mt-4 flex min-w-0 flex-col gap-2"
+                      disabled={message.id !== chat?.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting?.key === chat?.id}
+                    >
+                      <legend className={replyContainsResponseQuestion(message.content, message.responseQuestion) ? "sr-only" : "mb-2 text-sm font-medium"}>{message.responseQuestion.prompt}</legend>
+                      {message.responseQuestion.options.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          className="rounded-md border border-border px-3 py-2 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent"
+                          onClick={() => { void respondToQuestion(message.id, option) }}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </fieldset>
+                  )}
+                </ChatMessage>
+              )
+            })}
             {chatRunning && runtime.reply && (
               <ChatMessage role="assistant">
                 <StudyMarkdown
