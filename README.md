@@ -2,7 +2,7 @@
 	<img src="desktop/src/renderer/assets/app-icon.png" alt="EdU logo, a stack of blue, green, and yellow books" width="160" />
 </p>
 <h1 align="center">EdU, Tutor Agent Harness</h1>
-<p align="center">Alpha Release, M-Series Macs Only</p>
+<p align="center">*MAC Only*</p>
 
 ## Why?
 
