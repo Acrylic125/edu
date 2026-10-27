@@ -3,6 +3,7 @@ import { join } from "node:path"
 import { z } from "zod"
 import { shell } from "electron"
 import { CodexProvider } from "./codex"
+import { resolveCodexExecutable } from "./codex-installation"
 import { cliPromptArguments, parseCliResponse, prepareCliWorkspace, resolveCliExecutable, runCliCommand } from "./cli"
 import {
   providerDefaultModels,
@@ -27,16 +28,14 @@ export class ProviderRegistry {
   }))
   constructor(
     private directory: string,
-    private executable: string,
     private notify: () => void,
     settings: z.infer<typeof ProviderSettingsSchema>[] = [],
-    private bundledExecutable = executable,
   ) {
     this.settings = settings
     for (const provider of this.cliStates)
       provider.connected = settings.some((item) => item.id === provider.id && item.enabled && item.binaryPath)
     this.codex = new CodexProvider(
-      { executable: settings.find((item) => item.id === "codex")?.binaryPath || executable, home: join(directory, "providers", "codex") },
+      { executable: settings.find((item) => item.id === "codex")?.binaryPath || "", home: join(directory, "providers", "codex") },
       notify,
       (url) => shell.openExternal(url),
     )
@@ -51,12 +50,11 @@ export class ProviderRegistry {
       if (provider.id === "codex") {
         let source: NonNullable<z.infer<typeof ProviderStatusSchema>["runtime"]>["source"] = "installed"
         if (settings?.binaryPath) source = "custom"
-        else if (this.codex.connection.executable === this.bundledExecutable) source = "bundled"
         return {
           ...provider,
           settings,
           name: settings?.displayName ?? provider.name,
-          runtime: { executable: this.codex.connection.executable, source },
+          runtime: provider.installed ? { executable: this.codex.connection.executable, source } : undefined,
         }
       }
       return { ...provider, settings, name: settings?.displayName ?? provider.name }
@@ -72,10 +70,10 @@ export class ProviderRegistry {
       cli.error = undefined
       if (settings.binaryPath !== (previous?.binaryPath ?? "")) cli.runtime = undefined
     }
-    if (settings.id === "codex" && this.codex.connection.executable !== (settings.binaryPath || this.executable)) {
+    if (settings.id === "codex" && settings.binaryPath !== (previous?.binaryPath ?? "")) {
       this.codex.close()
       this.codex = new CodexProvider(
-        { executable: settings.binaryPath || this.executable, home: join(this.directory, "providers", "codex") },
+        { executable: settings.binaryPath, home: join(this.directory, "providers", "codex") },
         this.notify,
         (url) => shell.openExternal(url),
       )
@@ -116,7 +114,7 @@ export class ProviderRegistry {
       if (this.disconnecting.has(id) || this.statuses.some((provider) => provider.id === id && provider.connecting)) return
       const task = (async () => {
         try {
-          if (id === "codex") await this.codex.refresh()
+          if (id === "codex") await this.refreshCodex()
           else {
             const provider = this.cliStates.find((provider) => provider.id === id)
             if (provider) await this.refreshCli(provider)
@@ -128,6 +126,33 @@ export class ProviderRegistry {
       this.refreshTasks.set(id, task)
       return task
     }))
+  }
+
+  private async refreshCodex() {
+    this.codex.state.loading = true
+    this.codex.state.error = undefined
+    this.notify()
+    const binaryPath = this.settings.find((item) => item.id === "codex")?.binaryPath
+    try {
+      const executable = await resolveCodexExecutable(binaryPath)
+      if (this.closed || binaryPath !== this.settings.find((item) => item.id === "codex")?.binaryPath) return
+      if (this.codex.connection.executable !== executable) {
+        this.codex.close()
+        this.codex = new CodexProvider(
+          { executable, home: join(this.directory, "providers", "codex") },
+          this.notify,
+          (url) => shell.openExternal(url),
+        )
+      }
+      await this.codex.refresh()
+    } catch (error) {
+      if (this.closed || binaryPath !== this.settings.find((item) => item.id === "codex")?.binaryPath) return
+      this.codex.close()
+      this.codex.state.installed = false
+      this.codex.state.error = error instanceof Error ? error.message : "Could not find a compatible Codex installation."
+      this.codex.state.checkedAt = new Date().toISOString()
+      this.notify()
+    }
   }
 
   private cliConnection(id: "claude" | "antigravity") {
@@ -241,6 +266,8 @@ export class ProviderRegistry {
       return
     }
     if (id === "codex") {
+      await this.refresh("codex")
+      if (!this.codex.state.installed) throw new Error(this.codex.state.error ?? "Install Codex CLI, then recheck setup.")
       this.reconcileCodex()
       await this.codex.connect()
       return

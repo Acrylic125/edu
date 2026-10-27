@@ -32,7 +32,6 @@ import {
 } from "../shared/contracts"
 import { resolveCliExecutable } from "../providers/cli"
 import { ProviderRegistry } from "../providers/registry"
-import { resolveCodexExecutable } from "../providers/codex-installation"
 import { importMaterials, MaterialDrafts } from "./materials"
 import { readSourceImages } from "./source-images"
 import { newChat, WorkspaceRepository } from "./workspace"
@@ -113,13 +112,10 @@ else {
       const runtimeUpdates = createBatchedUpdate(() => {
         if (window && !window.isDestroyed()) window.webContents.send(Channel.runtimeUpdate, { runtime: runnerManager.statuses })
       })
-      const bundledCodex = join(resources, "codex", "bin", process.platform === "win32" ? "codex.exe" : "codex")
       const registry = new ProviderRegistry(
         directory,
-        await resolveCodexExecutable(bundledCodex),
         notify,
         repository.stateSnapshot.providerSettings,
-        bundledCodex,
       )
       providers = registry
       const skillDirectory = app.isPackaged

@@ -15,6 +15,7 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
     if (topics.some((topic) => topic.id === mutation.topicId)) throw new Error("Topic already exists.")
     const topic = newTopic(mutation.topic.name)
     topic.id = mutation.topicId
+    topic.createdAt = mutation.createdAt ?? workspace.chats.find((chat) => chat.id === threadId)?.messages.findLast((message) => message.role === "user")?.createdAt ?? topic.createdAt
     topic.state = TopicStateSchema.parse({ ...mutation.topic, createdAt: topic.createdAt, threadTutors: [{ id: threadId, progress: {} }] })
     attachReferencedMaterials(topic, topic.state, workspace, mutation.materialIds)
     topic.state.document ??= { version: 1, blocks: [] }
@@ -318,7 +319,8 @@ export function applyScratchpadMutation(workspace: Pick<Workspace, "topics" | "c
   if (mutation.type === "createTest" || mutation.type === "createGeneric") {
     if (workspace.topics.some((item) => item.id === mutation.topicId)) throw new Error("Scratchpad already exists.")
     let state: z.infer<typeof ScratchpadStateSchema>
-    const createdAt = new Date().toISOString()
+    // Legacy staged creations have no timestamp; their initiating message is stable across replays.
+    const createdAt = mutation.createdAt ?? request?.createdAt ?? new Date().toISOString()
     if (mutation.type === "createTest") {
       state = TestStateSchema.parse({ ...mutation.test, createdAt, questions: mutation.test.questions.map((question) => ({ ...question, threadWriters: [threadId] })) })
     } else state = GenericStateSchema.parse({ ...mutation.generic, createdAt })

@@ -156,7 +156,7 @@ export class CodexAppServer {
       }
     })
     this.child.once("error", () =>
-      this.close(new Error("The bundled Codex runtime could not start.")),
+      this.close(new Error("Codex could not start. Check its installation in Settings → Providers.")),
     )
     this.child.once("exit", (code, signal) => {
       this.diagnostic("codex.exit", { code, signal })

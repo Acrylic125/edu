@@ -6,6 +6,9 @@ directories:
 files:
   - out/**
   - package.json
+  - "!node_modules/**/*.map"
+  - "!node_modules/officeparser/dist/officeparser.browser*"
+  - "!node_modules/@tesseract.js-data/eng/4.0.0{,/**}"
 extraResources:
   - from: ../phoenix
     to: phoenix
@@ -16,10 +19,24 @@ extraResources:
       - compose.yaml
   - from: resources
     to: resources
+    filter:
+      - "**/*"
+      - "!codex{,/**}"
 asar: true
-# OCR worker threads resolve their modules and language data outside the archive.
+# Node OCR workers do not have Electron's ASAR filesystem patches, including for transitive imports.
 asarUnpack:
-  - node_modules/**
+  - node_modules/tesseract.js/**
+  - node_modules/tesseract.js-core/**
+  - node_modules/@tesseract.js-data/eng/**
+  - node_modules/bmp-js/**
+  - node_modules/is-url/**
+  - node_modules/regenerator-runtime/**
+  - node_modules/wasm-feature-detect/**
+  - node_modules/node-fetch/**
+  - node_modules/whatwg-url/**
+  - node_modules/tr46/**
+  - node_modules/webidl-conversions/**
+  - node_modules/@napi-rs/canvas*/**
 mac:
   category: public.app-category.education
   target: [dmg, zip]
