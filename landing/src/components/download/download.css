@@ -5,14 +5,14 @@ download-section {
   position: relative;
   display: block;
   width: 100vw;
-  height: 320svh;
+  height: calc(100dvh + 220svh);
   margin-left: calc(50% - 50vw);
 }
 
 .download-stage {
   position: sticky;
   top: 0;
-  height: 100svh;
+  height: 100dvh;
   overflow: hidden;
   isolation: isolate;
 }
@@ -148,7 +148,7 @@ download-section:not(:defined) .download-reveal {
 }
 
 download-section:not(:defined) {
-  height: 100svh;
+  height: 100dvh;
 }
 
 download-section:not(:defined) .download-integration[data-integration="0"] {
@@ -202,7 +202,7 @@ download-section:not(:defined) .download-integration:last-child {
 }
 
 @media (orientation: portrait) {
-  .download-copy { top: 37svh; justify-content: flex-start; padding-block: 0; }
+  .download-copy { top: 37%; justify-content: flex-start; padding-block: 0; }
   .download-copy h2 { font-size: clamp(1.6rem, 6.84vw, 3.4rem); }
   .download-reveal { gap: 3svh; margin-top: 2.5svh; margin-bottom: 0; }
   .download-free { font-size: clamp(1.25rem, 5.2vw, 2.25rem); }
@@ -217,6 +217,6 @@ download-section:not(:defined) .download-integration:last-child {
 
 @media (prefers-reduced-motion: reduce) {
   download-section {
-    height: 100svh;
+    height: 100dvh;
   }
 }

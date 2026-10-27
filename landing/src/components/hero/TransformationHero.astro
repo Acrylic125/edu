@@ -21,7 +21,9 @@ const headlineWords = [
 
 <transformation-hero data-view="understood" data-social-preview={socialPreview || undefined} aria-labelledby="intro">
   <div class="hero-viewport">
-  <Image class="hero-lecture-backdrop" src={lecturePreview} alt="" aria-hidden="true" widths={[800, 1200, 2000]} sizes="100vw" loading="eager" />
+  <div class="hero-backdrop-frame" aria-hidden="true">
+    <Image class="hero-lecture-backdrop" src={lecturePreview} alt="" widths={[800, 1200, 2000]} sizes="100vw" loading="eager" />
+  </div>
   <header class="hero-brand">
     <Image src={appIcon} width={44} height={44} alt="" format="webp" />
     <span>EdU</span>

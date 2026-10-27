@@ -9,9 +9,19 @@ transformation-hero {
 }
 
 .hero-viewport { position: sticky; top: 0; display: flex; height: 100dvh; flex-direction: column; isolation: isolate; }
-.hero-lecture-backdrop {
+.hero-backdrop-frame {
   position: absolute;
   z-index: -1;
+  top: 0;
+  left: 50%;
+  width: 100vw;
+  height: 100%;
+  overflow: hidden;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.hero-lecture-backdrop {
+  position: absolute;
   top: 50%;
   left: 50%;
   width: var(--hero-backdrop-width, 100vw);
