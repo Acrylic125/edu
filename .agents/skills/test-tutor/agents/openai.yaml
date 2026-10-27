@@ -1,0 +1,7 @@
+interface:
+  display_name: "Test Tutor"
+  short_description: "Use to validate topic tutor flow."
+  default_prompt: "Use $test-tutor to validate the EdU topic tutor flow."
+
+policy:
+  allow_implicit_invocation: false

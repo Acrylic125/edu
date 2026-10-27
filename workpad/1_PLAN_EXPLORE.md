@@ -1,0 +1,1 @@
+EdU is an Electron tutoring workspace. RunnerManager dispatches provider work; TutorWorkflowRepository persists completed replies; the React workspace passes message.durationMs to the shared ChatMessage UI. Scope: restore response duration and add exactly one regression test.
