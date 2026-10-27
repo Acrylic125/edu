@@ -7,7 +7,7 @@ import { test } from "node:test"
 import { MessageSchema } from "../shared/contracts"
 import { newChat, newScratchpad, WorkspaceRepository } from "./workspace"
 
-test("scratchpad files bind creation threads while references and missing files stay staged", async (t) => {
+test("completed scratchpads retain creation threads while missing files are reconciled", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "edu-file-backed-threads-"))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const repository = new WorkspaceRepository(directory)
@@ -28,16 +28,20 @@ test("scratchpad files bind creation threads while references and missing files 
   const structured = await readFile(statePath)
   await rm(markdownPath)
   await reopened.refreshTopics()
-  assert.equal(reopened.chat(creator.id).ownerScratchpadId, undefined)
+  assert.equal(reopened.chat(creator.id).ownerScratchpadId, scratchpad.id)
+  assert.equal(reopened.scratchpad(scratchpad.id).fileError, "missing-markdown")
   await writeFile(markdownPath, markdown)
   await rm(statePath)
   await reopened.refreshTopics()
-  assert.equal(reopened.chat(creator.id).ownerScratchpadId, undefined)
+  assert.equal(reopened.chat(creator.id).ownerScratchpadId, scratchpad.id)
+  assert.equal(reopened.scratchpad(scratchpad.id).fileError, "missing-state")
   await writeFile(statePath, structured)
   await reopened.refreshTopics()
   assert.equal(reopened.chat(creator.id).ownerScratchpadId, scratchpad.id)
+  assert.equal(reopened.scratchpad(scratchpad.id).fileError, undefined)
   await rm(markdownPath)
   await rm(statePath)
   await reopened.refreshTopics()
-  assert.equal(reopened.chat(creator.id).ownerScratchpadId, undefined)
+  assert.equal(reopened.chat(creator.id).ownerScratchpadId, scratchpad.id)
+  assert.equal(reopened.scratchpad(scratchpad.id).fileError, "missing-both")
 })

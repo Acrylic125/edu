@@ -2,7 +2,6 @@ import { chatScratchpadId } from "../shared/thread-ownership"
 import { randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import {
-  access,
   copyFile,
   cp,
   chmod,
@@ -26,6 +25,7 @@ import {
   TopicSchema,
   WorkspaceSchema,
   IdSchema,
+  ReconcileScratchpadSchema,
   type Topic,
   type Workspace,
 } from "../shared/contracts"
@@ -103,7 +103,7 @@ export class WorkspaceRepository {
   private state: Workspace = WorkspaceSchema.parse({ version: 2, runners: [], scratchpads: [], chats: [] })
   private writes = Promise.resolve()
 
-  private fileBackedScratchpadIds = new Set<string>()
+  private availableScratchpadIds = new Set<string>()
   private database: ChatDatabase
 
   constructor(readonly directory: string) {
@@ -261,19 +261,42 @@ export class WorkspaceRepository {
     const scratchpads: Topic[] = []
     // Topic and test JSON owns content; Markdown is a rebuildable projection.
     const savedTopics = this.database.load()?.state.scratchpads ?? []
-    const archivedIds = new Set(savedTopics.filter((scratchpad) => scratchpad.archived).map((scratchpad) => scratchpad.id))
     for (const entry of await readdir(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
       const directory = join(root, entry.name)
       const markdown = await readOptionalFile(join(directory, "scratchpad.md"))
       const structured = await readOptionalFile(join(directory, "scratchpad.state.json"))
-      if (markdown === undefined || structured === undefined) continue
-      const storedState = StoredScratchpadStateSchema.parse(StoredJsonSchema.parse(JSON.parse(structured)))
+      // Older builds could drop metadata for incomplete directories; history preserves the entry's identity, not its files.
+      const saved = savedTopics.find((item) => item.id === entry.name)
+        ?? this.state.scratchpads.find((item) => item.id === entry.name)
+        ?? this.database.scratchpadFromHistory(entry.name)
+      let storedState: z.infer<typeof StoredScratchpadStateSchema> | undefined
+      if (structured !== undefined) {
+        try {
+          storedState = StoredScratchpadStateSchema.parse(StoredJsonSchema.parse(JSON.parse(structured)))
+        } catch (error) {
+          if (!(error instanceof SyntaxError || error instanceof z.ZodError)) throw error
+        }
+      }
+      if (markdown === undefined || !storedState) {
+        const title = saved?.title ?? storedState?.name ?? /^\s*# ([^\r\n]+)/.exec(markdown ?? "")?.[1]?.trim() ?? "Untitled scratchpad"
+        const scratchpad = structuredClone(saved ?? newScratchpad(TopicHeaderSchema.safeParse(title).success ? title : "Untitled scratchpad"))
+        scratchpad.id = entry.name
+        scratchpad.state = storedState
+        if (storedState) scratchpad.createdAt = storedState.createdAt
+        scratchpad.learning.notes = markdown ?? saved?.learning.notes ?? ""
+        scratchpad.materials = await readMaterialManifests(directory)
+        if (markdown === undefined && !storedState) scratchpad.fileError = "missing-both"
+        else if (markdown === undefined) scratchpad.fileError = "missing-markdown"
+        else scratchpad.fileError = "missing-state"
+        scratchpads.push(TopicSchema.parse(scratchpad))
+        continue
+      }
       const notes = markdown
       let title = /^\s*# ([^\r\n]+)/.exec(notes)?.[1]?.trim()
       if (storedState.type !== "generic") title = storedState.name
-      if (!title) throw new Error(`Topic document needs a title header: ${directory}`)
-      TopicHeaderSchema.parse(title)
+      if (!TopicHeaderSchema.safeParse(title).success) title = saved?.title ?? storedState.name
+      title = TopicHeaderSchema.parse(title)
       const scratchpad = newScratchpad(title)
       scratchpad.id = entry.name
       scratchpad.createdAt = (await stat(join(directory, "scratchpad.md"))).birthtime.toISOString()
@@ -296,18 +319,17 @@ export class WorkspaceRepository {
         scratchpad.title = scratchpad.state.name
         scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
       }
-      if (JSON.stringify(JSON.parse(structured)) !== JSON.stringify(scratchpad.state))
+      if (structured !== undefined && JSON.stringify(JSON.parse(structured)) !== JSON.stringify(scratchpad.state))
         await writeAtomic(join(directory, "scratchpad.state.json"), JSON.stringify(scratchpad.state, null, 2))
       if (scratchpad.state.type !== "generic" && markdown !== scratchpad.learning.notes)
         await writeAtomic(join(directory, "scratchpad.md"), scratchpad.learning.notes)
-      const saved = savedTopics.find((item) => item.id === scratchpad.id)
       if (saved && legacy === undefined) {
         scratchpad.planConfirmed = saved.planConfirmed
         scratchpad.titleGenerated = saved.titleGenerated
       }
       scratchpad.learning.outline = []
       if (scratchpad.state.type === "topic") scratchpad.learning.outline = scratchpad.state.content.slice(0, 100).map((part) => part.name)
-      scratchpad.archived = archivedIds.has(scratchpad.id) || scratchpad.archived
+      scratchpad.archived = saved?.archived ?? scratchpad.archived
       const parsed = TopicSchema.parse(scratchpad)
       if (legacy !== undefined) {
         // Migrate once into the Tutor Me layout, removing topic.json only after its replacements are written.
@@ -316,7 +338,7 @@ export class WorkspaceRepository {
       }
       scratchpads.push(parsed)
     }
-    await this.updateFileBackedScratchpads(scratchpads)
+    this.updateAvailableScratchpads(scratchpads)
     return scratchpads.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
   }
 
@@ -344,22 +366,13 @@ export class WorkspaceRepository {
     return operation
   }
 
-  private async updateFileBackedScratchpads(scratchpads: Workspace["scratchpads"]) {
-    const ids = await Promise.all(scratchpads.map(async (scratchpad) => {
-      const directory = join(this.directory, "scratchpads", scratchpad.id)
-      try {
-        await Promise.all([access(join(directory, "scratchpad.md")), access(join(directory, "scratchpad.state.json"))])
-        return scratchpad.id
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") return
-        throw error
-      }
-    }))
-    this.fileBackedScratchpadIds = new Set(ids.filter((id) => id !== undefined))
+  private updateAvailableScratchpads(scratchpads: Workspace["scratchpads"]) {
+    // Completed scratchpads retain their threads while the user repairs missing files.
+    this.availableScratchpadIds = new Set(scratchpads.map((scratchpad) => scratchpad.id))
   }
 
   private resolvedChat(chat: Workspace["chats"][number]) {
-    const resolved: Workspace["chats"][number] = { ...chat, ownerScratchpadId: chatScratchpadId(chat, this.fileBackedScratchpadIds) }
+    const resolved: Workspace["chats"][number] = { ...chat, ownerScratchpadId: chatScratchpadId(chat, this.availableScratchpadIds) }
     return resolved
   }
 
@@ -424,6 +437,42 @@ export class WorkspaceRepository {
     return operation
   }
 
+  async reconcileScratchpad(input: z.infer<typeof ReconcileScratchpadSchema>) {
+    const { scratchpadId, action } = ReconcileScratchpadSchema.parse(input)
+    const operation = this.writes.then(async () => {
+      await this.recoverFiles()
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
+      const scratchpad = this.state.scratchpads.find((item) => item.id === scratchpadId)
+      if (!scratchpad) throw new Error("This scratchpad no longer exists.")
+      if (!scratchpad.fileError) return
+      const directory = join(this.directory, "scratchpads", scratchpadId)
+      if (action === "regenerate") {
+        if (scratchpad.fileError !== "missing-markdown" || !scratchpad.state)
+          throw new Error("Cannot regenerate Markdown without a valid scratchpad state file.")
+        let markdown = scratchpad.learning.notes
+        if (scratchpad.state.type !== "generic") markdown = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
+        // Generic state stores references, so its latest saved Markdown is the only content backup.
+        else if (!markdown) markdown = `# ${scratchpad.title}\n\n`
+        await writeAtomic(join(directory, "scratchpad.md"), markdown)
+      } else {
+        if (scratchpad.fileError !== "missing-state")
+          throw new Error("Cannot convert a scratchpad without its Markdown file.")
+        const generic = newScratchpad(scratchpad.title, "generic")
+        generic.state = ScratchpadStateSchema.parse({ ...generic.state, createdAt: scratchpad.createdAt })
+        await writeAtomic(join(directory, "scratchpad.state.json"), JSON.stringify(generic.state, null, 2))
+        scratchpad.planConfirmed = true
+      }
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
+      if (action === "convert-to-generic") {
+        const converted = this.state.scratchpads.find((item) => item.id === scratchpadId)
+        if (converted) converted.planConfirmed = true
+      }
+      await this.commit(this.state)
+    })
+    this.writes = operation.catch(() => {})
+    return operation
+  }
+
   workflow(turnId: string) {
     return this.database.workflow(turnId)
   }
@@ -477,6 +526,7 @@ export class WorkspaceRepository {
   private async commit(state: Workspace, workflow?: z.infer<typeof WorkflowRecordSchema>) {
     const validated = WorkspaceSchema.parse(state)
     for (const scratchpad of validated.scratchpads) {
+      if (scratchpad.fileError) continue
       const previous = this.state.scratchpads.find((item) => item.id === scratchpad.id)
       if (JSON.stringify(scratchpad) === JSON.stringify(previous)) continue
       scratchpad.state ??= { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }
@@ -511,6 +561,7 @@ export class WorkspaceRepository {
       ...state.chats.map((chat) => ({ materials: chat.materials, directory: join(this.directory, "chats", chat.id, "assets") })),
     ]
     for (const scratchpad of state.scratchpads) {
+      if (scratchpad.fileError) continue
       const before = previous.scratchpads.find((item) => item.id === scratchpad.id)
       const references = scratchpadReferences(scratchpad.state ?? freshTopicState(scratchpad.title, scratchpad.createdAt))
       for (const material of scratchpad.materials) {
@@ -562,6 +613,7 @@ export class WorkspaceRepository {
 
   private async syncFiles(validated: Workspace, previousState: Workspace) {
     for (const scratchpad of validated.scratchpads) {
+      if (scratchpad.fileError) continue
       const previous = previousState.scratchpads.find((item) => item.id === scratchpad.id)
       const directory = join(this.directory, "scratchpads", scratchpad.id)
       await mkdir(directory, { recursive: true })
@@ -586,7 +638,7 @@ export class WorkspaceRepository {
       if (!validated.chats.some((item) => item.id === chat.id))
         await rm(join(this.directory, "chats", chat.id), { recursive: true, force: true })
     }
-    await this.updateFileBackedScratchpads(validated.scratchpads)
+    this.updateAvailableScratchpads(validated.scratchpads)
   }
 
   async exportStudyFiles(scratchpad: Topic, directory: string) {

@@ -84,8 +84,8 @@ export async function testStaging(root: Root, host: HTMLElement) {
     await settle()
     const navigation = host.querySelector('nav[aria-label="Your scratchpads"]')!
     const entries = Array.from(navigation.querySelectorAll<HTMLButtonElement>('button[aria-current], button')).filter((item) => item.textContent?.includes("thread"))
-    const firstEntry = entries.find((item) => item.textContent === "First staged thread")!
-    if (!firstEntry?.classList.contains("bg-yellow-300/20") || !firstEntry.classList.contains("dark:bg-yellow-700/20")) throw new Error("Staged entries must use the specified yellow backgrounds")
+    const firstEntry = entries.find((item) => item.textContent?.startsWith("First staged thread"))!
+    if (!firstEntry?.classList.contains("bg-amber-500/8") || firstEntry.querySelector('[data-slot="badge"]')?.textContent !== "Staging") throw new Error("Staged entries must use a muted amber background and a Staging badge below the title")
     if (!navigation.firstElementChild?.textContent?.includes("First staged thread")) throw new Error("Staged threads must be pinned above scratchpads")
     flushSync(() => firstEntry.click())
     await settle()
@@ -109,7 +109,7 @@ export async function testStaging(root: Root, host: HTMLElement) {
     await settle()
     if (!host.querySelector('h1')?.textContent?.includes("learn today")) throw new Error("New Scratchpad must restore the default welcome screen")
     if (host.querySelector('section[aria-label="Staging"]') || host.querySelector('[role="tablist"]')) throw new Error("New Scratchpad must not contain staging or tabs")
-    const secondEntry = Array.from(host.querySelectorAll<HTMLButtonElement>('nav[aria-label="Your scratchpads"] button')).find((button) => button.textContent === "Second staged thread")!
+    const secondEntry = Array.from(host.querySelectorAll<HTMLButtonElement>('nav[aria-label="Your scratchpads"] button')).find((button) => button.textContent?.startsWith("Second staged thread"))!
     flushSync(() => secondEntry.click())
     await settle()
     if (useChatTabs.getState().activeId !== secondId) throw new Error("Selecting another unfinished scratchpad must open its own conversation")

@@ -1,4 +1,5 @@
 import { testStaging } from "./staging"
+import { testScratchpadFiles } from "./scratchpad-files"
 import { testPlanConfirmation } from "./plan-confirmation"
 import { testResponseChoice } from "./response-choice"
 import { testTestScratchpad } from "./test-scratchpad"
@@ -52,6 +53,7 @@ async function runRenderingTests() {
   await testChatTabs(root, host)
   await testThreadContextMenu(root, host)
   await testStaging(root, host)
+  await testScratchpadFiles(root, host)
   await testChatScroll(root, host)
   await testTopicTerminology(root, host)
   const durations: { actual: number; base: number }[] = []

@@ -3,8 +3,24 @@
 import type { ReactNode } from "react"
 import { useRender } from "@base-ui/react/use-render"
 import { LoaderCircleIcon } from "lucide-react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { Badge } from "../primitives/badge"
 
 import { cn } from "../utils"
+
+const statusVariants = cva("", {
+  variants: {
+    status: {
+      staging: "bg-amber-500/8 text-sidebar-foreground hover:bg-amber-500/14",
+      error: "bg-destructive/8 text-sidebar-foreground hover:bg-destructive/14",
+    },
+    selected: { true: "", false: "" },
+  },
+  compoundVariants: [
+    { status: "staging", selected: true, className: "bg-amber-500/16 hover:bg-amber-500/20" },
+    { status: "error", selected: true, className: "bg-destructive/16 hover:bg-destructive/20" },
+  ],
+})
 
 export function TopicNavigation({
   children,
@@ -38,6 +54,7 @@ export function TopicNavigationItem({
   selected = false,
   busy = false,
   scratchpadType,
+  status,
   render,
   className,
   ...props
@@ -46,7 +63,7 @@ export function TopicNavigationItem({
   busy?: boolean
   scratchpadType?: "topic" | "test" | "generic"
   title: string
-}) {
+} & VariantProps<typeof statusVariants>) {
   return useRender({
     defaultTagName: "button",
     render,
@@ -58,14 +75,23 @@ export function TopicNavigationItem({
         selected
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
-        selected && scratchpadType === "topic" && "bg-learning-yellow text-learning-ink",
-        selected && scratchpadType === "test" && "bg-learning-sage text-learning-ink",
-        selected && scratchpadType === "generic" && "bg-learning-blue text-learning-ink",
+        !status && selected && scratchpadType === "topic" && "bg-learning-yellow text-learning-ink",
+        !status && selected && scratchpadType === "test" && "bg-learning-sage text-learning-ink",
+        !status && selected && scratchpadType === "generic" && "bg-learning-blue text-learning-ink",
+        statusVariants({ status, selected }),
         className,
       ),
       children: (
         <>
-          <span className="line-clamp-2 flex-1">{title}</span>
+          <span className="flex min-w-0 flex-1 flex-col items-start gap-1.5">
+            <span className="line-clamp-2">{title}</span>
+            {status === "staging" && (
+              <Badge variant="outline" className="border-amber-700/15 bg-amber-500/10 px-1.5 py-0 text-[10px] text-amber-800 dark:border-amber-300/15 dark:text-amber-200">Staging</Badge>
+            )}
+            {status === "error" && (
+              <Badge variant="outline" className="border-destructive/20 bg-destructive/10 px-1.5 py-0 text-[10px] text-destructive">Error</Badge>
+            )}
+          </span>
           {busy ? (
             <LoaderCircleIcon
               className="size-3.5 shrink-0 animate-spin"

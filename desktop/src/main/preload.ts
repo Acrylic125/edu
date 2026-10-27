@@ -41,6 +41,7 @@ const bridge: DesktopBridge = {
   createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
   deleteStagedChat: (chatId) => ipcRenderer.invoke(Channel.deleteStagedChat, chatId),
   archiveScratchpad: (input) => ipcRenderer.invoke(Channel.archiveScratchpad, input),
+  reconcileScratchpad: (input) => ipcRenderer.invoke(Channel.reconcileScratchpad, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
   retry: (input) => ipcRenderer.invoke(Channel.retry, input),
   selectMaterials: async (draftIds) =>
