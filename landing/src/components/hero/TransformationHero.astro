@@ -3,6 +3,7 @@ import { Image } from "astro:assets";
 import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
 import DownloadAction from "../download/DownloadAction.astro";
 import BasisTransformation from "./BasisTransformation.astro";
+import lecturePreview from "./assets/lecture-preview.png";
 import "./transformation.css";
 
 interface Props {
@@ -20,6 +21,7 @@ const headlineWords = [
 
 <transformation-hero data-view="understood" data-social-preview={socialPreview || undefined} aria-labelledby="intro">
   <div class="hero-viewport">
+  <Image class="hero-lecture-backdrop" src={lecturePreview} alt="" aria-hidden="true" widths={[800, 1200, 2000]} sizes="100vw" loading="eager" />
   <header class="hero-brand">
     <Image src={appIcon} width={44} height={44} alt="" format="webp" />
     <span>EdU</span>
@@ -52,36 +54,6 @@ const headlineWords = [
     <div class="transformation-example">
       <div class="transformation-art">
         <div class="transformation-canvas">
-        <div class="lecture-cluster" data-lecture aria-hidden="true">
-          <article class="lecture-paper">
-            <div class="lecture-meta"><span>Linear algebra</span><span>Lecture 08 / 42</span></div>
-            <h2>2.4 Linear transformation<br />with respect to a B-basis</h2>
-            <div class="lecture-columns">
-              <div>
-                <div class="lecture-commutative math">
-                  <span>x</span><span class="commutative-arrow"><small>A = PDP<sup>−1</sup></small>⟶</span><span>y</span>
-                  <span class="vertical-arrow">P<sup>−1</sup> ↓ ↑ P</span><span></span><span class="vertical-arrow">P<sup>−1</sup> ↓ ↑ P</span>
-                  <span>[x]<sub>B</sub></span><span class="commutative-arrow"><small>[T]<sub>B</sub> = D</small>⟶</span><span>[y]<sub>B</sub></span>
-                </div>
-                <div class="lecture-highlight math">x = P[x]<sub>B</sub><br />P<sup>−1</sup>x = [x]<sub>B</sub></div>
-                <p class="lecture-subtitle">Let’s start from y:</p>
-                <div class="lecture-proof math">y = P[y]<sub>B</sub><br />= PD[x]<sub>B</sub><br />= PDP<sup>−1</sup>x</div>
-                <div class="lecture-therefore"><span>Therefore</span><p class="math">P<sup>−1</sup>AP = D</p></div>
-              </div>
-              <div class="lecture-theorem">
-                <p class="theorem-number">Theorem 8</p>
-                <h3>Diagonal matrix representation</h3>
-                <p>Suppose A = PDP<sup>−1</sup>, where D is a diagonal n × n matrix. If B is the basis for ℝ<sup>n</sup> formed from the columns of P, then D is the B-matrix for the transformation x ↦ Ax.</p>
-                <h3>Proof</h3>
-                <p>Denote the columns of P by b₁, …, bₙ, so that B = &#123;b₁, …, bₙ&#125;. In this case P is the change-of-coordinates matrix.</p>
-                <div class="theorem-equations math">[T]<sub>B</sub> = [[T(b₁)]<sub>B</sub> ⋯ [T(bₙ)]<sub>B</sub>]<br />= [P<sup>−1</sup>Ab₁ ⋯ P<sup>−1</sup>Abₙ]<br />= P<sup>−1</sup>A[b₁ ⋯ bₙ]<br />= P<sup>−1</sup>AP = D ∎</div>
-              </div>
-            </div>
-            <footer>Change of coordinates &amp; similarity <span>291</span></footer>
-          </article>
-          <div class="lecture-scrap scrap-blue math" aria-hidden="true">[y]<sub>B</sub> = [T]<sub>B</sub>[x]<sub>B</sub><span>…but why?</span></div>
-        </div>
-
         <div class="understanding-paper" data-explanation aria-hidden="false">
           <BasisTransformation still={socialPreview} />
         </div>
