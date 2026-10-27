@@ -49,7 +49,7 @@ export const ProviderStatusSchema = z.object({
   settings: ProviderSettingsSchema.optional(),
   runtime: z.object({
     executable: z.string(),
-    source: z.enum(["installed", "bundled", "custom"]),
+    source: z.enum(["installed", "custom"]),
   }).optional(),
 })
 export const CodexConnectionSchema = z.object({
@@ -254,10 +254,10 @@ export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.bool
 export const SendSchema = z.object({
   chatId: IdSchema,
   materialIds: z.array(IdSchema).optional(),
-  content: z.string().max(30_000).refine((content) => content.trim().length > 0, "Message cannot be empty."),
+  content: z.string().max(30_000),
   confirmTopicId: IdSchema.optional(),
   openedTopicId: IdSchema.optional(),
-})
+}).refine((input) => input.content.trim().length > 0 || (input.materialIds?.length ?? 0) > 0, "Message cannot be empty.")
 export const MaterialOwnerSchema = z.object({
   kind: z.enum(["topic", "chat"]),
   id: IdSchema,

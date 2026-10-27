@@ -48,7 +48,7 @@ export const CreateTestInputSchema = z.object(TestStateSchema.shape).omit({ crea
 export const CreateGenericInputSchema = GenericStateSchema.omit({ createdAt: true })
 const TargetSchema = z.object({ topicId: z.uuid() })
 const TestMutations = [
-  TargetSchema.extend({ type: z.literal("createTest"), test: CreateTestInputSchema, materialIds: z.array(z.uuid()).optional() }),
+  TargetSchema.extend({ type: z.literal("createTest"), createdAt: z.iso.datetime().optional(), test: CreateTestInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("addTestQuestion"), question: CreateTestQuestionInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("recordTestAnswer"), title: TestQuestionSchema.shape.title, answer: z.string().max(30_000) }),
   TargetSchema.extend({ type: z.literal("documentTestMistake"), topicPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
@@ -56,7 +56,7 @@ const TestMutations = [
   TargetSchema.extend({ type: z.literal("editTestContent"), changes: ContentChangesSchema, present: z.array(ContentBlockIdSchema).min(1).max(100).optional().describe("Ordered stored block IDs to render in this chat reply."), expectedRevision: z.number().int().nonnegative().optional() }),
 ] as const
 const GenericMutations = [
-  TargetSchema.extend({ type: z.literal("createGeneric"), generic: CreateGenericInputSchema, materialIds: z.array(z.uuid()).optional() }),
+  TargetSchema.extend({ type: z.literal("createGeneric"), createdAt: z.iso.datetime().optional(), generic: CreateGenericInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("addGenericReference"), reference: TopicReferenceSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("updateGeneric"), name: GenericStateSchema.shape.name.optional(), summary: z.string().max(200_000).optional(), expectedSummary: z.string().optional() }),
 ] as const

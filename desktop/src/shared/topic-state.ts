@@ -77,7 +77,7 @@ export const TopicMutationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("recordAnswer"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, answerFromUser: z.string().max(30_000), stepIndex: z.number().int().nonnegative() }),
   z.object({ type: z.literal("updateTopic"), topicId: z.uuid(), name: TopicStateSchema.shape.name.optional(), content: TopicStateSchema.shape.content.optional(), materialIds: z.array(z.uuid()).optional(), expectedContent: TopicStateSchema.shape.content.optional() }).strict(),
   z.object({ type: z.literal("editTopicContent"), topicId: z.uuid(), changes: ContentChangesSchema, present: z.array(ContentBlockIdSchema).min(1).max(100).optional().describe("Ordered stored block IDs to render in this chat reply. The app uses their saved content as the explanation."), expectedRevision: z.number().int().nonnegative().optional() }),
-  z.object({ type: z.literal("createTopic"), topicId: z.uuid(), topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true, revision: true, document: true }), materialIds: z.array(z.uuid()).optional() }),
+  z.object({ type: z.literal("createTopic"), createdAt: z.iso.datetime().optional(), topicId: z.uuid(), topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true, revision: true, document: true }), materialIds: z.array(z.uuid()).optional() }),
 ])
 
 export function freshTopicState(name: string, createdAt: string) {

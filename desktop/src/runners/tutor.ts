@@ -377,8 +377,13 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     }
     for (const edit of edits.reverse()) reply = reply.slice(0, edit.start) + reply.slice(edit.end)
     reply = reply.trim()
-    if (saved.pendingQuestion && !saved.responseQuestion)
-      reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
+    if (saved.pendingQuestion && !saved.responseQuestion) {
+      if (saved.phase === "awaiting_clarification") {
+        reply += `\n\n${saved.pendingQuestion}`
+      } else {
+        reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
+      }
+    }
     return reply.trim()
   }
   function learningStateError(state: LearningState) {
@@ -612,7 +617,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             else if (operation === "getGenericReferences") result = JSON.stringify(await stateService.getGenericReferences(topicId))
             else throw new Error("This role tool is not available.")
           } else {
-            const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { topicId: stage?.creationId ?? randomUUID() } : {}) })
+            const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { topicId: stage?.creationId ?? randomUUID(), createdAt: new Date().toISOString() } : {}) })
             const target = staged.topics.find((topic) => topic.id === mutation.topicId)
             let draftContent
             if (mutation.type === "createTopic") draftContent = mutation.topic.content
@@ -761,6 +766,9 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
         if (parsed.success) result = JSON.stringify(mapTopicReferenceIds(parsed.data, topicHandles.referenceHandle))
       }
       return { text: topicHandles.modelText(result), images: sourceImages, success }
+    },
+    get clarificationQuestion() {
+      if (saved?.phase === "awaiting_clarification") return saved.pendingQuestion
     },
     get saved() {
       return saved !== undefined && saveErrors.size === 0 && !learningStateError(saved)

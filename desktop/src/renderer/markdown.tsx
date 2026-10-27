@@ -77,6 +77,9 @@ function VisualizationMarkdownDiv({ node, children }: ComponentPropsWithoutRef<"
 }
 
 function MarkdownImage({ src, alt, title }: ComponentPropsWithoutRef<"img"> & ExtraProps) {
+  const { materials = [] } = useContext(MarkdownReferences)
+  const source = resolveMaterialLink(src ?? "", materials)
+  if (source) src = `prune-source://${source.id}/${source.page}`
   return (
     <MediaPreview
       label={alt || "Image preview"}

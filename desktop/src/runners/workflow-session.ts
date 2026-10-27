@@ -170,6 +170,11 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
     },
   }) } })
   let output: z.infer<typeof RoleSummarySchema> | undefined
+  function creationError() {
+    if (role.mode !== "create" || hasWrites) return
+    if (base.saved && base.clarificationQuestion?.trim()) return
+    return "Create the assigned scratchpad before reporting completion, or save phase awaiting_clarification with the specific missing information in question. Summary-only roles must use finish_role with needsClarification=true when creation is blocked."
+  }
   const session = {
     ...base,
     completion: completion.promise,
@@ -205,6 +210,14 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
             completion.resolve()
             return { success: true, text: "Request returned to Tutor for coordination. End this invocation.", images: [] }
           }
+          if (role.mode === "create" && !hasWrites && base.saved && base.clarificationQuestion?.trim()) {
+            candidate.needsClarification = true
+          }
+          if (candidate.needsClarification && hasWrites) throw new Error("A clarification result cannot include staged writes. Complete the staged task and save its learner reply instead.")
+          if (!candidate.needsClarification) {
+            const error = creationError()
+            if (error) throw new Error(error)
+          }
           if (base.saveError && !candidate.needsClarification) throw new Error(base.saveError)
           if (role.request.replyToLearner && !candidate.needsClarification) {
             if (!base.saved || !base.hasReply("")) throw new Error("Save the handoff and write a normal learner reply, or select stored lesson blocks before finish_role.")
@@ -219,15 +232,25 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
         return { success: false, text: error instanceof Error ? error.message : "Invalid tool arguments.", images: [] }
       }
     },
-    get saved() { return output !== undefined || (role.request.replyToLearner === true && base.saved) },
-    get saveError() { if (!output?.needsClarification) return base.saveError },
+    get saved() { return output !== undefined || (role.request.replyToLearner === true && base.saved && !creationError()) },
+    get saveError() { if (!output?.needsClarification) return base.saveError ?? creationError() },
     hasReply(reply: string) { return output !== undefined || (role.request.replyToLearner === true && base.hasReply(reply)) },
     previewReply(reply: string) { if (role.request.replyToLearner) return base.previewReply(reply); return "" },
     recoveryMessage() {
-      return [base.saveError ?? "", phaseInstructions, recoveryInstructions, "Complete the assigned task and call finish_role with its summary and evidence. Repair rejected writes only with tools allowed in the current phase."].filter((text) => text.length > 0).join("\n")
+      return [base.saveError ?? creationError() ?? "", phaseInstructions, recoveryInstructions, "Complete the assigned task and call finish_role with its summary and evidence. Repair rejected writes only with tools allowed in the current phase."].filter((text) => text.length > 0).join("\n")
     },
     finish(reply = "") {
-      if (!output && role.request.replyToLearner) output = { summary: `Completed ${role.role} task.`, evidence: [{ type: "topic", id: role.scratchpadId }], response: base.finish(reply) }
+      if (!output && role.request.replyToLearner) {
+        const error = creationError()
+        if (error) throw new Error(error)
+        const response = base.finish(reply)
+        if (role.mode === "create" && !hasWrites) {
+          // A valid clarification handoff returns to Tutor without claiming a nonexistent scratchpad.
+          output = { summary: response.reply, evidence: [], needsClarification: true }
+        } else {
+          output = { summary: `Completed ${role.role} task.`, evidence: [{ type: "topic", id: role.scratchpadId }], response }
+        }
+      }
       if (!output) throw new Error("The role did not finish its task.")
       if (output.response) return { ...output.response, topicUpdates: [], topicMutations: [] }
       return { reply: output.summary, learning: scoped.chat.learning, topicUpdates: [], topicMutations: [] }

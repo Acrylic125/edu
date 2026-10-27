@@ -1,3 +1,4 @@
+import { testTestScratchpad } from "./test-scratchpad"
 import { Profiler } from "react"
 import { createRoot } from "react-dom/client"
 import { flushSync } from "react-dom"
@@ -10,6 +11,9 @@ import { useChatTabs } from "../../src/renderer/chat-tabs"
 import { SnapshotSchema } from "../../src/shared/contracts"
 import { ThemeProvider } from "@edu/ui/theme"
 import imageUrl from "./diagram.svg"
+import { testChatAttachments } from "./chat-attachments"
+import { testScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
+import { testChatTabs } from "./chat-tabs"
 import { testChatScroll } from "./chat-scroll"
 import { testTopicTerminology } from "./topic-terminology"
 
@@ -29,6 +33,10 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testChatAttachments(root, host)
+  testTestScratchpad(root, host)
+  await testScratchpadMismatchBanner(root, host)
+  await testChatTabs(root, host)
   await testChatScroll(root, host)
   await testTopicTerminology(root, host)
   const durations: { actual: number; base: number }[] = []
@@ -153,7 +161,7 @@ async function runRenderingTests() {
   assert(host.textContent?.includes("Committed lesson.") === true, "Full workspace commits must show updated content")
   console.log(`Full workspace benchmark: 12 IPC-style snapshots across 20 messages: ${workspaceElapsed.toFixed(1)} ms`)
 
-  for (const [source, label] of [["installed", "Installed Codex"], ["bundled", "Bundled fallback"], ["custom", "Custom binary"]] as const) {
+  for (const [source, label] of [["installed", "Installed Codex"], ["custom", "Custom binary"]] as const) {
     const next = SnapshotSchema.parse({
       ...snapshot,
       providers: [{ ...snapshot.providers[0], runtime: { source, executable: "/example/codex/bin/codex" } }],

@@ -56,6 +56,7 @@ export const scratchpadToolDefinitions = [
       parameters.properties = { ...parameters.properties, [target]: z.toJSONSchema(TopicHandleSchema) }
       parameters.required = [...(parameters.required ?? []), target]
     }
+    delete parameters.properties?.createdAt
     delete parameters.properties?.expectedSummary
     delete parameters.properties?.expectedContent
     delete parameters.properties?.expectedState
