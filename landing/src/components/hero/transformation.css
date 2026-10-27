@@ -1,6 +1,6 @@
 transformation-hero {
   display: block;
-  height: 260svh;
+  height: calc(100dvh + 160svh);
   --hero-progress: 1;
   --hero-copy-progress: 1;
   --hero-paper-progress: 1;
@@ -8,7 +8,7 @@ transformation-hero {
   --hero-art-natural-height: 480px;
 }
 
-.hero-viewport { position: sticky; top: 0; display: flex; height: 100svh; flex-direction: column; isolation: isolate; }
+.hero-viewport { position: sticky; top: 0; display: flex; height: 100dvh; flex-direction: column; isolation: isolate; }
 .hero-lecture-backdrop {
   position: absolute;
   z-index: -1;
@@ -132,7 +132,7 @@ transformation-hero {
   transformation-hero { --hero-art-natural-height: 500px; }
 }
 
-transformation-hero:not(:defined) { height: 100svh; }
+transformation-hero:not(:defined) { height: 100dvh; }
 transformation-hero:not(:defined) .hero-word-before,
 transformation-hero:not(:defined) .hero-question,
 transformation-hero:not(:defined) .hero-before { display: none; }
@@ -165,6 +165,6 @@ transformation-hero:not(:defined) .hero-before { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  transformation-hero { height: 100svh; }
+  transformation-hero { height: 100dvh; }
 }
 
