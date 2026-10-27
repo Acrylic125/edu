@@ -16,6 +16,7 @@ class TransformationHero extends HTMLElement {
     const headline = this.querySelector<HTMLElement>(".hero-headline");
     const words = this.querySelectorAll<HTMLElement>(".hero-word");
     const canvas = this.querySelector<HTMLElement>(".transformation-canvas");
+    const backdrop = this.querySelector<HTMLImageElement>(".hero-lecture-backdrop");
     const copy = this.querySelector<HTMLElement>(".transformation-copy");
     let frame = 0;
     let sectionTop = 0;
@@ -28,12 +29,13 @@ class TransformationHero extends HTMLElement {
       this.style.setProperty("--hero-progress", String(interpolate(progress, 0.15, 0.8)));
       this.style.setProperty("--hero-copy-progress", String(interpolate(progress, 0.35, 0.75)));
       this.style.setProperty("--hero-paper-progress", String(interpolate(progress, 0.2, 0.8)));
+      const backdropProgress = Math.min(1, Math.max(0, (progress - 0.2) / 0.6));
+      this.style.setProperty("--hero-backdrop-progress", String(1 - Math.pow(1 - backdropProgress, 3)));
       words.forEach((_, index) => {
         this.style.setProperty(`--hero-word-${index}`, String(interpolate(progress, 0.15 + index * 0.13, 0.5 + index * 0.13)));
       });
       const understood = progress >= 0.5;
       this.dataset.view = understood ? "understood" : "lecture";
-      this.querySelector("[data-lecture]")?.setAttribute("aria-hidden", String(understood));
       this.querySelector("[data-explanation]")?.setAttribute("aria-hidden", String(!understood));
       const explanation = this.querySelector<HTMLElement>("[data-explanation]");
       if (explanation) explanation.inert = !understood;
@@ -81,6 +83,17 @@ class TransformationHero extends HTMLElement {
       const availableWidth = canvas.parentElement?.clientWidth ?? canvas.offsetWidth;
       const artScale = Math.max(0.1, Math.min(availableWidth / canvas.offsetWidth, availableHeight / canvas.offsetHeight));
       this.style.setProperty("--hero-art-scale", String(artScale));
+      if (backdrop) {
+        const aspectRatio = Number(backdrop.getAttribute("width")) / Number(backdrop.getAttribute("height"));
+        const backdropWidth = Math.max(window.innerWidth, viewport.clientHeight * aspectRatio);
+        const canvasBounds = canvas.getBoundingClientRect();
+        const viewportBounds = viewport.getBoundingClientRect();
+        this.style.setProperty("--hero-backdrop-width", `${backdropWidth}px`);
+        this.style.setProperty("--hero-backdrop-height", `${backdropWidth / aspectRatio}px`);
+        this.style.setProperty("--hero-backdrop-scale", String(Math.min(canvasBounds.width / backdropWidth, canvasBounds.height / (backdropWidth / aspectRatio))));
+        this.style.setProperty("--hero-backdrop-x", `${canvasBounds.left + canvasBounds.width / 2 - (viewportBounds.left + viewportBounds.width / 2)}px`);
+        this.style.setProperty("--hero-backdrop-y", `${canvasBounds.top + canvasBounds.height / 2 - (viewportBounds.top + viewportBounds.height / 2)}px`);
+      }
       schedule();
     };
 
