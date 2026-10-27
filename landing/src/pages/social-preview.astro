@@ -28,14 +28,16 @@ import "../styles.css";
   }
   [data-social-preview] .hero-viewport { position: relative; height: 100%; }
   [data-social-preview] .hero-brand { height: 52px; }
-  [data-social-preview] .hero-brand img { width: 44px; height: 44px; }
-  [data-social-preview] .hero-brand span { font-size: 27px; }
-  [data-social-preview] .hero-brand::after {
-    content: "edu.benapps.dev";
-    margin-left: auto;
-    color: var(--muted-foreground);
-    font-size: 16px;
+  [data-social-preview] .hero-brand img { width: 52px; height: 52px; }
+  [data-social-preview] .hero-brand span { font-size: 30px; }
+  [data-social-preview] .transformation-copy {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 470px;
+    transform: translateY(-50%);
   }
+  [data-social-preview] .transformation-example { grid-column: 2; }
   [data-social-preview] .hero-github,
   [data-social-preview] .hero-description,
   [data-social-preview] .hero-actions { display: none; }
@@ -53,7 +55,7 @@ import "../styles.css";
   }
   [data-social-preview] .transformation-art { height: 460px; }
   [data-social-preview] .transformation-canvas { width: 620px; height: 460px; }
-  [data-social-preview] .hero-lecture-backdrop { top: -36px; height: 630px; transform: translateX(-50%); }
+  [data-social-preview] .hero-lecture-backdrop { top: -36px; height: 630px; transform: translateX(-50%); opacity: 0.25; }
   [data-social-preview] .understanding-paper { opacity: 1; filter: none; transform: none; }
   [data-social-preview] * { animation: none !important; transition: none !important; }
 </style>
