@@ -82,7 +82,7 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       const handles = createTopicHandles({ ...source, apiKey: "" })
       const batch = await repository.assumeRole(chatId, turnId, turnId, [{
         target: { mode: "existing", scratchpadHandle: handles.handle(topic.id) },
-        task: "Handle the latest learner request for this topic. Use the saved handoff and recorded evidence to assess any pending answer and continue the sourced lesson. Honor explicit changes of section or scope. Ask one check when teaching, then save the handoff and reply. If the request needs work outside this target or ungranted dependencies, return it to Tutor with finish_role and needsCoordination before making any writes.",
+        task: "Handle the latest learner request for this topic. Use the saved handoff and recorded evidence to assess any pending answer and honor the latest navigation choice. If the learner selects practice, source practice on the completed part; if unavailable, explain the limitation and wait for a new choice. Begin the next part only after the learner chooses to proceed. Honor explicit changes of section or scope. Ask one check when teaching, then save the handoff and reply. If the request needs work outside this target or ungranted dependencies, return it to Tutor with finish_role and needsCoordination before making any writes.",
         requestedAccess: "write", replyToLearner: true,
         context: {
           learnerMessageIds: source.chat.messages.map((message) => message.id),

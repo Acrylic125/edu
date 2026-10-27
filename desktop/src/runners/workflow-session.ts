@@ -11,6 +11,7 @@ import { scratchpadToolDefinitions } from "./scratchpad-tools"
 import { createTopicPlannerSession } from "./topic-planner"
 import { scratchpadContext, selectTutorTopicIds } from "./tutor-evidence"
 import { readSkillCatalog, teachingSkills } from "./tutor-skills"
+import { TopicPartIdSchema } from "../shared/topic-state"
 import { visualizationInstructions } from "../shared/visualization"
 import { chatTeachingInstructions } from "./chat-teaching"
 
@@ -46,7 +47,7 @@ export async function createWorkflowTutorSession(job: WorkerJob, batches: z.infe
 Read a skill with read_skill when its description matches this task. Skill catalog: ${JSON.stringify(catalog)}
 ${visualizationInstructions}
 ${chatTeachingInstructions}
-Use read_material for supplied sources. Cite the source pages used with edu-material://id/page and display requested source figures with prune-source://id/page.
+Use read_material for supplied sources. Cite the source pages used with edu-material://id/page and display requested source figures with edu-source://id/page.
 Identify intent, requested scope, and learner level before requesting creation. Clarify missing information instead of creating an unspecified topic. For explicit creation, delegate planning directly without reading all attachments first. Include the agreed scope in the task. Creation needs an ordered curriculum and source references only. Do not request detailed definitions, worked solutions, or tutorial question mapping; reserve practice sources for later practice. Delegate all scratchpad reads and writes with assume_role. Choose the stored role for existing targets; infer topic, test, or generic for creation. Task text cannot grant access. Request only the messages, materials, and read dependencies the task needs. Use scratchpad_N handles. Never delegate to native subagents or shell tools.
 The directory contains only current targets. Use list_scratchpads to discover other handles on demand. For a new test, grant topic readDependencies for the learner's named scope. For an all-covered test, list_scratchpads with type=topic and follow nextOffset to grant the full requested scope; the role discovers teaching coverage through summaries. Existing tests keep their sourceTopics unless the learner requests a change.
 For a single independent write task that can complete the learner turn, set replyToLearner=true. The role saves a private handoff and writes the learner reply; the host publishes it after commit. Leave it false for read tasks, multiple jobs, or work requiring later coordination.
@@ -117,6 +118,17 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
     if (handoff.pendingCheck) handoff.pendingCheck.topicId = role.scratchpadHandle
     chatInstructions += `\nPrivate chat handoff: ${JSON.stringify(handoff)}`
   }
+  const learnerChoice = source.chat.messages.findLast((message) => message.role === "user")?.content.trim()
+  const practiceChosen = continuesChat && role.role === "topic" && source.chat.learning.phase === "awaiting_choice"
+    && source.chat.learning.responseQuestion?.options.some((option) => /practice/i.test(option) && option === learnerChoice)
+  const practicedParts = new Set<string>()
+  if (practiceChosen && role.snapshot?.state?.type === "topic") {
+    const progress = role.snapshot.state.threadTutors.find((thread) => thread.id === source.chat.id)?.progress ?? {}
+    for (const [partId, part] of Object.entries(progress)) {
+      if (part.steps.length) practicedParts.add(partId)
+    }
+    chatInstructions += "\nThe learner selected practice. Stay on the already taught part. Source an eligible practice question, or honestly explain the sourcing limitation and save awaiting_choice with Proceed and Keep looking for practice. Wait for a new choice before starting the next part."
+  }
   scoped.chat.scratchpadRequested = false
   scoped.chat.providerSession = undefined
   scoped.chat.materials = source.chat.materials.filter((material) => materialIds.has(material.id))
@@ -178,12 +190,17 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   const session = {
     ...base,
     completion: completion.promise,
-    instructions: `Complete this ${role.role} scratchpad task with the supplied role tools.\n${management}\nRead the matching skill with read_skill when needed. Skill catalog: ${JSON.stringify(catalog)}\nRole references available through read_skill: ${JSON.stringify(skillPaths.filter((path) => !path.startsWith("skills/")))}\nTask: ${role.request.task}\nRelevant context: ${role.request.context.relevantContext}\nTarget: ${role.scratchpadHandle}; access: ${role.access}; mode: ${role.mode}.\n${phaseInstructions}\n${chatInstructions}\n${recoveryInstructions}\nUse only this target for writes. Read dependencies: ${JSON.stringify(role.request.context.readDependencies)}. For summary tasks, call finish_role when done. Reply to learner: ${role.request.replyToLearner === true}. When true, complete the assigned work, save_learning_state, and write a normal learner-facing reply so it streams. The host commits before publication. Summary tasks return only summary and evidence; their previews remain hidden.\nFile references must use the exact referencePath below, including assets/. Material IDs are for read_material and source blocks, not file reference paths.\nCurrent thread: ${scoped.chat.id}. Use only scratchpad_N handles. read_topic_evidence retrieves section history on demand. Source reads remain limited to Granted materials. Cite used pages with edu-material://id/page and requested figures with prune-source://id/page. ${visualizationInstructions}\nCurrent target: ${JSON.stringify(role.snapshot && { title: role.snapshot.title, planConfirmed: role.snapshot.planConfirmed, ...scratchpadContext(role.snapshot, scoped.chat) })}\nGranted materials: ${JSON.stringify(materialDirectory)}`,
+    instructions: `Complete this ${role.role} scratchpad task with the supplied role tools.\n${management}\nRead the matching skill with read_skill when needed. Skill catalog: ${JSON.stringify(catalog)}\nRole references available through read_skill: ${JSON.stringify(skillPaths.filter((path) => !path.startsWith("skills/")))}\nTask: ${role.request.task}\nRelevant context: ${role.request.context.relevantContext}\nTarget: ${role.scratchpadHandle}; access: ${role.access}; mode: ${role.mode}.\n${phaseInstructions}\n${chatInstructions}\n${recoveryInstructions}\nUse only this target for writes. Read dependencies: ${JSON.stringify(role.request.context.readDependencies)}. For summary tasks, call finish_role when done. Reply to learner: ${role.request.replyToLearner === true}. When true, complete the assigned work, save_learning_state, and write a normal learner-facing reply so it streams. The host commits before publication. Summary tasks return only summary and evidence; their previews remain hidden.\nFile references must use the exact referencePath below, including assets/. Material IDs are for read_material and source blocks, not file reference paths.\nCurrent thread: ${scoped.chat.id}. Use only scratchpad_N handles. read_topic_evidence retrieves section history on demand. Source reads remain limited to Granted materials. Cite used pages with edu-material://id/page and requested figures with edu-source://id/page. ${visualizationInstructions}\nCurrent target: ${JSON.stringify(role.snapshot && { title: role.snapshot.title, planConfirmed: role.snapshot.planConfirmed, ...scratchpadContext(role.snapshot, scoped.chat) })}\nGranted materials: ${JSON.stringify(materialDirectory)}`,
     tools,
     async execute(name: string, input: Parameters<typeof base.execute>[1]) {
       try {
         if (!allowed.has(name)) throw new Error("This tool is not granted to the assigned role.")
         if (output && name !== "finish_role") throw new Error("This role is ready. End the invocation.")
+        if (practiceChosen && ["topic_activatePart", "topic_recordQuestion"].includes(name)) {
+          const { topicPartId } = z.object({ topicPartId: TopicPartIdSchema }).parse(input)
+          if (!practicedParts.has(topicPartId))
+            throw new Error("The learner selected practice. Stay within previously assessed parts; if no sourced practice is available, explain the limitation and wait for a new choice before proceeding.")
+        }
         if (name === "read_skill") z.object({ path: z.enum(skillPaths) }).parse(input)
         if (name === "read_material") {
           const { id } = z.object({ id: z.string() }).parse(input)

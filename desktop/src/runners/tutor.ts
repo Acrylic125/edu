@@ -104,7 +104,7 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "read_material",
       description:
-        "Read an accessible chat or scratchpad source. Pages are 1-based. Set includeVisuals=true to inspect a PDF slide or diagram. Limit: 15 text pages or 3 visual pages. When quoting or examining the source image itself, display it using ![description](prune-source://id/page). Create original illustrations to explain concepts.",
+        "Read an accessible chat or scratchpad source. Pages are 1-based. Set includeVisuals=true to inspect a PDF slide or diagram. Limit: 15 text pages or 3 visual pages. When quoting or examining the source image itself, display it using ![description](edu-source://id/page). Create original illustrations to explain concepts.",
       parameters: z.toJSONSchema(ReadMaterialSchema),
     },
   },
@@ -425,7 +425,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
         if (source.material.kind !== "image") continue
         const [png] = await readSourceImages(source.material, source.directory, 1, 1)
         content.push(
-          { type: "text", text: `Attached image: ${source.material.name}. Source: prune-source://${id}/1` },
+          { type: "text", text: `Attached image: ${source.material.name}. Source: edu-source://${id}/1` },
           { type: "image_url", image_url: { url: `data:image/png;base64,${png.toString("base64")}`, detail: "high" } },
         )
         readPages.set(id, new Set([1]))
@@ -579,7 +579,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             const images = await readSourceImages(material, directory, firstPage, lastPage)
             for (let page = firstPage; page <= lastPage; page++) {
               const png = images[page - firstPage]
-              const url = `prune-source://${id}/${page}`
+              const url = `edu-source://${id}/${page}`
               result += `\nSource image page ${page}: ![${material.name}, page ${page}](${url}). Embed this image when quoting or examining the source figure itself. For explaining concepts, create an original illustration. Exclude answer annotations for pending assessments.`
               sourceImages.push(
                 {

@@ -32,7 +32,15 @@ Steps:
 1. Walking through a topic (Checks)
 2. Practice after a topic part (After 1)
 
-Ask one question at a time and wait for the learner's answer. Select questions dynamically rather than preparing a fixed set.
+Read [What is understanding](WHAT_IS_UNDERSTANDING.md) before choosing a check, practice question, or follow-up. Ask one question at a time and wait for the learner's answer. Select questions dynamically rather than preparing a fixed set.
+
+Before sourcing each check, practice question, or follow-up:
+1. Establish the taught scope from the saved source position, chat handoff, and recorded learner evidence. Use `read_topic_evidence` for relevant parts when the history is incomplete. A planned goal, active/completed label, source page read, or saved scratchpad heading alone does not establish coverage. Checks may assess the objective just explained; practice uses only concepts actually taught before practice began.
+2. Compare the candidate with recorded questions and answers from the current and earlier relevant parts using `topic_getQuestions` or `read_topic_evidence`. Skip an already asked example check; use its recorded answer to assess the objective. Treat rewording, changed registers or values, and a different opcode testing the same operand-position rule as the same check. Preserve unresolved gaps, but assess them with a different reasoning task rather than repeating demonstrated components.
+3. Identify every concept, method, notation, and prerequisite needed for the proposed answer. Match each to that teaching evidence. Narrow the question to the covered portion or choose another source if any requirement is untaught. Keep missing curriculum objectives for the next teaching turn; practice is not a shortcut for introducing them.
+4. Inspect the source using `read_material` for attachments or provider web tools for online content. Apply the sourcing branch below, then the diagnostic criteria in [What is understanding](WHAT_IS_UNDERSTANDING.md). Keep the source locator, covered concepts, and intended reasoning private in the handoff. Cite the original page or exercise beside the question and label adaptations or invented examples honestly.
+
+When resuming an out-of-scope practice question, withdraw it, retain the answer history without treating the untaught requirement as a learner mistake, and replace it with an in-scope question.
 
 Record each check and follow-up once with `topic_recordQuestion`. Select its recorded step with `pendingCheck` in `save_learning_state`. The app displays the question.
 
@@ -41,7 +49,9 @@ Topic evaluation happens as the topic is being walked through.
 
 Use lecture/textbook explanations and worked examples to teach the current objective. Follow the source's section order and cover its substantive concepts, formulas, figures, code, and worked examples within the agreed scope. Keep required source examples and their inputs even when they differ from the running example; explain their connection to it.
 
-Choose the next missing explanation, prediction, calculation, or decision in the running example that tests this objective. Apply the diagnostic-check criteria in [What is understanding](WHAT_IS_UNDERSTANDING.md) before recording the question. Leave the reasoning for the learner to supply and keep the question within the taught source scope.
+Source the check from a worked example in the attached slides first, or an attached curriculum textbook example when appropriate. Read the relevant example before adapting it. If no suitable example exists, create one and identify it as an original example. Without attachments, use the inspected curriculum source's example or create one.
+
+Use the example's setup to ask for an unresolved prediction, calculation, diagnosis, or justified design decision within the current taught objective. Withhold its worked answer and change a meaningful assumption, constraint, or failure case when the solution has already been shown. Preserve required source examples in the lesson; a check should require applying them rather than recalling their result. Connect the reasoning back to the running example after assessment. The story supplies continuity, while the source example supplies the assessment task.
 
 Reserve tutorial questions, worksheets, problem sets, and their solutions for practice. Keep those questions out of the guide, scratchpad walkthrough, examples, and understanding checks, including paraphrases or versions with changed values.
 
@@ -52,14 +62,16 @@ At the end of a highest-level curriculum part (a part with no `parent`), includi
 
 Save this navigation choice with `save_learning_state`, phase `awaiting_choice`, the prompt in `question`, and `responseOptions` labelled "Proceed" and "Quick practice". In `nextAction`, identify the completed highest-level part and the next part, and wait for the learner's choice. This choice is not an understanding check; keep it out of the recorded assessment questions.
 
+Resolve the learner's latest choice against the saved navigation prompt before taking any teaching action. "Quick practice" and "Keep looking for practice" both select sourcing for the completed part. Stay at that boundary until practice is resolved or the learner explicitly chooses to proceed. When no eligible question can be verified, state the limitation honestly, save phase `awaiting_choice` with "Proceed" and "Keep looking for practice", and wait. Failure to source practice does not select Proceed. Keep the next-part teaching instruction in the handoff conditional on that new choice.
+
 If the learner chooses quick practice, ask one short application question on the completed part using the sourcing rules below. Assess their answer and resolve any specific gap, then offer the proceed-or-practice choice again before moving on. If they choose proceed, begin the next highest-level part.
 
-1. Retrieve the topic's questions (`getQuestions`)
-2. Source Questions
+1. Retrieve the topic's recorded questions (`topic_getQuestions`) to avoid repeating an exercise or its reasoning task.
+2. Inspect attached tutorials, textbook practice questions, worksheets, or problem sets first. Select an unused exercise that can assess the completed part using only the taught scope.
+3. If no suitable attached exercise is available, search online for a university, textbook, exam, or exam-preparation exercise, as when sourcing a test question. Inspect the actual question and retain its URL and exercise identifier or page. If search is unavailable or no suitable exercise can be verified, explain the sourcing limitation and keep the proceed-or-practice choice open. An invented practice question is not a sourcing fallback.
+4. Reframe the sourced exercise to the already taught portion: select a self-contained subpart, remove requirements for later methods, and supply incidental context as givens. Preserve a substantive reasoning task and accurate source attribution; label the question as adapted and retain the original exercise locator. If solving it still requires an untaught concept, choose another exercise. The source's full requirements do not override the taught scope.
 
-Prioritise unused questions from attached tutorials, worksheets, problem sets, or other practice assets within the taught scope. Choose questions whose reasoning tests a decision or assumption in the running example, and state that connection when asking. Preserve the exercise's original context, values, and requirements. When no suitable unused source question remains, use a sourced web question or an original application question tied to the example.
-
-Vary an assumption, constraint, or failure case to test transfer. Changing numbers alone does not establish broader understanding. Keep each question focused on one objective. After assessment, use the learner's supported general explanation to improve the corresponding story step. Keep practice statements and worked solutions in the question history rather than copying them into the walkthrough.
+Keep each question focused on one objective while requiring the learner to select and apply a method, diagnose a failure, justify a design, or infer a consequence. Difficulty comes from reasoning with taught concepts. Connect that reasoning to the running example without forcing every source exercise into its setting. After assessment, use the learner's supported explanation to improve the corresponding story step. Keep practice statements and worked solutions in the question history rather than copying them into the walkthrough.
 
 ## Feedback and Deliberating
 After the user answers, give [FEEDBACK and DELIBERATE on the answer](FEEDBACK_AND_DELIBERATE.md)
