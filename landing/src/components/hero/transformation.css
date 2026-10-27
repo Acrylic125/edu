@@ -71,7 +71,6 @@ transformation-hero {
   position: absolute;
   inset: 15px -10px 5px;
   opacity: calc(1 - var(--hero-paper-progress));
-  filter: blur(calc(var(--hero-paper-progress) * 13px));
   transform: rotate(calc(-3deg - var(--hero-paper-progress) * 4deg)) scale(calc(var(--lecture-scale, 1) - var(--hero-paper-progress) * 0.28));
   transform-origin: 50% 55%;
 }
@@ -114,7 +113,6 @@ transformation-hero {
   position: absolute;
   inset: 0 6px;
   opacity: var(--hero-paper-progress);
-  filter: blur(calc((1 - var(--hero-paper-progress)) * 10px));
   transform: translateY(calc((1 - var(--hero-paper-progress)) * 24px)) scale(calc(0.92 + var(--hero-paper-progress) * 0.08));
 }
 
