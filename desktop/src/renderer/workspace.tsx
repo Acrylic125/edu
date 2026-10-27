@@ -1,22 +1,28 @@
+import { isStagedChat } from "../shared/thread-ownership"
 import { clipboardMaterialIds, messageCopyText } from "../shared/message-clipboard"
 import { messageText } from "../shared/message-text"
+import { replyContainsResponseQuestion } from "./response-choice"
 import { useEffect, useRef, useState, type ComponentProps } from "react"
 import {
   ArrowUp,
   Archive,
   ArchiveRestore,
   AtSign,
+  BookOpen,
   Check,
   ChevronRight,
+  Clock3,
   Copy,
   FolderOpen,
   FileText,
   LoaderCircle,
   Paperclip,
+  PencilLine,
   Plus,
   RotateCcw,
   Settings,
   Square,
+  Trash2,
   X,
 } from "lucide-react"
 import {
@@ -48,11 +54,10 @@ import appIcon from "./assets/app-icon.png"
 import { useWorkspace, desktop, desktopErrorMessage } from "./store"
 import { useChatTabs } from "./chat-tabs"
 import { useChatScroll } from "./chat-scroll"
-import { useTopicViews } from "./topic-views"
+import { stagingId, useTopicViews } from "./topic-views"
 import { WorkspaceLoading, WorkspaceLoadingSidebar } from "./workspace-loading"
 import { StudyMarkdown } from "./markdown"
 import { ScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
-import { ScratchpadThreads } from "./scratchpad-threads"
 import { TestScratchpad } from "./test-scratchpad"
 import { MediaPreview } from "./media-preview"
 import { TopicDirectory } from "./topic-directory"
@@ -85,7 +90,7 @@ export function App() {
   const { snapshot, pendingMessages, loaded, providerSetupComplete, error, setError } = useWorkspace()
   const [setupProvider, setSetupProvider] = useState<Snapshot["providers"][number]["id"]>()
   const [view, setView] = useState<"learn" | "settings">("learn")
-  const { activeId: topicId, select: selectTopic } = useTopicViews()
+  const { activeId: scratchpadId, select: selectTopic } = useTopicViews()
   const { activeId: chatId, openIds, select: selectChat, close: closeChat } = useChatTabs()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [imageDrafts, setImageDrafts] = useState<Record<string, (z.infer<typeof MaterialDraftSchema> & { previewUrl: string })[]>>({})
@@ -112,29 +117,31 @@ export function App() {
   draftValues.current = drafts
   const [draggingOver, setDraggingOver] = useState<string>()
   const thread = useChatScroll(chatId)
-  const topic = snapshot.topics.find((item) => item.id === topicId)
-  const chat = snapshot.chats.find((item) => item.id === chatId)
-  const chatKey = chat?.id ?? "new-chat"
+  const scratchpad = snapshot.scratchpads.find((item) => item.id === scratchpadId)
+  const staging = scratchpadId === stagingId
+  const chat = snapshot.chats.find((item) => item.id === chatId && (staging ? isStagedChat(item) : scratchpad !== undefined && item.ownerScratchpadId === scratchpad.id))
+  const newChatKey = `new-chat:${scratchpadId ?? "new"}`
+  const chatKey = chat?.id ?? newChatKey
   const pendingChatMessages = pendingMessages.filter((pending) => pending.chatId === chatKey)
   const messages = [...(chat?.messages ?? []), ...pendingChatMessages.map((pending) => pending.message)]
   const messageCheckLabels = new Map<string, string>()
   let checkLabel = "Check your understanding"
   for (const message of messages) {
-    if (message.role === "user" && message.topicIds.length > 0) {
-      const hasTest = snapshot.topics.some((item) => message.topicIds.includes(item.id) && item.state?.type === "test")
+    if (message.role === "user" && message.scratchpadIds.length > 0) {
+      const hasTest = snapshot.scratchpads.some((item) => message.scratchpadIds.includes(item.id) && item.state?.type === "test")
       checkLabel = hasTest ? "TEST" : "Check your understanding"
     }
     messageCheckLabels.set(message.id, checkLabel)
   }
-  const taggedTopicIds = new Set(chat?.messages.flatMap((message) => message.topicIds) ?? [])
-  const draftPlans = snapshot.topics.filter((candidate) => taggedTopicIds.has(candidate.id) && !candidate.archived && !candidate.planConfirmed && candidate.learning.outline.length > 0)
+  const taggedTopicIds = new Set(chat?.messages.flatMap((message) => message.scratchpadIds) ?? [])
+  const draftPlans = snapshot.scratchpads.filter((candidate) => taggedTopicIds.has(candidate.id) && !candidate.archived && !candidate.planConfirmed && candidate.learning.outline.length > 0)
   const awaitingPlanConfirmation = chat?.phase === "awaiting_plan_confirmation" && draftPlans.length > 0
-  const labelMaterials = [...snapshot.topics, ...snapshot.chats].flatMap((item) => item.materials)
+  const labelMaterials = [...snapshot.scratchpads, ...snapshot.chats].flatMap((item) => item.materials)
   const chatMaterials = [
     ...(chat?.materials ?? []),
-    ...snapshot.topics.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
+    ...snapshot.scratchpads.filter((item) => taggedTopicIds.has(item.id)).flatMap((item) => item.materials),
   ]
-  const hasChat = topic !== undefined || snapshot.chats.length > 0 || openIds?.includes("new")
+  const hasChat = scratchpad !== undefined
 
   let newRunner: string | undefined = runnerId || snapshot.runners[0]?.id
   if (runnerChoice)
@@ -177,21 +184,22 @@ export function App() {
       // A view change may unmount the focused editor; held Ctrl must keep its original context.
       cycleContext ??= inChat ? "chat" : "topic"
       if (cycleContext === "chat") {
+        if (useTopicViews.getState().activeId === stagingId) return
         useChatTabs.getState().cycle(event.shiftKey)
         restoreChatFocus()
       } else {
-        const topics = useWorkspace.getState().snapshot.topics
-        if (topics.length === 0) return
+        const scratchpads = useWorkspace.getState().snapshot.scratchpads
+        if (scratchpads.length === 0) return
         const reverse = event.shiftKey
         const views = useTopicViews.getState()
-        const index = topics.findIndex((item) => item.id === views.activeId)
+        const index = scratchpads.findIndex((item) => item.id === views.activeId)
         if (index < 0) {
-          let next = topics[0]
-          if (reverse) next = topics[topics.length - 1]
+          let next = scratchpads[0]
+          if (reverse) next = scratchpads[scratchpads.length - 1]
           views.select(next.id)
         } else {
           const direction = reverse ? -1 : 1
-          views.select(topics[(index + direction + topics.length) % topics.length].id)
+          views.select(scratchpads[(index + direction + scratchpads.length) % scratchpads.length].id)
         }
       }
       setError(null)
@@ -233,13 +241,15 @@ export function App() {
   }
 
   function openTopic(id?: string) {
-    if (view === "learn" && id === topicId) {
+    if (view === "learn" && id === scratchpadId) {
+      if (!id) selectChat("new")
       setError(null)
       return
     }
 
     transitionWorkspace(() => {
       selectTopic(id)
+      if (!id) selectChat("new")
       setView("learn")
       setError(null)
     })
@@ -247,6 +257,11 @@ export function App() {
 
   function openChat(id?: string) {
     setView("learn")
+    const ownerId = useWorkspace.getState().snapshot.chats.find((item) => item.id === id)?.ownerScratchpadId
+    if (id) {
+      selectTopic(ownerId ?? stagingId)
+      if (!ownerId) useChatTabs.getState().reconcile([id], `${stagingId}:${id}`)
+    }
     selectChat(id ?? "new")
     setError(null)
   }
@@ -319,16 +334,16 @@ export function App() {
     return id
   }
 
-  function moveNewChatDraft(id: string) {
+  function moveNewChatDraft(id: string, key = newChatKey) {
     setImageDrafts((current) => ({
       ...current,
-      "new-chat": [],
-      [id]: current["new-chat"] ?? [],
+      [key]: [],
+      [id]: current[key] ?? [],
     }))
     draftValues.current = {
       ...draftValues.current,
-      "new-chat": "",
-      [id]: draftValues.current["new-chat"] ?? "",
+      [key]: "",
+      [id]: draftValues.current[key] ?? "",
     }
     setDrafts(draftValues.current)
     setFocused(id)
@@ -336,7 +351,7 @@ export function App() {
 
   async function ensureChat() {
     if (chat) return chat.id
-    const id = await desktop().createChat({ runnerId: await newRunnerId() })
+    const id = await desktop().createChat({ runnerId: await newRunnerId(), ownerScratchpadId: scratchpad?.id, scratchpadRequested: staging })
     moveNewChatDraft(id)
     openChat(id)
     return id
@@ -378,7 +393,7 @@ export function App() {
           const sentMaterialIds = new Set(current?.messages.flatMap((message) => message.materialIds ?? []))
           materialIds = current?.materials.filter((material) => !sentMaterialIds.has(material.id) || reattachedIds[chatKey]?.includes(material.id)).map((material) => material.id)
         }
-        await desktop().send({ chatId: sentId, messageId: message.id, content, materialIds, openedTopicId: topic?.id })
+        await desktop().send({ chatId: sentId, messageId: message.id, content, materialIds, openedScratchpadId: scratchpad?.id })
       })
       finishSubmission(message.id, sentId, submission.draft, success)
       if (success) setReattachedIds((current) => ({ ...current, [chatKey]: [] }))
@@ -395,7 +410,7 @@ export function App() {
     const pending = stageMessage(chat.id, option)
     setSubmitting({ key: chat.id, draft: option })
     try {
-      const success = await perform(() => desktop().send({ chatId: chat.id, messageId: pending.id, content: option, openedTopicId: topic?.id }))
+      const success = await perform(() => desktop().send({ chatId: chat.id, messageId: pending.id, content: option, openedScratchpadId: scratchpad?.id }))
       finishSubmission(pending.id, chat.id, "", success)
     } finally {
       responding.current.delete(messageId)
@@ -403,7 +418,7 @@ export function App() {
     }
   }
 
-  async function confirmPlan(target: Snapshot["topics"][number]) {
+  async function confirmPlan(target: Snapshot["scratchpads"][number]) {
     if (target.planConfirmed || !target.learning.outline.length || chatRunnerBusy || busy || !chatModelConnected || responding.current.has(target.id)) return
     responding.current.add(target.id)
     const content = `${topicMention(target.id, target.title)} I confirm this learning plan. Begin at the suggested starting point.`
@@ -418,8 +433,8 @@ export function App() {
           chatId: id,
           messageId: pending.id,
           content,
-          confirmTopicId: target.id,
-          openedTopicId: target.id,
+          confirmScratchpadId: target.id,
+          openedScratchpadId: target.id,
         })
       })
       finishSubmission(pending.id, sentId, "", success)
@@ -436,25 +451,22 @@ export function App() {
       if (topicMaterials.length === 0) return
       content = `Help me work with the attached materials: ${topicMaterials.map((material) => material.name).join(", ")}.`
     }
-    openTopic()
-    let sentKey = "new-chat"
-    const submission = { key: sentKey, draft: drafts["new-topic"] ?? "" }
-    const message = stageMessage("new-chat", content, topicMaterials)
+    selectTopic(stagingId)
+    let sentKey = `new-chat:${stagingId}`
+    const submission = { key: `new-chat:${stagingId}`, draft: drafts["new-topic"] ?? "" }
+    const message = stageMessage(`new-chat:${stagingId}`, content, topicMaterials)
     setSubmitting(submission)
     replaceDraft("new-topic", "")
-    setFocused("new-chat")
+    setFocused(`new-chat:${stagingId}`)
     openChat()
     const success = await perform(async () => {
       const runner = await newRunnerId()
       const chatId = await desktop().createChat({ runnerId: runner, scratchpadRequested: true })
-      moveNewChatDraft(chatId)
+      moveNewChatDraft(chatId, `new-chat:${stagingId}`)
       sentKey = chatId
-      movePendingMessage(message.id, chatId)
       setSubmitting({ ...submission, key: chatId })
-      transitionWorkspace(() => {
-        selectTopic(undefined)
-        selectChat(chatId)
-      })
+      movePendingMessage(message.id, chatId)
+      openChat(chatId)
       let materialIds: string[] = []
       if (topicMaterials.length > 0) {
         await desktop().importMaterials({ kind: "chat", id: chatId }, topicMaterials.map((material) => material.id))
@@ -591,7 +603,7 @@ export function App() {
     return (
       <ChatComposerLayout
         aria-label={mode === "topic" ? "New scratchpad composer" : "Chat composer"}
-        newTopicMode={mode === "topic"}
+        newScratchpadMode={mode === "topic"}
         onPasteCapture={(event) => {
           const copiedIds = clipboardMaterialIds(event.clipboardData.getData("text/html"))
           if (copiedIds.length) {
@@ -762,7 +774,7 @@ export function App() {
             key={`${key}:${resets[key] ?? 0}`}
             label={mode === "topic" ? "Message your tutor" : "Message this chat"}
             initialValue={draft}
-            topics={snapshot.topics}
+            scratchpads={snapshot.scratchpads}
             placeholder={placeholder}
             autoFocus={focused === key}
             className={mode === "topic" ? "min-h-28 max-h-40" : "min-h-16 max-h-40"}
@@ -840,12 +852,13 @@ export function App() {
   }
 
   const sessionProps = {
-    sessions: snapshot.chats,
+    sessions: snapshot.chats.filter((item) => staging ? isStagedChat(item) : scratchpad !== undefined && item.ownerScratchpadId === scratchpad.id),
     openIds: openIds ?? [],
     activeId: chatId,
     onSelect: openChat,
     onNew: () => openChat(),
     onClose: closeChat,
+    onDelete: staging ? (id: string) => { void perform(() => desktop().deleteStagedChat(id)) } : undefined,
     onCopyId: (id: string) => {
       setError(null)
       void desktop().copyText(id).catch((failure) => {
@@ -867,21 +880,45 @@ export function App() {
       {composer("topic")}
     </NewTopicView>
   )
-  const chatPane = (
-    <ChatSessions {...sessionProps}>
+  let chatSuggestions: ComponentProps<typeof ChatEmptyState>["suggestions"] = []
+  if (scratchpad && (scratchpad.state?.type ?? "topic") === "topic") {
+    chatSuggestions = [
+      { label: "Continue learning", prompt: "Continue from where we last left off", icon: BookOpen },
+      { label: "Practice", prompt: "Create a practice of what we have covered", icon: PencilLine },
+    ]
+  } else if (scratchpad?.state?.type === "test") {
+    chatSuggestions = [
+      { label: "New Question", prompt: "Give me a new question", icon: PencilLine },
+      { label: "What is the current scope", prompt: "Whats the scope of this test?", icon: BookOpen },
+      { label: "Update scope", prompt: "1. Go to the topic references, 2. Update the scope of this test", icon: Settings },
+    ]
+  }
+  const chatContent = (
       <div className="flex h-full min-h-0 flex-col">
         <ScratchpadMismatchBanner
           messages={chat?.messages ?? []}
-          topics={snapshot.topics.filter((item) => taggedTopicIds.has(item.id))}
-          currentId={topicId}
+          scratchpads={snapshot.scratchpads.filter((item) => taggedTopicIds.has(item.id))}
+          currentId={scratchpadId}
           onSwitch={openTopic}
         />
         <div className="min-h-0 flex-1">
-      <ChatPanel composer={composer("chat")}>
+      <ChatPanel composer={composer("chat")} alerts={staging && chat && (
+        <div role="note" aria-label="Pending scratchpad creation" className="mb-3 flex items-center gap-3 rounded-2xl border border-yellow-700/15 bg-yellow-300/10 px-4 py-2.5 text-sm dark:border-yellow-300/10 dark:bg-yellow-700/15">
+          <Clock3 aria-hidden="true" className="size-4 shrink-0 text-yellow-700 dark:text-yellow-300/80" />
+          <span className="min-w-0 flex-1 leading-5 text-muted-foreground">Scratchpad is pending creation.</span>
+          <button type="button" aria-label="Delete staging scratchpad" disabled={busy}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+            onClick={() => { void perform(() => desktop().deleteStagedChat(chat.id)) }}>
+            <Trash2 aria-hidden="true" className="size-3.5" />
+            Delete
+          </button>
+        </div>
+      )}>
         {messages.length === 0 && !chatRunning && !chatError ? (
           <ChatEmptyState
             title="Start a chat"
-            description={topic
+            suggestions={chatSuggestions}
+            description={scratchpad
               ? "The open scratchpad and its sources are included. Type @ to bring another scratchpad into this chat."
               : "Ask anything. Type @ to bring a scratchpad and its sources into this chat."}
             onPrompt={(prompt) => replaceDraft(chatKey, prompt)}
@@ -942,8 +979,8 @@ export function App() {
                   text={message.content}
                   checkLabel={messageCheckLabels.get(message.id)}
                   showSourcePreviews={message.role === "assistant"}
-                  topics={snapshot.topics}
-                  onOpenTopic={openTopic}
+                  scratchpads={snapshot.scratchpads}
+                  onOpenScratchpad={openTopic}
                   materials={chatMaterials}
                   labelMaterials={labelMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
@@ -959,7 +996,7 @@ export function App() {
                     className="mt-4 flex min-w-0 flex-col gap-2"
                     disabled={message.id !== chat?.messages.at(-1)?.id || chatRunnerBusy || busy || !chatModelConnected || submitting?.key === chat?.id}
                   >
-                    <legend className="mb-2 text-sm font-medium">{message.responseQuestion.prompt}</legend>
+                    <legend className={replyContainsResponseQuestion(message.content, message.responseQuestion) ? "sr-only" : "mb-2 text-sm font-medium"}>{message.responseQuestion.prompt}</legend>
                     {message.responseQuestion.options.map((option) => (
                       <button
                         key={option}
@@ -980,8 +1017,8 @@ export function App() {
                   text={runtime.reply}
                   checkLabel={checkLabel}
                   showSourcePreviews
-                  topics={snapshot.topics}
-                  onOpenTopic={openTopic}
+                  scratchpads={snapshot.scratchpads}
+                  onOpenScratchpad={openTopic}
                   materials={chatMaterials}
                   labelMaterials={labelMaterials}
                   onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
@@ -1056,31 +1093,38 @@ export function App() {
       </ChatPanel>
         </div>
       </div>
-    </ChatSessions>
   )
+  const chatPane = <ChatSessions {...sessionProps}>{chatContent}</ChatSessions>
 
   let content
   if (!loaded) {
     content = (
       <WorkspacePanes body={<WorkspaceLoading />} />
     )
-  } else if (!topic) {
+  } else if (staging) {
+    content = <WorkspacePanes body={
+      <section aria-label="Staging" className="mx-auto flex h-full w-full max-w-[850px] flex-col px-5 py-6 sm:px-8 lg:px-10">
+        <div className="flex min-h-0 flex-1 flex-col" data-chat-context>
+          {chatContent}
+        </div>
+      </section>
+    } />
+  } else if (!scratchpad) {
     content = (
       <WorkspacePanes
         chatLabel="Tutor chat"
         status={chatRunning ? "Working" : "Ready to learn"}
         body={newTopicContent}
-        chat={hasChat ? chatPane : undefined}
       />
     )
   } else {
-    const documentMaterials = topicSourceMaterials(topic, snapshot.chats)
-    const topicState = topic.state?.type === "topic" ? topic.state : undefined
+    const documentMaterials = topicSourceMaterials(scratchpad, snapshot.chats)
+    const topicState = scratchpad.state?.type === "topic" ? scratchpad.state : undefined
     const terminology = topicState?.document?.blocks.filter((block) => block.type === "term") ?? []
     const thread = topicState?.threadTutors.find((thread) => thread.id === chat?.id)
     const currentPart = topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
-      topic.learning.notes.replace(/^# .+\n+/, ""),
+      scratchpad.learning.notes.replace(/^# .+\n+/, ""),
     )
     content = (
       <WorkspacePanes
@@ -1093,7 +1137,7 @@ export function App() {
               aria-label="Open workspace in Finder"
               title="Open workspace in Finder"
               onClick={() =>
-                void perform(() => desktop().openWorkspace(topic.id))
+                void perform(() => desktop().openWorkspace(scratchpad.id))
               }
             >
               <FolderOpen className="size-4" />
@@ -1102,18 +1146,15 @@ export function App() {
         }
         body={
           <LearningDocumentLayout
-            title={topic.title}
+            title={scratchpad.title}
             badge={
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <Badge variant={topic.state?.type ?? "topic"} className="px-3 py-1 text-sm">
-                  {{ topic: "Topic", test: "Test", generic: "Generic" }[topic.state?.type ?? "topic"]}
-                </Badge>
-                <ScratchpadThreads topicId={topic.id} chats={snapshot.chats} activeId={chatId} onSelect={openChat} />
-              </div>
+              <Badge variant={scratchpad.state?.type ?? "topic"} className="px-3 py-1 text-sm">
+                {{ topic: "Topic", test: "Test", generic: "Generic" }[scratchpad.state?.type ?? "topic"]}
+              </Badge>
             }
             materials={
-              topic.materials.length > 0
-                ? topic.materials.map((material) => (
+              scratchpad.materials.length > 0
+                ? scratchpad.materials.map((material) => (
                     <button
                       type="button"
                       key={material.id}
@@ -1130,39 +1171,39 @@ export function App() {
                 : null
             }
             actions={
-              topic.state?.type === "topic" && !topic.planConfirmed &&
-              topic.learning.outline.length > 0 && (
+              scratchpad.state?.type === "topic" && !scratchpad.planConfirmed &&
+              scratchpad.learning.outline.length > 0 && (
                 <div className="mt-9" role="group" aria-label="Topic plan confirmation">
                   <p className="mb-3 text-sm text-muted-foreground">
                     Review the scope and order. You can ask for changes in chat.
                   </p>
                   <ConfirmPlanButton
                     disabled={busy || chatRunnerBusy || !chatModelConnected}
-                    onClick={() => { void confirmPlan(topic) }}
+                    onClick={() => { void confirmPlan(scratchpad) }}
                   />
                 </div>
               )
             }
           >
-            {topic.state?.type === "test" ? (
-              <TestScratchpad state={topic.state} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            {scratchpad.state?.type === "test" ? (
+              <TestScratchpad state={scratchpad.state} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             ) : (
               <>
-                <StudyMarkdown text={notes.before} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+                <StudyMarkdown text={notes.before} terminology={terminology} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
                 {notes.directory && (
                   <TopicDirectory
                     heading={notes.directory.heading}
                     items={notes.directory.items}
                     markdown={[notes.before, notes.after]}
-                    topics={snapshot.topics}
-                    onOpenTopic={openTopic}
+                    scratchpads={snapshot.scratchpads}
+                    onOpenScratchpad={openTopic}
                     currentSection={currentPart?.name ?? ""}
                     materials={documentMaterials}
                     labelMaterials={labelMaterials}
                     onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }}
                   />
                 )}
-                {notes.after.trim() && <StudyMarkdown text={notes.after} terminology={terminology} topics={snapshot.topics} onOpenTopic={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
+                {notes.after.trim() && <StudyMarkdown text={notes.after} terminology={terminology} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
               </>
             )}
           </LearningDocumentLayout>
@@ -1189,11 +1230,17 @@ export function App() {
     )
   }
 
+  let workspaceTitle = "Loading workspace…"
+  if (loaded) {
+    workspaceTitle = scratchpad?.title ?? "New scratchpad"
+    if (staging) workspaceTitle = "Staging"
+  }
+
   return (
     <>
       <WorkspaceFrame
-        title={loaded ? topic?.title ?? "New scratchpad" : "Loading workspace…"}
-        workspaceId={topic?.id ?? "new"}
+        title={workspaceTitle}
+        workspaceId={scratchpadId ?? "new"}
         appName="EdU"
         navigationName="scratchpads"
         nativeTitlebar={navigator.userAgent.includes("Macintosh")}
@@ -1202,20 +1249,21 @@ export function App() {
           !loaded ? <WorkspaceLoadingSidebar /> :
           <DesktopSidebar
             snapshot={snapshot}
-            topicId={topicId}
+            scratchpadId={scratchpadId}
             view={view}
-            onOpenTopic={openTopic}
+            onOpenScratchpad={openTopic}
             onOpenChat={openChat}
-            onTagTopic={(item) => {
+            onTagScratchpad={(item) => {
               const draft = draftValues.current[chatKey] ?? ""
               const separator = draft && !/\s$/.test(draft) ? " " : ""
               replaceDraft(chatKey, `${draft}${separator}${topicMention(item.id, item.title)} `)
               if (!chat) openChat()
             }}
-            onArchiveTopic={(item) => {
-              void perform(() => desktop().archiveTopic({ topicId: item.id, archived: !item.archived }))
+            onArchiveScratchpad={(item) => {
+              void perform(() => desktop().archiveScratchpad({ scratchpadId: item.id, archived: !item.archived }))
             }}
-            onCopyTopicId={(item) => {
+            onDeleteStagedChat={(id) => { void perform(() => desktop().deleteStagedChat(id)) }}
+            onCopyScratchpadId={(item) => {
               void perform(() => desktop().copyText(item.id))
             }}
             busy={busy}
@@ -1260,41 +1308,43 @@ export function App() {
 
 export function DesktopSidebar({
   snapshot,
-  topicId,
+  scratchpadId,
   view,
-  onOpenTopic,
+  onOpenScratchpad,
   onOpenSettings,
   onOpenChat,
-  onTagTopic,
-  onArchiveTopic,
-  onCopyTopicId,
+  onTagScratchpad,
+  onArchiveScratchpad,
+  onCopyScratchpadId,
+  onDeleteStagedChat,
   busy,
 }: {
   snapshot: Snapshot
-  topicId?: string
+  scratchpadId?: string
   view: "learn" | "settings"
-  onOpenTopic: (id?: string) => void
+  onOpenScratchpad: (id?: string) => void
   onOpenSettings: () => void
   onOpenChat: (id: string) => void
-  onTagTopic: (topic: Snapshot["topics"][number]) => void
-  onArchiveTopic: (topic: Snapshot["topics"][number]) => void
-  onCopyTopicId: (topic: Snapshot["topics"][number]) => void
+  onTagScratchpad: (scratchpad: Snapshot["scratchpads"][number]) => void
+  onArchiveScratchpad: (scratchpad: Snapshot["scratchpads"][number]) => void
+  onDeleteStagedChat: (id: string) => void
+  onCopyScratchpadId: (scratchpad: Snapshot["scratchpads"][number]) => void
   busy: boolean
 }) {
   const { closeNavigation, revealChat } = useWorkspaceLayout()
   const tagging = useRef(false)
   const activeChatId = useChatTabs((state) => state.activeId)
-  const activeTopics = snapshot.topics.filter((item) => !item.archived)
-  const archivedTopics = snapshot.topics.filter((item) => item.archived)
-  const selectedArchivedTopicId = archivedTopics.find((item) => item.id === topicId)?.id
+  const activeTopics = snapshot.scratchpads.filter((item) => !item.archived)
+  const archivedTopics = snapshot.scratchpads.filter((item) => item.archived)
+  const selectedArchivedTopicId = archivedTopics.find((item) => item.id === scratchpadId)?.id
   const [archiveDisclosure, setArchiveDisclosure] = useState({
-    selectedTopicId: selectedArchivedTopicId,
+    selectedScratchpadId: selectedArchivedTopicId,
     open: selectedArchivedTopicId !== undefined,
   })
 
-  if (archiveDisclosure.selectedTopicId !== selectedArchivedTopicId) {
+  if (archiveDisclosure.selectedScratchpadId !== selectedArchivedTopicId) {
     setArchiveDisclosure({
-      selectedTopicId: selectedArchivedTopicId,
+      selectedScratchpadId: selectedArchivedTopicId,
       open: archiveDisclosure.open || selectedArchivedTopicId !== undefined,
     })
   }
@@ -1304,17 +1354,12 @@ export function DesktopSidebar({
     ),
   )
   const runningTopicIds = new Set(
-    runningChats.flatMap((chat) => {
-      const latestTaggedRequest = chat.messages.findLast(
-        (message) => message.role === "user" && message.topicIds.length > 0,
-      )
-      return latestTaggedRequest?.topicIds ?? []
-    }),
+    runningChats.flatMap((chat) => chat.ownerScratchpadId ? [chat.ownerScratchpadId] : []),
   )
 
   function openTopic(id?: string) {
     closeNavigation()
-    onOpenTopic(id)
+    onOpenScratchpad(id)
   }
 
   function openSettings() {
@@ -1322,7 +1367,7 @@ export function DesktopSidebar({
     onOpenSettings()
   }
 
-  function topicItem(item: Snapshot["topics"][number]) {
+  function topicItem(item: Snapshot["scratchpads"][number]) {
     return (
       <ContextMenu key={item.id}>
         <ContextMenuTrigger
@@ -1330,7 +1375,7 @@ export function DesktopSidebar({
             <TopicNavigationItem
               title={item.title}
               scratchpadType={item.state?.type ?? "topic"}
-              selected={view === "learn" && item.id === topicId}
+              selected={view === "learn" && item.id === scratchpadId}
               busy={runningTopicIds.has(item.id)}
               onClick={() => openTopic(item.id)}
             />
@@ -1346,18 +1391,17 @@ export function DesktopSidebar({
             tagging.current = true
             closeNavigation()
             revealChat()
-            onTagTopic(item)
+            onTagScratchpad(item)
           }}>
             <AtSign aria-hidden="true" />
             @Tag in chat
           </ContextMenuItem>
-          <ScratchpadThreads topicId={item.id} chats={snapshot.chats} activeId={activeChatId} onSelect={onOpenChat} submenu />
-          <ContextMenuItem disabled={busy} onClick={() => onArchiveTopic(item)}>
+          <ContextMenuItem disabled={busy} onClick={() => onArchiveScratchpad(item)}>
             {item.archived ? <ArchiveRestore aria-hidden="true" /> : <Archive aria-hidden="true" />}
             {item.archived ? "Unarchive scratchpad" : "Archive scratchpad"}
           </ContextMenuItem>
           <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => onCopyTopicId(item)}>
+          <ContextMenuItem onClick={() => onCopyScratchpadId(item)}>
             <Copy aria-hidden="true" />
             Copy Scratchpad ID
           </ContextMenuItem>
@@ -1396,11 +1440,36 @@ export function DesktopSidebar({
         <Plus className="size-4" aria-hidden="true" />
         New scratchpad
       </button>
-      <TopicNavigation label="Your scratchpads" empty={activeTopics.length === 0}>
+      <TopicNavigation label="Your scratchpads" empty={activeTopics.length === 0 && !snapshot.chats.some(isStagedChat)}>
+        {snapshot.chats.filter(isStagedChat).map((item) => (
+          <ContextMenu key={item.id}>
+            <ContextMenuTrigger render={
+              <TopicNavigationItem title={item.title || "Untitled thread"}
+                selected={view === "learn" && scratchpadId === stagingId && activeChatId === item.id}
+                busy={runningChats.some((chat) => chat.id === item.id)}
+                className="bg-yellow-300/20 text-sidebar-foreground hover:bg-yellow-300/30 dark:bg-yellow-700/20 dark:hover:bg-yellow-700/30"
+                onClick={() => { closeNavigation(); onOpenChat(item.id) }} />
+            } />
+            <ContextMenuContent>
+              <ContextMenuItem disabled={busy} className="text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
+                onClick={() => onDeleteStagedChat(item.id)}>
+                <Trash2 aria-hidden="true" />
+                Delete
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => {
+                void desktop().copyText(item.id).catch((failure: Error) => useWorkspace.getState().setError(desktopErrorMessage(failure)))
+              }}>
+                <Copy aria-hidden="true" />
+                Copy Thread ID
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        ))}
         {activeTopics.map(topicItem)}
       </TopicNavigation>
       {archivedTopics.length > 0 && (
-        <Collapsible className="mt-6" open={archiveDisclosure.open} onOpenChange={(open) => setArchiveDisclosure({ selectedTopicId: selectedArchivedTopicId, open })}>
+        <Collapsible className="mt-6" open={archiveDisclosure.open} onOpenChange={(open) => setArchiveDisclosure({ selectedScratchpadId: selectedArchivedTopicId, open })}>
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span className="flex min-w-0 items-center gap-2">
               Archived

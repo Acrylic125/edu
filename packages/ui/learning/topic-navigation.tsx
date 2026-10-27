@@ -54,9 +54,9 @@ export function TopicNavigationItem({
       ...props,
       "aria-current": selected ? "page" : undefined,
       className: cn(
-        "flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-3 py-3 text-left text-sm leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-3 py-3 text-left text-sm font-medium leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
-          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
           : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
         selected && scratchpadType === "topic" && "bg-learning-yellow text-learning-ink",
         selected && scratchpadType === "test" && "bg-learning-sage text-learning-ink",

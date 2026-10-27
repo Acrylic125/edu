@@ -134,14 +134,14 @@ export async function importMaterials(
   selectedSources?: string[],
   parent?: BrowserWindow,
 ) {
-  const collection = owner.kind === "topic" ? "topics" : "chats"
+  const collection = owner.kind === "topic" ? "scratchpads" : "chats"
   const current = () =>
-    owner.kind === "topic" ? repository.topic(owner.id) : repository.chat(owner.id)
+    owner.kind === "topic" ? repository.scratchpad(owner.id) : repository.chat(owner.id)
   current()
   const sources = selectedSources ?? await selectMaterialFiles(parent)
   if (sources.length === 0) return
   const materials: z.infer<typeof MaterialSchema>[] = []
-  const assetDirectory = join(repository.directory, collection === "topics" ? "scratchpads" : collection, owner.id, "assets")
+  const assetDirectory = join(repository.directory, collection, owner.id, "assets")
   await mkdir(assetDirectory, { recursive: true })
   try {
     for (const source of sources) {

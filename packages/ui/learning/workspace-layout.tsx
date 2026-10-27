@@ -72,7 +72,7 @@ export function WorkspaceFrame({
   sidebar,
   banner,
   children,
-  navigationName = "topics",
+  navigationName = "scratchpads",
   appName = "EdU",
   nativeTitlebar = false,
   workspaceId = title,

@@ -4,7 +4,7 @@ import { materialDisplayName, resolveMaterialLink } from "../shared/material-lin
 
 export function sourcePreviews({ enabled, materials }: {
   enabled: boolean
-  materials: Snapshot["topics"][number]["materials"]
+  materials: Snapshot["scratchpads"][number]["materials"]
 }) {
   return (tree: Root) => {
     if (!enabled) return

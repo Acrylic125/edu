@@ -1,3 +1,4 @@
+import { ownTestThreads } from "./thread-fixture"
 import { flushSync } from "react-dom"
 import type { Root } from "react-dom/client"
 import { ThemeProvider } from "@edu/ui/theme"
@@ -17,12 +18,13 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
       const createdAt = new Date().toISOString()
       const snapshot = SnapshotSchema.parse({
         runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "test" }],
-        topics: [], runtime: [], connected: true,
+        scratchpads: [], runtime: [], connected: true,
         providers: [{ id: "codex", name: "Codex", connected: true, installed: true, models: [] }],
         chats: [{ id: chatId, runnerId, title: "Image test", phase: "ready_to_continue", createdAt, materials: [], messages: hasHistory
           ? [{ id: crypto.randomUUID(), role: "user", content: "Check my answer", createdAt }]
           : [] }],
       })
+      const ownerId = ownTestThreads(snapshot)
       const sent: Parameters<NonNullable<typeof window.edu>["send"]>[0][] = []
       window.edu = {
         ...original!,
@@ -36,7 +38,7 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
       }
       flushSync(() => {
         useWorkspace.getState().setSnapshot(snapshot)
-        useTopicViews.getState().select(undefined)
+        useTopicViews.getState().select(ownerId)
         useChatTabs.getState().select(chatId)
         root.render(<ThemeProvider><App /></ThemeProvider>)
       })
@@ -59,7 +61,7 @@ export async function testChatAttachments(root: Root, host: HTMLElement) {
       if (sent[0].content !== expected) throw new Error(`Image-only message with history=${hasHistory}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(sent[0].content)}`)
       if (hasHistory && !sent[0].materialIds?.length) throw new Error("Image-only follow-ups must identify the attachment")
       snapshot.chats[0].messages.push({ id: sent[0].messageId ?? crypto.randomUUID(), role: "user", content: sent[0].content,
-        materialIds: snapshot.chats[0].materials.map((item) => item.id), createdAt, topicIds: [] })
+        materialIds: snapshot.chats[0].materials.map((item) => item.id), createdAt, scratchpadIds: [] })
       flushSync(() => useWorkspace.getState().setSnapshot(structuredClone(snapshot)))
       if (!composer.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.disabled) throw new Error("Previously sent attachments must not enable an empty message")
       flushSync(() => root.render(null))

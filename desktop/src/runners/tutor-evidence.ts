@@ -3,14 +3,14 @@ import type { WorkerJob } from "../shared/contracts"
 import type { TopicStateSchema } from "../shared/topic-state"
 import { parseTopicMentions } from "../shared/topic-mentions"
 
-export function selectTutorTopicIds(chat: WorkerJob["chat"], openedTopicId?: string, confirmTopicId?: string) {
+export function selectTutorTopicIds(chat: WorkerJob["chat"], openedScratchpadId?: string, confirmScratchpadId?: string) {
   const request = chat.messages.findLast((message) => message.role === "user")
   const explicit = [...new Set(parseTopicMentions(request?.content ?? "").map((mention) => mention.id))]
-  if (confirmTopicId) return [...new Set([...explicit, confirmTopicId])]
+  if (confirmScratchpadId) return [...new Set([...explicit, confirmScratchpadId])]
   if (explicit.length) return explicit
-  if (chat.learning.pendingCheck) return [chat.learning.pendingCheck.topicId]
-  if (openedTopicId) return [openedTopicId]
-  return chat.messages.findLast((message) => message.topicIds.length)?.topicIds ?? []
+  if (chat.learning.pendingCheck) return [chat.learning.pendingCheck.scratchpadId]
+  if (openedScratchpadId) return [openedScratchpadId]
+  return chat.messages.findLast((message) => message.scratchpadIds.length)?.scratchpadIds ?? []
 }
 
 export function topicPartCoverage(state: z.infer<typeof TopicStateSchema>, part: z.infer<typeof TopicStateSchema>["content"][number]) {
@@ -28,8 +28,8 @@ export function topicPartCoverage(state: z.infer<typeof TopicStateSchema>, part:
   return { coverage, questionCount, answeredCount, taughtBlockCount }
 }
 
-export function scratchpadContext(topic: Pick<WorkerJob["topics"][number], "id" | "state">, chat: WorkerJob["chat"]) {
-  const state = topic.state
+export function scratchpadContext(scratchpad: Pick<WorkerJob["scratchpads"][number], "id" | "state">, chat: WorkerJob["chat"]) {
+  const state = scratchpad.state
   if (!state) return { type: "topic", revision: 0 }
   if (state.type === "generic") return { type: state.type, references: state.references }
   if (state.type === "test") {
@@ -43,7 +43,7 @@ export function scratchpadContext(topic: Pick<WorkerJob["topics"][number], "id" 
   }
   const progress = state.threadTutors.find((thread) => thread.id === chat.id)?.progress ?? {}
   const focused = new Set<string>()
-  if (chat.learning.pendingCheck?.topicId === topic.id) focused.add(chat.learning.pendingCheck.topicPartId)
+  if (chat.learning.pendingCheck?.scratchpadId === scratchpad.id) focused.add(chat.learning.pendingCheck.scratchpadPartId)
   if (!focused.size) {
     const active = state.content.findLast((part) => progress[part.id]?.status === "active")
     if (active) focused.add(active.id)
@@ -60,7 +60,7 @@ export function scratchpadContext(topic: Pick<WorkerJob["topics"][number], "id" 
       const steps = progress[part.id]?.steps ?? []
       let stepIndex = steps.length - 1
       const pending = chat.learning.pendingCheck
-      if (pending?.topicId === topic.id && pending.topicPartId === part.id) stepIndex = pending.stepIndex
+      if (pending?.scratchpadId === scratchpad.id && pending.scratchpadPartId === part.id) stepIndex = pending.stepIndex
       return {
         ...part, stepIndex, latestStep: steps[stepIndex],
         blocks: state.document?.blocks.filter((block) => block.type !== "term" && block.sectionId === part.id).map(({ id, type }) => ({ id, type })) ?? [],

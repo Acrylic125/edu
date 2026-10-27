@@ -22,7 +22,7 @@ const descriptions = {
   activatePart: "Mark a visited topic part active for the current thread.",
   complete: "Complete a topic part only when ALL goals have been satisfied. Active and completed can transition back and forth.",
   documentMistake: "Record a confirmed incorrect answer and its rationale on a topic part.",
-  recordQuestion: "Append the exact question to the current thread's active part before asking it.",
+  recordQuestion: "Record the exact question and activate its topic part atomically for the current thread, preserving earlier answers. No separate activation call is needed. Plan confirmation and the learner's proceed-or-practice choice still apply.",
   recordAnswer: "Record the learner's actual answer at the current thread's stepIndex. Read the recorded questions first; the question must already exist. Preserve previous attempts.",
   updateTopic: "Update topic name, curriculum, goals or references, preserving recorded mistakes and content block section IDs. Use topic_editContent for explanations and terminology. The app renders Markdown and navigation.",
   createTopic: "Create a topic only when explicitly requested or when a prerequisite topic is necessary. Returns its scratchpad handle.",
@@ -40,10 +40,10 @@ export const scratchpadToolDefinitions = [
   ...ScratchpadMutationSchema.options.map((schema) => {
     const operation = schema.shape.type.value
     const role = mutationRoles[operation]
-    let target = "topicId"
+    let target = "scratchpadId"
     if (role === "test") target = "testId"
     if (role === "generic") target = "genericId"
-    const { type: _type, topicId: _id, ...shape } = schema.shape
+    const { type: _type, scratchpadId: _id, ...shape } = schema.shape
     const parameters = z.toJSONSchema(z.object(shape), {
       override({ jsonSchema }) {
         const properties = jsonSchema.properties
@@ -64,22 +64,22 @@ export const scratchpadToolDefinitions = [
     return { name: `${role}_${mutationNames[operation]}`, role, operation, target, writer: true, creation, description: descriptions[operation], parameters }
   }),
   ...(["topic", "test"] as const).flatMap((role) => {
-    let target = "topicId"
+    let target = "scratchpadId"
     if (role === "test") target = "testId"
     const targetParameters = z.toJSONSchema(z.object({ [target]: TopicHandleSchema, threadId: z.string().optional() }))
     const questionsParameters = targetParameters
     if (role === "topic") {
-      questionsParameters.properties = { ...questionsParameters.properties, topicPartId: z.toJSONSchema(TopicPartIdSchema) }
-      questionsParameters.required = [...(questionsParameters.required ?? []), "topicPartId"]
+      questionsParameters.properties = { ...questionsParameters.properties, scratchpadPartId: z.toJSONSchema(TopicPartIdSchema) }
+      questionsParameters.required = [...(questionsParameters.required ?? []), "scratchpadPartId"]
     }
     return [
-      { name: `${role}_getMistakesForTopic`, role, operation: "getMistakesForTopic", target, writer: false, creation: false, description: "Read mistakes from topic scratchpads only when creating evaluation questions or explicitly asked. null selects all topic scratchpads.", parameters: z.toJSONSchema(z.object({ topics: z.array(TopicHandleSchema).nullable() })) },
+      { name: `${role}_getMistakesForTopic`, role, operation: "getMistakesForTopic", target, writer: false, creation: false, description: "Read mistakes from topic scratchpads only when creating evaluation questions or explicitly asked. null selects all topic scratchpads.", parameters: z.toJSONSchema(z.object({ scratchpads: z.array(TopicHandleSchema).nullable() })) },
       { name: `${role}_whereAmI`, role, operation: "whereAmI", target, writer: false, creation: false, description: "Read the current thread's position. For tests, prefer its unanswered question, then the first unanswered question.", parameters: z.toJSONSchema(z.object({ [target]: TopicHandleSchema, threadId: z.string().optional() })) },
       { name: `${role}_getQuestions`, role, operation: "getQuestions", target, writer: false, creation: false, description: "Read questions only when explicitly asked or deduplicating the next question.", parameters: questionsParameters },
     ]
   }),
-  { name: "topic_whatIsNext", role: "topic", operation: "whatIsNext", target: "topicId", writer: false, creation: false, description: "Read active continuations across threads and the very next untouched part. Only on a fresh thread, explicit request, or completion of a part/step.", parameters: z.toJSONSchema(z.object({ topicId: TopicHandleSchema })) },
-  { name: "topic_getTopicProgress", role: "topic", operation: "getTopicProgress", target: "topicId", writer: false, creation: false, description: "Read curriculum-ordered progress across tutor threads.", parameters: z.toJSONSchema(z.object({ topicId: TopicHandleSchema })) },
+  { name: "topic_whatIsNext", role: "topic", operation: "whatIsNext", target: "scratchpadId", writer: false, creation: false, description: "Read active continuations across threads and the very next untouched part. Only on a fresh thread, explicit request, or completion of a part/step.", parameters: z.toJSONSchema(z.object({ scratchpadId: TopicHandleSchema })) },
+  { name: "topic_getTopicProgress", role: "topic", operation: "getTopicProgress", target: "scratchpadId", writer: false, creation: false, description: "Read curriculum-ordered progress across tutor threads.", parameters: z.toJSONSchema(z.object({ scratchpadId: TopicHandleSchema })) },
   { name: "test_getMistakes", role: "test", operation: "getTestMistakes", target: "testId", writer: false, creation: false, description: "Read mistakes on this test's content parts only for evaluation questions or when explicitly asked.", parameters: z.toJSONSchema(z.object({ testId: TopicHandleSchema })) },
   { name: "generic_getReferences", role: "generic", operation: "getGenericReferences", target: "genericId", writer: false, creation: false, description: "Read this generic scratchpad's references only when citing a source or explicitly asked.", parameters: z.toJSONSchema(z.object({ genericId: TopicHandleSchema })) },
 ]

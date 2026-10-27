@@ -1,3 +1,4 @@
+import { ownTestThreads } from "./thread-fixture"
 import { flushSync } from "react-dom"
 import type { Root } from "react-dom/client"
 import { ThemeProvider } from "@edu/ui/theme"
@@ -7,6 +8,37 @@ import { useChatTabs } from "../../src/renderer/chat-tabs"
 import { useTopicViews } from "../../src/renderer/topic-views"
 import { messageClipboardHtml } from "../../src/shared/message-clipboard"
 import { SnapshotSchema } from "../../src/shared/contracts"
+import { TopicMentionInput } from "../../src/renderer/topic-mention-input"
+
+export async function testPastedTopicMentions(root: Root, host: HTMLElement) {
+  const id = "a0d22c91-1058-4182-a0d5-19a72ddc40a8"
+  const title = "Lecture 6: MIPS Part 1"
+  const content = `/new-test Test me on [@${title}](edu-topic://${id})`
+  let value = ""
+  flushSync(() => root.render(<TopicMentionInput
+    label="Mention paste test"
+    initialValue=""
+    scratchpads={[{ id, title, archived: false }]}
+    placeholder=""
+    className=""
+    onChange={(next) => { value = next }}
+    onSubmit={() => {}}
+  />))
+  const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!
+  editor.focus()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const clipboardData = new DataTransfer()
+  clipboardData.setData("text/plain", content)
+  clipboardData.setData("text/html", messageClipboardHtml(content, []))
+  editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  if (editor.textContent !== `/new-test Test me on @${title}` || editor.querySelector(`[title="@${title}"]`)?.textContent !== `@${title}`) {
+    throw new Error(`Pasting a copied message must restore its @ mention chip; received ${editor.textContent}`)
+  }
+  if (value !== content) throw new Error("Pasting a mention must preserve its topic link when sent")
+  flushSync(() => root.render(null))
+  console.log("PASS: pasting copied messages restores @ mention chips and preserves topic links")
+}
 
 export async function testMessageClipboard(root: Root, host: HTMLElement) {
   const original = window.edu
@@ -18,11 +50,12 @@ export async function testMessageClipboard(root: Root, host: HTMLElement) {
     const content = "Help me work with the attached materials: Lecture 6.pdf, Lecture 6.pptx."
     const snapshot = SnapshotSchema.parse({
       runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "test" }],
-      topics: [], runtime: [], connected: true,
+      scratchpads: [], runtime: [], connected: true,
       providers: [{ id: "codex", name: "Codex", connected: true, installed: true, models: [] }],
       chats: [{ id: chatId, runnerId, title: "Copy attachments", phase: "ready_to_continue", createdAt, materials,
         messages: [{ id: crypto.randomUUID(), role: "user", content, createdAt, materialIds: materials.map((item) => item.id) }] }],
     })
+    const ownerId = ownTestThreads(snapshot)
     const targetId = crypto.randomUUID()
     if (!sameChat) snapshot.chats.push({ ...snapshot.chats[0], id: targetId, messages: [], materials: [] })
     const reused = materials.map((item) => ({ id: crypto.randomUUID(), name: item.name }))
@@ -46,7 +79,7 @@ export async function testMessageClipboard(root: Root, host: HTMLElement) {
         }, snapshot: async () => structuredClone(snapshot), send: async (input) => { sent.push(input) }, copyText: async (...args) => { copied = JSON.stringify(args) } }
       flushSync(() => {
         useWorkspace.getState().setSnapshot(snapshot)
-        useTopicViews.getState().select(undefined)
+        useTopicViews.getState().select(ownerId)
         useChatTabs.getState().select(chatId)
         root.render(<ThemeProvider><App /></ThemeProvider>)
       })

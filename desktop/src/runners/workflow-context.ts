@@ -9,12 +9,12 @@ export function committedSource(turn: z.infer<typeof WorkflowRecordSchema>) {
     for (const job of batch.jobs) {
       if (!job.committedSnapshot) continue
       const target = job.committedSnapshot
-      const writable = source.topics.some((topic) => topic.id === target.id)
-      source.topics = source.topics.filter((topic) => topic.id !== target.id)
-      if (writable || job.access === "write" || job.mode === "create") source.topics.push({ ...target, assetDirectory: join(dirname(dirname(source.assetDirectory)), "..", "scratchpads", target.id, "assets") })
-      source.workspaceTopics = source.workspaceTopics.filter((topic) => topic.id !== target.id)
-      source.workspaceTopics.push({ ...target, notes: target.learning.notes })
-      if (!source.chat.topicHandles.includes(target.id)) source.chat.topicHandles.push(target.id)
+      const writable = source.scratchpads.some((scratchpad) => scratchpad.id === target.id)
+      source.scratchpads = source.scratchpads.filter((scratchpad) => scratchpad.id !== target.id)
+      if (writable || job.access === "write" || job.mode === "create") source.scratchpads.push({ ...target, assetDirectory: join(dirname(dirname(source.assetDirectory)), "..", "scratchpads", target.id, "assets") })
+      source.workspaceScratchpads = source.workspaceScratchpads.filter((scratchpad) => scratchpad.id !== target.id)
+      source.workspaceScratchpads.push({ ...target, notes: target.learning.notes })
+      if (!source.chat.scratchpadHandles.includes(target.id)) source.chat.scratchpadHandles.push(target.id)
       if (job.mode === "create") source.chat.scratchpadRequested = false
     }
   }

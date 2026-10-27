@@ -22,8 +22,8 @@ function compactMaterialName(name: string) {
 }
 
 export function materialDisplayName(
-  material: Pick<Snapshot["topics"][number]["materials"][number], "id" | "name">,
-  materials: Pick<Snapshot["topics"][number]["materials"][number], "id" | "name">[],
+  material: Pick<Snapshot["scratchpads"][number]["materials"][number], "id" | "name">,
+  materials: Pick<Snapshot["scratchpads"][number]["materials"][number], "id" | "name">[],
 ) {
   const label = compactMaterialName(material.name)
   const matches = materials.filter((item, index) =>
@@ -46,8 +46,8 @@ export function materialDisplayName(
 
 export function materialReferenceLabel(
   label: string,
-  material: Snapshot["topics"][number]["materials"][number],
-  materials: Snapshot["topics"][number]["materials"],
+  material: Snapshot["scratchpads"][number]["materials"][number],
+  materials: Snapshot["scratchpads"][number]["materials"],
 ) {
   const name = materialCitationNames(material.name).find((name) => label === name || label.startsWith(`${name},`))
   if (!name) return label
@@ -62,16 +62,16 @@ export function materialCitationNames(name: string) {
   return [name, compact]
 }
 
-export function topicSourceMaterials(topic: Snapshot["topics"][number], chats: Snapshot["chats"]) {
+export function topicSourceMaterials(scratchpad: Snapshot["scratchpads"][number], chats: Snapshot["chats"]) {
   const materials = [
-    ...topic.materials,
-    ...chats.filter((chat) => chat.messages.some((message) => message.topicIds.includes(topic.id)))
+    ...scratchpad.materials,
+    ...chats.filter((chat) => chat.messages.some((message) => message.scratchpadIds.includes(scratchpad.id)))
       .flatMap((chat) => chat.materials),
   ]
   return materials.filter((material, index) => materials.findIndex((item) => item.id === material.id) === index)
 }
 
-export function resolveMaterialLink(href: string, materials: Snapshot["topics"][number]["materials"]) {
+export function resolveMaterialLink(href: string, materials: Snapshot["scratchpads"][number]["materials"]) {
   const direct = /^edu-material:\/\/([^/]+)\/(\d+)$/.exec(href)
   if (direct) {
     const parsed = MaterialLinkSchema.safeParse({ id: direct[1], page: direct[2] })

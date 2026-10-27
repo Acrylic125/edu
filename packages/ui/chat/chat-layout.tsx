@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, type ComponentProps, type ReactNode } from "react"
-import { BookOpenIcon, CheckIcon, CopyIcon, PencilLineIcon } from "lucide-react"
+import { CheckIcon, CopyIcon, type LucideIcon } from "lucide-react"
 
 import { Button } from "../primitives/button"
 import { ScrollArea } from "../primitives/scroll-area"
@@ -33,7 +33,7 @@ export function ChatPanel({
 }
 
 export function ChatComposerLayout({
-  newTopicMode = false,
+  newScratchpadMode = false,
   input,
   toolbar,
   attachments,
@@ -42,7 +42,7 @@ export function ChatComposerLayout({
   className,
   ...props
 }: Omit<ComponentProps<"form">, "children"> & {
-  newTopicMode?: boolean
+  newScratchpadMode?: boolean
   input: ReactNode
   toolbar: ReactNode
   attachments?: ReactNode
@@ -54,8 +54,8 @@ export function ChatComposerLayout({
       {...props}
       className={cn(
         "relative flex min-h-28 w-full flex-col rounded-[1.5rem] border border-border/70 bg-card shadow-sm",
-        !newTopicMode && "bg-input/25 shadow-lg backdrop-blur-xl",
-        newTopicMode &&
+        !newScratchpadMode && "bg-input/25 shadow-lg backdrop-blur-xl",
+        newScratchpadMode &&
           "min-h-44 rounded-[1.75rem] border-input bg-muted p-2 shadow-sm focus-within:border-ring/60 focus-within:ring-2 focus-within:ring-ring/20",
         className,
       )}
@@ -173,43 +173,28 @@ export function ChatThinking({ children, className }: {
 }
 
 export function ChatEmptyState({
-  newTopic = false,
+  newScratchpad = false,
   title,
   description = "Start with a question, or attach your slides and notes below.",
+  suggestions = [],
   onPrompt,
 }: {
-  newTopic?: boolean
+  newScratchpad?: boolean
   title?: string
   description?: string
+  suggestions?: { label: string; prompt: string; icon: LucideIcon }[]
   onPrompt?: (prompt: string) => void
 }) {
-  const suggestions = [
-    {
-      label: "Explain a concept",
-      icon: BookOpenIcon,
-      prompt: newTopic
-        ? "Help me understand derivatives with a simple example."
-        : "Explain the current topic with a simple example.",
-    },
-    {
-      label: "Help me practice",
-      icon: PencilLineIcon,
-      prompt: newTopic
-        ? "Help me prepare for my exam."
-        : "Give me a practice question on the current topic.",
-    },
-  ]
-
   return (
     <ScrollArea className="h-full min-h-0">
       <div className="flex min-h-full flex-1 flex-col items-center justify-center px-6 py-10 text-center">
         <h2 className="max-w-64 text-2xl font-semibold leading-tight tracking-tight">
-          {title ?? (newTopic ? "What would you like to learn?" : "Ask about this lesson")}
+          {title ?? (newScratchpad ? "What would you like to learn?" : "Ask about this lesson")}
         </h2>
         <p className="mt-3 max-w-64 text-sm leading-6 text-muted-foreground">
           {description}
         </p>
-        {onPrompt && (
+        {onPrompt && suggestions.length > 0 && (
           <div className="mt-6 flex w-full max-w-64 flex-col gap-2">
             {suggestions.map((suggestion) => (
               <Button

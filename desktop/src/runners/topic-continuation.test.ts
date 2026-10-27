@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
-import { newChat, newTopic, WorkspaceRepository } from "../main/workspace"
+import { newChat, newScratchpad, WorkspaceRepository } from "../main/workspace"
 import { TutorWorkflowRepository } from "../main/tutor-workflow"
 import { WorkerJobSchema } from "../shared/contracts"
 import { TopicStateSchema } from "../shared/topic-state"
@@ -19,26 +19,26 @@ test("a confirmed topic continuation reaches its isolated role in one model invo
   await workspace.load()
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
-  const topic = newTopic("Vector spaces")
+  const scratchpad = newScratchpad("Vector spaces")
   const material = { id: randomUUID(), name: "lecture.pdf", kind: "pdf" as const, text: "Vector spaces and subspaces", pages: ["Vector addition", "Subspace test"] }
-  topic.planConfirmed = true
-  topic.materials = [material]
-  topic.state = TopicStateSchema.parse({ ...topic.state, content: [
+  scratchpad.planConfirmed = true
+  scratchpad.materials = [material]
+  scratchpad.state = TopicStateSchema.parse({ ...scratchpad.state, content: [
     { id: "tp-vectors", name: "6.1 Vector spaces", references: [{ type: "pdf", path: "assets/lecture.pdf", pages: [{ from: 1, to: 1 }] }], goals: [], mistakes: [] },
     { id: "tp-subspaces", name: "6.2 Subspaces", references: [{ type: "pdf", path: "assets/lecture.pdf", pages: [{ from: 2, to: 2 }] }], goals: [], mistakes: [] },
   ], threadTutors: [{ id: chat.id, progress: { "tp-vectors": { status: "active", steps: [{ question: "Are nonnegative robot displacements closed under addition?" }] } } }] })
   const answer = "Adding two nonnegative coordinates still gives nonnegative coordinates."
-  chat.topicHandles = [topic.id]
+  chat.scratchpadHandles = [scratchpad.id]
   chat.messages.push(
-    { id: randomUUID(), role: "user", content: answer, createdAt: new Date().toISOString(), topicIds: [topic.id] },
-    { id: randomUUID(), role: "user", content: "Teach section 6.2 briefly, then ask one understanding check.", createdAt: new Date().toISOString(), topicIds: [topic.id] },
+    { id: randomUUID(), role: "user", content: answer, createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] },
+    { id: randomUUID(), role: "user", content: "Teach section 6.2 briefly, then ask one understanding check.", createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] },
   )
-  chat.learning = { ...chat.learning, phase: "awaiting_answer", currentSection: "lecture.pdf section 6.1, page 1", pendingQuestion: "Are nonnegative robot displacements closed under addition?", pendingCheck: { topicId: topic.id, topicPartId: "tp-vectors", stepIndex: 0 }, privateAnswerKey: "Nonnegative coordinates sum to nonnegative coordinates.", nextAction: "Assess closure, then continue", workpad: "Robot displacement example; remaining vector space axioms are open." }
-  const assets = join(directory, "scratchpads", topic.id, "assets")
+  chat.learning = { ...chat.learning, phase: "awaiting_answer", currentSection: "lecture.pdf section 6.1, page 1", pendingQuestion: "Are nonnegative robot displacements closed under addition?", pendingCheck: { scratchpadId: scratchpad.id, scratchpadPartId: "tp-vectors", stepIndex: 0 }, privateAnswerKey: "Nonnegative coordinates sum to nonnegative coordinates.", nextAction: "Assess closure, then continue", workpad: "Robot displacement example; remaining vector space axioms are open." }
+  const assets = join(directory, "scratchpads", scratchpad.id, "assets")
   await mkdir(assets, { recursive: true })
   await writeFile(join(assets, material.name), material.text)
-  await workspace.mutate((state) => { state.chats.push(chat); state.topics.push(topic) })
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...topic, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  await workspace.mutate((state) => { state.chats.push(chat); state.scratchpads.push(scratchpad) })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))
@@ -63,19 +63,19 @@ test("a confirmed topic continuation reaches its isolated role in one model invo
     assert.deepEqual(input.chat.messages.map(({ id, content }) => ({ id, content })), chat.messages.map(({ id, content }) => ({ id, content })))
     assert.deepEqual(input.chat.learning, chat.learning)
     assert.match(session.instructions, new RegExp(material.id))
-    const recorded = await session.execute("topic_recordAnswer", { topicId: "scratchpad_1", topicPartId: "tp-vectors", stepIndex: 0, answerFromUser: answer })
+    const recorded = await session.execute("topic_recordAnswer", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-vectors", stepIndex: 0, answerFromUser: answer })
     assert.equal(recorded.success, true, recorded.text)
-    const active = await session.execute("topic_activatePart", { topicId: "scratchpad_1", topicPartId: "tp-subspaces" })
+    const active = await session.execute("topic_activatePart", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-subspaces" })
     assert.equal(active.success, true, active.text)
-    const question = await session.execute("topic_recordQuestion", { topicId: "scratchpad_1", topicPartId: "tp-subspaces", question: "Does a robot constraint excluding zero describe a subspace? Explain." })
+    const question = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-subspaces", question: "Does a robot constraint excluding zero describe a subspace? Explain." })
     assert.equal(question.success, true, question.text)
-    const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", currentSection: "lecture.pdf section 6.2, page 2", pendingCheck: { topicId: "scratchpad_1", topicPartId: "tp-subspaces", stepIndex: 0 }, nextAction: "Wait for the subspace explanation", workpad: "Closure explanation recorded; earlier vector space axioms remain open." })
+    const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", currentSection: "lecture.pdf section 6.2, page 2", pendingCheck: { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-subspaces", stepIndex: 0 }, nextAction: "Wait for the subspace explanation", workpad: "Closure explanation recorded; earlier vector space axioms remain open." })
     assert.equal(saved.success, true, saved.text)
     return session.finish("A subspace must include zero and preserve the vector operations.")
   }, saver, {}).invoke({ chatId: chat.id, turnId: turn.turnId }, { configurable: { thread_id: turn.turnId }, durability: "sync" })
   assert.equal(coordinatorRuns, 0, "An active single-topic lesson must not wait for a routing model")
   assert.equal(roleRuns, 1)
-  const state = TopicStateSchema.parse(workspace.topic(topic.id).state)
+  const state = TopicStateSchema.parse(workspace.scratchpad(scratchpad.id).state)
   assert.equal(state.threadTutors[0].progress["tp-vectors"].steps[0].answerFromUser, answer)
   assert.equal(state.threadTutors[0].progress["tp-subspaces"].steps.length, 1)
   assert.match(workflows.complete(chat.id, turn.turnId).message.content, /subspace/i)
@@ -88,12 +88,12 @@ test("an unrelated request returns from the topic role to coordination before an
   await workspace.load()
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
-  const topic = newTopic("Fractions")
-  topic.planConfirmed = true
-  chat.topicHandles = [topic.id]
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Create a generic scratchpad for travel notes.", createdAt: new Date().toISOString(), topicIds: [topic.id] })
-  await workspace.mutate((state) => { state.chats.push(chat); state.topics.push(topic) })
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...topic, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const scratchpad = newScratchpad("Fractions")
+  scratchpad.planConfirmed = true
+  chat.scratchpadHandles = [scratchpad.id]
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Create a generic scratchpad for travel notes.", createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] })
+  await workspace.mutate((state) => { state.chats.push(chat); state.scratchpads.push(scratchpad) })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))
@@ -123,8 +123,8 @@ test("an unrelated request returns from the topic role to coordination before an
   }, saver, {}).invoke({ chatId: chat.id, turnId: turn.turnId }, { configurable: { thread_id: turn.turnId }, durability: "sync" })
   assert.deepEqual(phases, ["topic", "coordinator", "generic"])
   assert.equal(workflows.get(chat.id, turn.turnId).batches[0].jobs[0].operations.length, 0)
-  assert.deepEqual(workspace.topic(topic.id).state, topic.state)
-  assert.equal(workspace.stateSnapshot.topics.length, 2)
+  assert.deepEqual(workspace.scratchpad(scratchpad.id).state, scratchpad.state)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 2)
   assert.equal(workflows.complete(chat.id, turn.turnId).message.content, "Your travel notes are ready.")
 })
 
@@ -137,18 +137,18 @@ test("drafts, archived targets, commands, multiple targets, and large contexts r
       await workspace.load()
       const runner = workspace.stateSnapshot.runners[0]
       const chat = newChat(runner.id)
-      const topic = newTopic("Fractions")
-      const other = newTopic("Geometry")
-      topic.planConfirmed = scenario !== "draft"
-      topic.archived = scenario === "archived"
-      chat.topicHandles = [topic.id, other.id]
+      const scratchpad = newScratchpad("Fractions")
+      const other = newScratchpad("Geometry")
+      scratchpad.planConfirmed = scenario !== "draft"
+      scratchpad.archived = scenario === "archived"
+      chat.scratchpadHandles = [scratchpad.id, other.id]
       let content = "Continue"
       if (scenario === "command") content = "/new-test Practice fractions"
-      if (scenario === "multiple") content = `${topicMention(topic.id, topic.title)} ${topicMention(other.id, other.title)} Compare these topics`
+      if (scenario === "multiple") content = `${topicMention(scratchpad.id, scratchpad.title)} ${topicMention(other.id, other.title)} Compare these topics`
       if (scenario === "large") content = "Earlier discussion. ".repeat(4000)
-      chat.messages.push({ id: randomUUID(), role: "user", content, createdAt: new Date().toISOString(), topicIds: [topic.id] })
-      await workspace.mutate((state) => { state.chats.push(chat); state.topics.push(topic, other) })
-      const job = WorkerJobSchema.parse({ runner, chat, topics: [topic, other].map((topic) => ({ ...topic, assetDirectory: directory })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+      chat.messages.push({ id: randomUUID(), role: "user", content, createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] })
+      await workspace.mutate((state) => { state.chats.push(chat); state.scratchpads.push(scratchpad, other) })
+      const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [scratchpad, other].map((scratchpad) => ({ ...scratchpad, assetDirectory: directory })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
       const workflows = new TutorWorkflowRepository(workspace)
       const turn = await workflows.start(job)
       const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))

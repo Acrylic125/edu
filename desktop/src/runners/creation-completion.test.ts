@@ -20,9 +20,9 @@ async function workspaceFixture(t: TestContext, type: "test" | "generic") {
   const workspace = new WorkspaceRepository(directory)
   await workspace.load()
   const chat = newChat(workspace.stateSnapshot.runners[0].id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: `/new-${type} How agents load skills`, createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: `/new-${type} How agents load skills`, createdAt: new Date().toISOString(), scratchpadIds: [] })
   await workspace.mutate((state) => state.chats.push(chat))
-  const job = WorkerJobSchema.parse({ runner: workspace.stateSnapshot.runners[0], chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const job = WorkerJobSchema.parse({ runner: workspace.stateSnapshot.runners[0], chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   return { directory, workspace, workflows, turn, job }
@@ -63,7 +63,7 @@ for (const type of ["test", "generic"] as const) {
       await workflows.ready(turn.chatId, turn.turnId, role.jobId, context.output)
       const receipt = await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
       assert.equal(receipt.results[0].needsClarification, true)
-      assert.equal(workspace.stateSnapshot.topics.length, 0)
+      assert.equal(workspace.stateSnapshot.scratchpads.length, 0)
       assert.equal(workspace.chat(turn.chatId).messages.filter((message) => message.role === "assistant").length, 0)
     })
   }
@@ -105,7 +105,7 @@ for (const type of ["test", "generic"] as const) {
     assert.ok(output.response)
     await workflows.ready(turn.chatId, turn.turnId, role.jobId, output)
     await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
-    assert.equal(workspace.stateSnapshot.topics.length, 1)
+    assert.equal(workspace.stateSnapshot.scratchpads.length, 1)
   })
 
   test(`${type} summary-only creation rejects an empty success and permits explicit clarification`, async (t) => {
@@ -152,12 +152,12 @@ test("test creation clarification survives the complete workflow and publishes o
   }, saver, {})
   await graph.invoke({ chatId: turn.chatId, turnId: turn.turnId }, { configurable: { thread_id: turn.turnId }, durability: "sync" })
   assert.equal(roleCalls, 1)
-  assert.equal(workspace.stateSnapshot.topics.length, 0)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 0)
   assert.equal(workspace.chat(turn.chatId).learning.phase, "awaiting_clarification")
   const result = workflows.complete(turn.chatId, turn.turnId)
   assert.ok(result.message.content.includes(question))
   assert.doesNotMatch(result.message.content, /\[!CHECK\]/)
-  assert.deepEqual(result.message.topicIds, [])
+  assert.deepEqual(result.message.scratchpadIds, [])
   assert.equal(workspace.chat(turn.chatId).messages.filter((message) => message.role === "assistant").length, 1)
   assert.equal(workflows.complete(turn.chatId, turn.turnId).message.id, result.message.id)
 })
@@ -174,7 +174,7 @@ test("a newly staged test can be updated later in the same task", async (t) => {
   t.mock.timers.tick(100)
   const updated = await context.session.execute("test_updateTest", { testId: role.scratchpadHandle, content: [{ id: "tp-loading", name: "Skill loading", references: [], goals: [], mistakes: [] }] })
   assert.equal(updated.success, true, updated.text)
-  await assert.rejects(workflows.stage(turn.chatId, turn.turnId, role.jobId, "stale-update", { type: "updateTest", topicId: role.scratchpadId, expectedState: original.state, name: "Stale title" }), /Test changed during this turn/)
+  await assert.rejects(workflows.stage(turn.chatId, turn.turnId, role.jobId, "stale-update", { type: "updateTest", scratchpadId: role.scratchpadId, expectedState: original.state, name: "Stale title" }), /Test changed during this turn/)
   t.mock.timers.tick(100)
   const updatedAgain = await context.session.execute("test_updateTest", { testId: role.scratchpadHandle, name: "Agent skills assessment" })
   assert.equal(updatedAgain.success, true, updatedAgain.text)
@@ -185,7 +185,7 @@ test("a newly staged test can be updated later in the same task", async (t) => {
   await workflows.ready(turn.chatId, turn.turnId, role.jobId, context.output)
   t.mock.timers.tick(100)
   await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
-  const result = workspace.topic(role.scratchpadId)
+  const result = workspace.scratchpad(role.scratchpadId)
   assert.equal(result.createdAt, createdAt)
   assert.equal(result.state?.createdAt, createdAt)
   assert.equal(result.title, "Agent skills assessment")
@@ -194,7 +194,7 @@ test("a newly staged test can be updated later in the same task", async (t) => {
 
 
 test("creation timestamps do not change logical operation identity", () => {
-  const mutation = { type: "createTest" as const, topicId: randomUUID(), test: { type: "test" as const, version: "19-10-2026" as const, name: "Agent skills", goals: [], questions: [], references: [], content: [] } }
+  const mutation = { type: "createTest" as const, scratchpadId: randomUUID(), test: { type: "test" as const, version: "19-10-2026" as const, name: "Agent skills", goals: [], questions: [], references: [], content: [] } }
   assert.equal(scratchpadOperationId("stage", { ...mutation, createdAt: "2026-10-27T00:00:00.000Z" }), scratchpadOperationId("stage", { ...mutation, createdAt: "2026-10-27T00:01:00.000Z" }))
 })
 
@@ -202,7 +202,7 @@ test("creation timestamps do not change logical operation identity", () => {
 test("a saved creation from before timestamp metadata can recover and update", async (t) => {
   const { workflows, turn, role, job } = await fixture(t, "test")
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() })
-  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "legacy-create", { type: "createTest", topicId: role.scratchpadId, test: { type: "test", version: "19-10-2026", name: "Agent skills", goals: [], questions: [], references: [], content: [] } })
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "legacy-create", { type: "createTest", scratchpadId: role.scratchpadId, test: { type: "test", version: "19-10-2026", name: "Agent skills", goals: [], questions: [], references: [], content: [] } })
   t.mock.timers.tick(100)
   const recovered = workflows.get(turn.chatId, turn.turnId).batches[0].jobs[0]
   const { session } = await createWorkflowRoleSession(job, recovered, (mutation) => workflows.stage(turn.chatId, turn.turnId, role.jobId, scratchpadOperationId(role.stageId, mutation), mutation), () => {})

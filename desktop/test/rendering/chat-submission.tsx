@@ -1,3 +1,4 @@
+import { ownTestThreads } from "./thread-fixture"
 import { flushSync } from "react-dom"
 import type { Root } from "react-dom/client"
 import { ThemeProvider } from "@edu/ui/theme"
@@ -27,18 +28,25 @@ export async function testChatSubmission(root: Root, host: HTMLElement) {
       const runnerId = crypto.randomUUID()
       const snapshot = SnapshotSchema.parse({
         runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "test" }],
-        topics: [], runtime: [], connected: true,
+        scratchpads: [], runtime: [], connected: true,
         providers: [{ id: "codex", name: "Codex", connected: true, models: [] }],
         chats: [],
       })
-      const chat = PublicChatSchema.parse({ id: chatId, runnerId, title: "Submission test", phase: "ready_to_continue", createdAt: new Date().toISOString(), materials: [], messages: [] })
+      const chat = PublicChatSchema.parse({ id: chatId, runnerId, title: "Submission test", scratchpadRequested: mode === "new-topic", phase: "ready_to_continue", createdAt: new Date().toISOString(), materials: [], messages: [] })
       if (mode === "existing") snapshot.chats.push(chat)
+      let ownerId: string | undefined
+      if (mode !== "new-topic") {
+        ownerId = ownTestThreads(snapshot)
+        chat.ownerScratchpadId = ownerId
+      }
       let finish = () => {}
       let sent = ""
       let sentId = ""
       window.edu = {
         ...original!,
-        createChat: async () => {
+        createChat: async (input) => {
+          if (input.ownerScratchpadId !== ownerId) throw new Error("New threads must retain their scratchpad owner")
+          if (mode === "new-topic" && !input.scratchpadRequested) throw new Error("Staged creation threads must request a scratchpad")
           snapshot.chats.push(chat)
           flushSync(() => useWorkspace.getState().setSnapshot(structuredClone(snapshot)))
           return chatId
@@ -58,7 +66,7 @@ export async function testChatSubmission(root: Root, host: HTMLElement) {
         useWorkspace.getState().setSnapshot(snapshot)
         useWorkspace.getState().setError(null)
         useWorkspace.setState({ pendingMessages: [] })
-        useTopicViews.getState().select(undefined)
+        useTopicViews.getState().select(ownerId)
         useChatTabs.setState({ activeId: "new", openIds: [], history: [] })
         if (mode === "existing") useChatTabs.getState().select(chatId)
         if (mode === "new-chat") useChatTabs.getState().select("new")
@@ -66,7 +74,7 @@ export async function testChatSubmission(root: Root, host: HTMLElement) {
       })
       const editor = () => {
         let label = "Message this chat"
-        if (mode === "new-topic" && !sent) label = "Message your tutor"
+        if (mode === "new-topic" && !host.querySelector('[aria-label="Message this chat"]')) label = "Message your tutor"
         return host.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
       }
       await new Promise(requestAnimationFrame)
@@ -77,6 +85,7 @@ export async function testChatSubmission(root: Root, host: HTMLElement) {
       const sendButton = () => editor().closest('[aria-label$="composer"]')!.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
       await waitFor(() => !sendButton().disabled, `${mode}: enabled send button (${editor().textContent})`)
       flushSync(() => sendButton().click())
+      if (mode === "new-topic" && host.querySelector('[aria-label="Staging"] [role="tablist"]')) throw new Error("An unfinished scratchpad must show one conversation without tabs")
       if (editor().textContent?.trim()) throw new Error("Composer must clear before chat creation or sending")
       if (!host.querySelector('[data-message-role="user"]')?.textContent?.includes("First message")) {
         throw new Error("The submitted user message must be visible before chat creation or sending")
@@ -100,7 +109,7 @@ export async function testChatSubmission(root: Root, host: HTMLElement) {
       }
       if (savedBeforeFinish) publishMessage()
       finish()
-      await waitFor(() => !host.querySelector('[aria-label="Sending message"]'), `${mode}: finished submission`)
+      await waitFor(() => !host.querySelector('[aria-label="Sending message"], [aria-label="Creating scratchpad"]'), `${mode}: finished submission`)
       let expected = "Next draft"
       if (fails && !savedBeforeFinish) expected = "First message\n\nNext draft"
       if (editor().innerText !== expected) throw new Error(`Submission lost draft text: ${JSON.stringify(editor().innerText)}`)

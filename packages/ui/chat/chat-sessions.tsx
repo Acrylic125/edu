@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
-import { ArchiveIcon, CopyIcon, MenuIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
+import { ArchiveIcon, CopyIcon, MenuIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { Button } from "../primitives/button"
 import {
@@ -51,6 +51,7 @@ export function ChatSessions({
   onNew,
   onClose,
   onCopyId,
+  onDelete,
   children,
 }: {
   sessions: { id: string; title: string }[]
@@ -60,6 +61,7 @@ export function ChatSessions({
   onNew: () => void
   onClose: (id: string) => void
   onCopyId?: (id: string) => void
+  onDelete?: (id: string) => void
   children: ReactNode
 }) {
   const value = activeId ?? "new"
@@ -218,6 +220,13 @@ export function ChatSessions({
                         <ArchiveIcon aria-hidden="true" />
                         Archive all but this
                       </ContextMenuItem>
+                      {onDelete && tab.id !== "new" && (
+                        <ContextMenuItem className="text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
+                          onClick={() => onDelete(tab.id)}>
+                          <Trash2Icon aria-hidden="true" />
+                          Delete Thread
+                        </ContextMenuItem>
+                      )}
                       <ContextMenuSeparator />
                       <ContextMenuItem disabled={tab.id === "new" || !onCopyId} onClick={() => onCopyId?.(tab.id)}>
                         <CopyIcon aria-hidden="true" />

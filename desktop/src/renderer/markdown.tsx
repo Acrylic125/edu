@@ -52,7 +52,7 @@ function MarkdownTerm({ node, children }: ComponentPropsWithoutRef<"mark"> & Ext
 }
 
 const MarkdownReferences = createContext<Pick<ComponentProps<typeof StudyMarkdown>,
-  "topics" | "materials" | "labelMaterials" | "onOpenTopic" | "onOpenMaterial"
+  "scratchpads" | "materials" | "labelMaterials" | "onOpenScratchpad" | "onOpenMaterial"
 >>({})
 
 function VisualizationMarkdownDiv({ node, children }: ComponentPropsWithoutRef<"div"> & ExtraProps) {
@@ -126,7 +126,7 @@ function MarkdownPre({ children }: ComponentPropsWithoutRef<"pre"> & ExtraProps)
 }
 
 function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a"> & ExtraProps) {
-  const { topics = [], materials = [], labelMaterials = materials, onOpenMaterial, onOpenTopic } = useContext(MarkdownReferences)
+  const { scratchpads = [], materials = [], labelMaterials = materials, onOpenMaterial, onOpenScratchpad } = useContext(MarkdownReferences)
   if (href?.startsWith("#")) {
     return (
       <a href={href} onClick={(event) => {
@@ -161,16 +161,16 @@ function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a"> & ExtraP
   }
   if (href?.startsWith("edu-topic://")) {
     const id = href.slice("edu-topic://".length)
-    const topic = topics.find((item) => item.id === id)
+    const scratchpad = scratchpads.find((item) => item.id === id)
     let label = children
-    if (topic) label = `@${topic.title}`
+    if (scratchpad) label = `@${scratchpad.title}`
     return (
       <button
         type="button"
         className="inline-flex max-w-full align-baseline rounded-md border border-learning-ink/10 bg-learning-sage/60 px-1.5 py-0.5 text-left text-xs font-medium leading-4 text-learning-ink no-underline hover:bg-learning-sage disabled:cursor-default"
-        disabled={!topic || !onOpenTopic}
-        title={topic ? `Open ${topic.title}` : "This topic no longer exists"}
-        onClick={() => onOpenTopic?.(id)}
+        disabled={!scratchpad || !onOpenScratchpad}
+        title={scratchpad ? `Open ${scratchpad.title}` : "This topic no longer exists"}
+        onClick={() => onOpenScratchpad?.(id)}
       >
         <span className="min-w-0 max-w-[15rem] truncate">{label}</span>
       </button>
@@ -187,8 +187,8 @@ function MarkdownLink({ href, children }: ComponentPropsWithoutRef<"a"> & ExtraP
 
 export function StudyMarkdown({
   text,
-  topics = [],
-  onOpenTopic,
+  scratchpads = [],
+  onOpenScratchpad,
   materials = [],
   labelMaterials = materials,
   onOpenMaterial,
@@ -200,15 +200,15 @@ export function StudyMarkdown({
   terminology?: TopicTerm[]
   checkLabel?: string
   showSourcePreviews?: boolean
-  topics?: { id: string; title: string }[]
-  onOpenTopic?: (id: string) => void
-  materials?: Snapshot["topics"][number]["materials"]
-  labelMaterials?: Snapshot["topics"][number]["materials"]
+  scratchpads?: { id: string; title: string }[]
+  onOpenScratchpad?: (id: string) => void
+  materials?: Snapshot["scratchpads"][number]["materials"]
+  labelMaterials?: Snapshot["scratchpads"][number]["materials"]
   onOpenMaterial?: (id: string) => void
 }) {
   return (
     <div className="markdown">
-      <MarkdownReferences.Provider value={{ topics, materials, labelMaterials, onOpenTopic, onOpenMaterial }}>
+      <MarkdownReferences.Provider value={{ scratchpads, materials, labelMaterials, onOpenScratchpad, onOpenMaterial }}>
         <UnderstandingCheckLabel.Provider value={checkLabel}>
           <Terminology.Provider value={terminology}>
             <Tooltip.Provider delay={250}>

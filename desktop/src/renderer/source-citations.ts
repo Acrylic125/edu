@@ -1,7 +1,7 @@
 import type { Snapshot } from "../shared/contracts"
 import { materialCitationNames, resolveMaterialLink } from "../shared/material-links"
 
-export function linkSourceCitations(text: string, materials: Snapshot["topics"][number]["materials"]) {
+export function linkSourceCitations(text: string, materials: Snapshot["scratchpads"][number]["materials"]) {
   const unique = materials.filter((material, index) =>
     materials.findIndex((item) => item.id === material.id) === index,
   )

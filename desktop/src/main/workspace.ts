@@ -1,6 +1,8 @@
+import { chatScratchpadId } from "../shared/thread-ownership"
 import { randomUUID } from "node:crypto"
 import { constants } from "node:fs"
 import {
+  access,
   copyFile,
   cp,
   chmod,
@@ -32,7 +34,7 @@ import { z } from "zod"
 import { ChatDatabase } from "./chat-database"
 import { freshTopicState, ScratchpadNameSchema } from "../shared/topic-state"
 import { ScratchpadStateSchema, ScratchpadTypeSchema, scratchpadReferences } from "../shared/scratchpad-state"
-import { StoredScratchpadStateSchema, StoredTopicSchema, StoredWorkspaceSchema } from "./workspace-migrations"
+import { StoredJsonSchema, StoredScratchpadStateSchema, StoredTopicSchema, StoredWorkspaceSchema } from "./workspace-migrations"
 import { importStructuredContent } from "./structured-content-migration"
 import { scratchpadMarkdown } from "../shared/scratchpad-markdown"
 import { ConversationSummarySchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
@@ -85,7 +87,7 @@ async function readMaterialManifests(topicDirectory: string) {
     if (!IdSchema.safeParse(id).success) continue
     const raw = await readOptionalFile(join(prepared, id, "manifest.json"))
     if (raw === undefined) continue
-    const material = MaterialSchema.parse(JSON.parse(raw))
+    const material = MaterialSchema.parse(StoredJsonSchema.parse(JSON.parse(raw)))
     if (material.id !== id) throw new Error(`Material ID does not match its cache folder: ${id}`)
     materials.push(material)
   }
@@ -98,9 +100,10 @@ function topicNotes(title: string, notes: string) {
 }
 
 export class WorkspaceRepository {
-  private state: Workspace = WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] })
+  private state: Workspace = WorkspaceSchema.parse({ version: 2, runners: [], scratchpads: [], chats: [] })
   private writes = Promise.resolve()
 
+  private fileBackedScratchpadIds = new Set<string>()
   private database: ChatDatabase
 
   constructor(readonly directory: string) {
@@ -113,15 +116,15 @@ export class WorkspaceRepository {
     const saved = this.database.load()
     await chmod(this.database.path, 0o600)
     if (!saved || saved.needsMigration)
-      await this.migrateLegacyTopicFolders(saved?.state.topics.map((topic) => topic.id))
+      await this.migrateLegacyTopicFolders(saved?.state.scratchpads.map((scratchpad) => scratchpad.id))
     if (saved) {
       this.state = saved.state
       if (saved.filesPending) {
-        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
+        await this.syncFiles(this.state, WorkspaceSchema.parse({ version: 2, runners: [], scratchpads: [], chats: [] }))
         await this.removeRecoveredFiles(saved.removedFiles)
         this.database.filesSynced()
       }
-      this.state = { ...this.state, topics: await this.readTopics() }
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
       if (saved.needsMigration) await this.commit(this.state)
       await this.removeObsoleteFiles()
       return this.state
@@ -132,37 +135,37 @@ export class WorkspaceRepository {
       this.state = WorkspaceSchema.parse({
         ...SettingsSchema.parse(JSON.parse(settings)),
         version: 2,
-        topics: await this.readTopics(),
+        scratchpads: await this.readTopics(),
         chats: await this.readChats(),
       })
       await this.commit(this.state)
     } else {
       const raw = await readOptionalFile(legacyPath)
-      let state = WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] })
+      let state = WorkspaceSchema.parse({ version: 2, runners: [], scratchpads: [], chats: [] })
       if (raw !== undefined) {
         const stored = z
           .discriminatedUnion("version", [StoredWorkspaceSchema, LegacyWorkspaceSchema.extend({
-            topics: z.array(StoredTopicSchema.extend({ runnerId: IdSchema, messages: z.array(LegacyWorkspaceSchema.shape.topics.element.shape.messages.element) })),
+            scratchpads: z.array(StoredTopicSchema.extend({ runnerId: IdSchema, messages: z.array(LegacyWorkspaceSchema.shape.scratchpads.element.shape.messages.element) })),
           })])
-          .parse(JSON.parse(raw))
+          .parse(StoredJsonSchema.parse(JSON.parse(raw)))
         if (stored.version === 2) {
           state = stored
         } else {
-          const chats = stored.topics
-            .filter((topic) => topic.messages.length > 0)
-            .map((topic) => ({
-              ...newChat(topic.runnerId, topic.title),
+          const chats = stored.scratchpads
+            .filter((scratchpad) => scratchpad.messages.length > 0)
+            .map((scratchpad) => ({
+              ...newChat(scratchpad.runnerId, scratchpad.title),
               titleGenerated: true,
-              createdAt: topic.createdAt,
-              messages: topic.messages.map((message) => ({
+              createdAt: scratchpad.createdAt,
+              messages: scratchpad.messages.map((message) => ({
                 ...message,
-                topicIds: [topic.id],
+                scratchpadIds: [scratchpad.id],
               })),
             }))
           state = WorkspaceSchema.parse({ ...stored, version: 2, chats })
         }
       } else {
-        state.topics = await this.readTopics()
+        state.scratchpads = await this.readTopics()
         state.chats = await this.readChats()
         state.runners.push({
           id: randomUUID(),
@@ -173,13 +176,13 @@ export class WorkspaceRepository {
       }
       await this.commit(state)
       // Keep the legacy transaction until every migrated topic and chat can be read back.
-      this.state = WorkspaceSchema.parse({ ...this.state, topics: await this.readTopics(), chats: this.database.load()?.state.chats ?? [] })
+      this.state = WorkspaceSchema.parse({ ...this.state, scratchpads: await this.readTopics(), chats: this.database.load()?.state.chats ?? [] })
     }
     await this.removeObsoleteFiles()
     return this.state
   }
 
-  private async migrateLegacyTopicFolders(topicIds?: string[]) {
+  private async migrateLegacyTopicFolders(scratchpadIds?: string[]) {
     const root = join(this.directory, "topics")
     let entries
     try {
@@ -190,7 +193,7 @@ export class WorkspaceRepository {
     }
     for (const entry of entries) {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
-      if (topicIds && !topicIds.includes(entry.name)) continue
+      if (scratchpadIds && !scratchpadIds.includes(entry.name)) continue
       const source = join(root, entry.name)
       const notes = await readOptionalFile(join(source, "topic.md"))
       if (notes === undefined) continue
@@ -198,7 +201,7 @@ export class WorkspaceRepository {
       if (await readOptionalFile(join(destination, "scratchpad.md")) !== undefined) continue
       const rawState = await readOptionalFile(join(source, "topic.state.json"))
       let state
-      if (rawState !== undefined) state = StoredScratchpadStateSchema.parse(JSON.parse(rawState))
+      if (rawState !== undefined) state = StoredScratchpadStateSchema.parse(StoredJsonSchema.parse(JSON.parse(rawState)))
       const temporary = `${destination}.${randomUUID()}.tmp`
       try {
         // Publish the complete copy atomically; original topic folders remain recoverable.
@@ -225,8 +228,8 @@ export class WorkspaceRepository {
     for (const name of ["workspace.json", "workspace.legacy.json", "settings.json"])
       await rm(join(this.directory, name), { force: true })
     const directories = [this.directory]
-    for (const collection of ["topics", "chats"] as const) {
-      const root = join(this.directory, collection === "topics" ? "scratchpads" : collection)
+    for (const collection of ["scratchpads", "chats"] as const) {
+      const root = join(this.directory, collection)
       await mkdir(root, { recursive: true })
       for (const entry of await readdir(root, { withFileTypes: true })) {
         if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
@@ -255,65 +258,66 @@ export class WorkspaceRepository {
   private async readTopics() {
     const root = join(this.directory, "scratchpads")
     await mkdir(root, { recursive: true })
-    const topics: Topic[] = []
+    const scratchpads: Topic[] = []
     // Topic and test JSON owns content; Markdown is a rebuildable projection.
-    const savedTopics = this.database.load()?.state.topics ?? []
-    const archivedIds = new Set(savedTopics.filter((topic) => topic.archived).map((topic) => topic.id))
+    const savedTopics = this.database.load()?.state.scratchpads ?? []
+    const archivedIds = new Set(savedTopics.filter((scratchpad) => scratchpad.archived).map((scratchpad) => scratchpad.id))
     for (const entry of await readdir(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
       const directory = join(root, entry.name)
       const markdown = await readOptionalFile(join(directory, "scratchpad.md"))
       const structured = await readOptionalFile(join(directory, "scratchpad.state.json"))
-      if (markdown === undefined && structured === undefined) continue
-      const storedState = structured === undefined ? undefined : StoredScratchpadStateSchema.parse(JSON.parse(structured))
-      const notes = markdown ?? ""
-      let title = storedState?.name
-      if (!storedState || storedState.type === "generic") title = /^\s*# ([^\r\n]+)/.exec(notes)?.[1]?.trim()
+      if (markdown === undefined || structured === undefined) continue
+      const storedState = StoredScratchpadStateSchema.parse(StoredJsonSchema.parse(JSON.parse(structured)))
+      const notes = markdown
+      let title = /^\s*# ([^\r\n]+)/.exec(notes)?.[1]?.trim()
+      if (storedState.type !== "generic") title = storedState.name
       if (!title) throw new Error(`Topic document needs a title header: ${directory}`)
       TopicHeaderSchema.parse(title)
-      const topic = newTopic(title)
-      topic.id = entry.name
-      topic.createdAt = (await stat(join(directory, markdown === undefined ? "scratchpad.state.json" : "scratchpad.md"))).birthtime.toISOString()
-      topic.learning.notes = notes
+      const scratchpad = newScratchpad(title)
+      scratchpad.id = entry.name
+      scratchpad.createdAt = (await stat(join(directory, "scratchpad.md"))).birthtime.toISOString()
+      scratchpad.learning.notes = notes
       const legacy = await readOptionalFile(join(directory, "topic.json"))
       if (legacy !== undefined) {
-        const stored = LegacyTopicStateSchema.parse(JSON.parse(legacy))
-        Object.assign(topic, stored, { learning: topic.learning })
+        const stored = LegacyTopicStateSchema.parse(StoredJsonSchema.parse(JSON.parse(legacy)))
+        Object.assign(scratchpad, stored, { learning: scratchpad.learning })
       } else {
-        topic.materials = await readMaterialManifests(directory)
+        scratchpad.materials = await readMaterialManifests(directory)
       }
-      const state = storedState ?? { ...freshTopicState(topic.title, topic.createdAt), document: undefined }
-      if (state.type !== "generic" && !state.document && markdown !== undefined) {
+      const state = storedState
+      if (state.type !== "generic" && !state.document) {
         const backup = join(directory, "scratchpad.legacy.md")
         if (await readOptionalFile(backup) === undefined) await writeAtomic(backup, markdown)
       }
-      topic.state = ScratchpadStateSchema.parse(importStructuredContent(state, notes))
-      topic.createdAt = topic.state.createdAt
-      if (topic.state.type !== "generic") {
-        topic.title = topic.state.name
-        topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
+      scratchpad.state = ScratchpadStateSchema.parse(importStructuredContent(state, notes))
+      scratchpad.createdAt = scratchpad.state.createdAt
+      if (scratchpad.state.type !== "generic") {
+        scratchpad.title = scratchpad.state.name
+        scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
       }
-      if (structured === undefined || JSON.stringify(JSON.parse(structured)) !== JSON.stringify(topic.state))
-        await writeAtomic(join(directory, "scratchpad.state.json"), JSON.stringify(topic.state, null, 2))
-      if (topic.state.type !== "generic" && markdown !== topic.learning.notes)
-        await writeAtomic(join(directory, "scratchpad.md"), topic.learning.notes)
-      const saved = savedTopics.find((item) => item.id === topic.id)
+      if (JSON.stringify(JSON.parse(structured)) !== JSON.stringify(scratchpad.state))
+        await writeAtomic(join(directory, "scratchpad.state.json"), JSON.stringify(scratchpad.state, null, 2))
+      if (scratchpad.state.type !== "generic" && markdown !== scratchpad.learning.notes)
+        await writeAtomic(join(directory, "scratchpad.md"), scratchpad.learning.notes)
+      const saved = savedTopics.find((item) => item.id === scratchpad.id)
       if (saved && legacy === undefined) {
-        topic.planConfirmed = saved.planConfirmed
-        topic.titleGenerated = saved.titleGenerated
+        scratchpad.planConfirmed = saved.planConfirmed
+        scratchpad.titleGenerated = saved.titleGenerated
       }
-      topic.learning.outline = []
-      if (topic.state.type === "topic") topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
-      topic.archived = archivedIds.has(topic.id) || topic.archived
-      const parsed = TopicSchema.parse(topic)
+      scratchpad.learning.outline = []
+      if (scratchpad.state.type === "topic") scratchpad.learning.outline = scratchpad.state.content.slice(0, 100).map((part) => part.name)
+      scratchpad.archived = archivedIds.has(scratchpad.id) || scratchpad.archived
+      const parsed = TopicSchema.parse(scratchpad)
       if (legacy !== undefined) {
         // Migrate once into the Tutor Me layout, removing topic.json only after its replacements are written.
         for (const material of parsed.materials) await writeMaterialManifest(directory, material)
         await rm(join(directory, "topic.json"))
       }
-      topics.push(parsed)
+      scratchpads.push(parsed)
     }
-    return topics.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+    await this.updateFileBackedScratchpads(scratchpads)
+    return scratchpads.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
   }
 
   private async readChats() {
@@ -324,7 +328,7 @@ export class WorkspaceRepository {
       if (!entry.isDirectory() || !IdSchema.safeParse(entry.name).success) continue
       const raw = await readOptionalFile(join(root, entry.name, "chat.json"))
       if (raw === undefined) continue
-      const chat = ChatSchema.parse(JSON.parse(raw))
+      const chat = ChatSchema.parse(StoredJsonSchema.parse(JSON.parse(raw)))
       if (chat.id !== entry.name) throw new Error(`Chat ID does not match its folder: ${entry.name}`)
       chats.push(chat)
     }
@@ -334,14 +338,33 @@ export class WorkspaceRepository {
   async refreshTopics() {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics() }
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
     })
     this.writes = operation.catch(() => {})
     return operation
   }
 
+  private async updateFileBackedScratchpads(scratchpads: Workspace["scratchpads"]) {
+    const ids = await Promise.all(scratchpads.map(async (scratchpad) => {
+      const directory = join(this.directory, "scratchpads", scratchpad.id)
+      try {
+        await Promise.all([access(join(directory, "scratchpad.md")), access(join(directory, "scratchpad.state.json"))])
+        return scratchpad.id
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return
+        throw error
+      }
+    }))
+    this.fileBackedScratchpadIds = new Set(ids.filter((id) => id !== undefined))
+  }
+
+  private resolvedChat(chat: Workspace["chats"][number]) {
+    const resolved: Workspace["chats"][number] = { ...chat, ownerScratchpadId: chatScratchpadId(chat, this.fileBackedScratchpadIds) }
+    return resolved
+  }
+
   get stateSnapshot() {
-    return structuredClone(this.state)
+    return structuredClone({ ...this.state, chats: this.state.chats.map((chat) => this.resolvedChat(chat)) })
   }
 
   get publicRunners() {
@@ -349,16 +372,16 @@ export class WorkspaceRepository {
   }
 
   get publicTopics() {
-    return this.state.topics.map((topic) => {
+    return this.state.scratchpads.map((scratchpad) => {
       const {
         privateAnswerKey: _key,
         workpad: _workpad,
         ...learning
-      } = topic.learning
+      } = scratchpad.learning
       return PublicTopicSchema.parse({
-        ...topic,
+        ...scratchpad,
         learning,
-        materials: topic.materials.map(({ id, name, kind }) => ({
+        materials: scratchpad.materials.map(({ id, name, kind }) => ({
           id,
           name,
           kind,
@@ -370,7 +393,7 @@ export class WorkspaceRepository {
   get publicChats() {
     return this.state.chats.map((chat) =>
       PublicChatSchema.parse({
-        ...chat,
+        ...this.resolvedChat(chat),
         phase: chat.learning.phase,
         materials: chat.materials.map(({ id, name, kind }) => ({ id, name, kind })),
       }),
@@ -380,20 +403,20 @@ export class WorkspaceRepository {
   chat(id: string) {
     const chat = this.state.chats.find((entry) => entry.id === id)
     if (!chat) throw new Error("This chat no longer exists.")
-    return structuredClone(chat)
+    return structuredClone(this.resolvedChat(chat))
   }
 
-  topic(id: string) {
-    const topic = this.state.topics.find((entry) => entry.id === id)
-    if (!topic) throw new Error("This topic no longer exists.")
-    return structuredClone(topic)
+  scratchpad(id: string) {
+    const scratchpad = this.state.scratchpads.find((entry) => entry.id === id)
+    if (!scratchpad) throw new Error("This topic no longer exists.")
+    return structuredClone(scratchpad)
   }
 
   async mutate(update: (state: Workspace) => void) {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics() }
-      const next = structuredClone(this.state)
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
+      const next = this.stateSnapshot
       update(next)
       await this.commit(next)
     })
@@ -440,8 +463,8 @@ export class WorkspaceRepository {
   async mutateWorkflow(turnId: string, update: (turn: z.infer<typeof WorkflowRecordSchema>, state: Workspace) => void) {
     const operation = this.writes.then(async () => {
       await this.recoverFiles()
-      this.state = { ...this.state, topics: await this.readTopics() }
-      const next = structuredClone(this.state)
+      this.state = { ...this.state, scratchpads: await this.readTopics() }
+      const next = this.stateSnapshot
       const turn = this.database.workflow(turnId)
       update(turn, next)
       await this.commit(next, turn)
@@ -453,25 +476,25 @@ export class WorkspaceRepository {
 
   private async commit(state: Workspace, workflow?: z.infer<typeof WorkflowRecordSchema>) {
     const validated = WorkspaceSchema.parse(state)
-    for (const topic of validated.topics) {
-      const previous = this.state.topics.find((item) => item.id === topic.id)
-      if (JSON.stringify(topic) === JSON.stringify(previous)) continue
-      topic.state ??= { ...freshTopicState(topic.title, topic.createdAt), document: undefined }
-      if (topic.state.type === "generic") {
-        const header = TopicHeaderSchema.safeParse(/^\s*# ([^\r\n]+)/.exec(topic.learning.notes)?.[1])
-        if (header.success) topic.title = header.data
-        topic.title = topic.title.replace(/\s+/g, " ").trim()
-        topic.learning.notes = topicNotes(topic.title, topic.learning.notes)
-        topic.state.name = topic.title
+    for (const scratchpad of validated.scratchpads) {
+      const previous = this.state.scratchpads.find((item) => item.id === scratchpad.id)
+      if (JSON.stringify(scratchpad) === JSON.stringify(previous)) continue
+      scratchpad.state ??= { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }
+      if (scratchpad.state.type === "generic") {
+        const header = TopicHeaderSchema.safeParse(/^\s*# ([^\r\n]+)/.exec(scratchpad.learning.notes)?.[1])
+        if (header.success) scratchpad.title = header.data
+        scratchpad.title = scratchpad.title.replace(/\s+/g, " ").trim()
+        scratchpad.learning.notes = topicNotes(scratchpad.title, scratchpad.learning.notes)
+        scratchpad.state.name = scratchpad.title
       } else {
-        topic.state = ScratchpadStateSchema.parse(importStructuredContent(topic.state, topic.learning.notes))
-        if (topic.state.type === "generic") throw new Error("Unexpected scratchpad type during content migration.")
-        topic.title = topic.state.name
-        topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
+        scratchpad.state = ScratchpadStateSchema.parse(importStructuredContent(scratchpad.state, scratchpad.learning.notes))
+        if (scratchpad.state.type === "generic") throw new Error("Unexpected scratchpad type during content migration.")
+        scratchpad.title = scratchpad.state.name
+        scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
       }
-      if (topic.state.type === "topic") topic.learning.outline = topic.state.content.slice(0, 100).map((part) => part.name)
-      else topic.learning.outline = []
-      topic.materials.sort((left, right) => left.name.localeCompare(right.name))
+      if (scratchpad.state.type === "topic") scratchpad.learning.outline = scratchpad.state.content.slice(0, 100).map((part) => part.name)
+      else scratchpad.learning.outline = []
+      scratchpad.materials.sort((left, right) => left.name.localeCompare(right.name))
     }
     WorkspaceSchema.parse(validated)
     const previous = this.state
@@ -484,15 +507,15 @@ export class WorkspaceRepository {
 
   private async prepareReferencedAssets(state: Workspace, previous: Workspace) {
     const sources = [
-      ...state.topics.map((topic) => ({ materials: topic.materials, directory: join(this.directory, "scratchpads", topic.id, "assets") })),
+      ...state.scratchpads.map((scratchpad) => ({ materials: scratchpad.materials, directory: join(this.directory, "scratchpads", scratchpad.id, "assets") })),
       ...state.chats.map((chat) => ({ materials: chat.materials, directory: join(this.directory, "chats", chat.id, "assets") })),
     ]
-    for (const topic of state.topics) {
-      const before = previous.topics.find((item) => item.id === topic.id)
-      const references = scratchpadReferences(topic.state ?? freshTopicState(topic.title, topic.createdAt))
-      for (const material of topic.materials) {
+    for (const scratchpad of state.scratchpads) {
+      const before = previous.scratchpads.find((item) => item.id === scratchpad.id)
+      const references = scratchpadReferences(scratchpad.state ?? freshTopicState(scratchpad.title, scratchpad.createdAt))
+      for (const material of scratchpad.materials) {
         if (before?.materials.some((item) => item.id === material.id)) continue
-        const directory = join(this.directory, "scratchpads", topic.id, "assets")
+        const directory = join(this.directory, "scratchpads", scratchpad.id, "assets")
         // Legacy metadata may have no original file; transfers from another owner must still copy uncited attachments.
         if (!references.some((reference) => reference.type !== "website" && reference.type !== "topic" && reference.path === `assets/${material.name}`)
           && !sources.some((source) => source.directory !== directory && source.materials.some((item) => item.id === material.id))) continue
@@ -524,51 +547,52 @@ export class WorkspaceRepository {
   private async recoverFiles() {
     const saved = this.database.load()
     if (!saved?.filesPending) return
-    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], topics: [], chats: [] }))
+    await this.syncFiles(saved.state, WorkspaceSchema.parse({ version: 2, runners: [], scratchpads: [], chats: [] }))
     await this.removeRecoveredFiles(saved.removedFiles)
     this.database.filesSynced()
     this.state = saved.state
   }
 
-  private async removeRecoveredFiles(removed: { topics: string[]; chats: string[] }) {
-    for (const collection of ["topics", "chats"] as const) {
+  private async removeRecoveredFiles(removed: { scratchpads: string[]; chats: string[] }) {
+    for (const collection of ["scratchpads", "chats"] as const) {
       for (const id of removed[collection])
-        await rm(join(this.directory, collection === "topics" ? "scratchpads" : collection, id), { recursive: true, force: true })
+        await rm(join(this.directory, collection, id), { recursive: true, force: true })
     }
   }
 
   private async syncFiles(validated: Workspace, previousState: Workspace) {
-    for (const topic of validated.topics) {
-      const previous = previousState.topics.find((item) => item.id === topic.id)
-      const directory = join(this.directory, "scratchpads", topic.id)
+    for (const scratchpad of validated.scratchpads) {
+      const previous = previousState.scratchpads.find((item) => item.id === scratchpad.id)
+      const directory = join(this.directory, "scratchpads", scratchpad.id)
       await mkdir(directory, { recursive: true })
       await mkdir(join(directory, "assets"), { recursive: true })
-      const state = ScratchpadStateSchema.parse(importStructuredContent(topic.state ?? { ...freshTopicState(topic.title, topic.createdAt), document: undefined }, topic.learning.notes))
-      topic.state = state
-      if (state.type !== "generic") topic.learning.notes = scratchpadMarkdown(state, topic.materials)
+      const state = ScratchpadStateSchema.parse(importStructuredContent(scratchpad.state ?? { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }, scratchpad.learning.notes))
+      scratchpad.state = state
+      if (state.type !== "generic") scratchpad.learning.notes = scratchpadMarkdown(state, scratchpad.materials)
       if (!previous || JSON.stringify(state) !== JSON.stringify(previous.state))
         await writeAtomic(join(directory, "scratchpad.state.json"), JSON.stringify(state, null, 2))
-      if (topic.learning.notes !== previous?.learning.notes)
-        await writeAtomic(join(directory, "scratchpad.md"), topic.learning.notes)
-      for (const material of topic.materials) {
+      if (scratchpad.learning.notes !== previous?.learning.notes)
+        await writeAtomic(join(directory, "scratchpad.md"), scratchpad.learning.notes)
+      for (const material of scratchpad.materials) {
         if (!previous?.materials.some((item) => item.id === material.id))
           await writeMaterialManifest(directory, material)
       }
     }
-    for (const topic of previousState.topics) {
-      if (!validated.topics.some((item) => item.id === topic.id))
-        await rm(join(this.directory, "scratchpads", topic.id), { recursive: true, force: true })
+    for (const scratchpad of previousState.scratchpads) {
+      if (!validated.scratchpads.some((item) => item.id === scratchpad.id))
+        await rm(join(this.directory, "scratchpads", scratchpad.id), { recursive: true, force: true })
     }
     for (const chat of previousState.chats) {
       if (!validated.chats.some((item) => item.id === chat.id))
         await rm(join(this.directory, "chats", chat.id), { recursive: true, force: true })
     }
+    await this.updateFileBackedScratchpads(validated.scratchpads)
   }
 
-  async exportStudyFiles(topic: Topic, directory: string) {
+  async exportStudyFiles(scratchpad: Topic, directory: string) {
     await mkdir(directory, { recursive: true })
-    const assets = join(this.directory, "scratchpads", topic.id, "assets")
-    if (topic.materials.length) {
+    const assets = join(this.directory, "scratchpads", scratchpad.id, "assets")
+    if (scratchpad.materials.length) {
       await mkdir(join(directory, "assets"), { recursive: true })
       for (const file of await readdir(assets, { withFileTypes: true })) {
         if (file.isFile()) await copyFile(join(assets, file.name), join(directory, "assets", file.name))
@@ -582,13 +606,13 @@ export class WorkspaceRepository {
     // The private handoff stays in app storage; learner exports never include checked answer keys.
     await writeFile(
       join(directory, "scratchpad.md"),
-      portable(topicDirectoryMarkdown(topicNotes(topic.title, topic.learning.notes))),
+      portable(topicDirectoryMarkdown(topicNotes(scratchpad.title, scratchpad.learning.notes))),
       { mode: 0o600 },
     )
   }
 }
 
-export function newTopic(title: string, type: z.infer<typeof ScratchpadTypeSchema> = "topic") {
+export function newScratchpad(title: string, type: z.infer<typeof ScratchpadTypeSchema> = "topic") {
   const createdAt = new Date().toISOString()
   let state: z.infer<typeof ScratchpadStateSchema> = freshTopicState(title, createdAt)
   if (type === "test") state = ScratchpadStateSchema.parse({ type, version: "19-10-2026", createdAt, name: title, document: { version: 1, blocks: [] }, goals: [], questions: [], references: [], content: [] })

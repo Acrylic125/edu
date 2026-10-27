@@ -23,8 +23,8 @@ const ClarificationSchema = z.object({ question: z.string().trim().min(1).max(20
 export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<typeof RoleJobSchema>, persist: Parameters<typeof createTutorSession>[3], activity: (message: string) => void) {
   const available = [...new Map([
     ...job.chat.materials.map((material) => [material.id, { material, directory: job.assetDirectory }] as const),
-    ...job.topics.flatMap((topic) => topic.materials.map((material) => [material.id, { material, directory: topic.assetDirectory }] as const)),
-    ...job.workspaceTopics.flatMap((topic) => (topic.materials ?? []).map((material) => [material.id, { material, directory: topic.assetDirectory ?? job.assetDirectory }] as const)),
+    ...job.scratchpads.flatMap((scratchpad) => scratchpad.materials.map((material) => [material.id, { material, directory: scratchpad.assetDirectory }] as const)),
+    ...job.workspaceScratchpads.flatMap((scratchpad) => (scratchpad.materials ?? []).map((material) => [material.id, { material, directory: scratchpad.assetDirectory ?? job.assetDirectory }] as const)),
   ]).values()].filter(({ material }) => role.request.context.materialIds.includes(material.id))
   const practiceIds = new Set(available.filter(({ material }) => /tutorial|worksheet|problem[ _-]*set|practice[ _-]*sheet|assignment/i.test(`${material.name}\n${(material.pages[0] ?? material.text).slice(0, 250)}`)).map(({ material }) => material.id))
   const indexed = available.map((source) => ({ ...source, practice: practiceIds.has(source.material.id) }))
@@ -57,8 +57,8 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
   const indexedJob = structuredClone(job)
   const replaceMaterial = (material: WorkerJob["chat"]["materials"][number]) => indexed.find((source) => source.material.id === material.id)?.material ?? material
   indexedJob.chat.materials = indexedJob.chat.materials.map(replaceMaterial)
-  for (const topic of indexedJob.topics) topic.materials = topic.materials.map(replaceMaterial)
-  for (const topic of indexedJob.workspaceTopics) topic.materials = topic.materials?.map(replaceMaterial)
+  for (const scratchpad of indexedJob.scratchpads) scratchpad.materials = scratchpad.materials.map(replaceMaterial)
+  for (const scratchpad of indexedJob.workspaceScratchpads) scratchpad.materials = scratchpad.materials?.map(replaceMaterial)
   const skillPaths = ["skills/MANAGE_TOPIC.md", ...teachingSkills,
     "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/tools.md", "scratchpad_templates/topic/scratchpad_topic.md"]
   const base = await createTutorSession(indexedJob, activity, undefined, { ...persist, skillPaths })
@@ -187,8 +187,8 @@ Submit a concise plan with submit_topic_plan: title, selected section IDs, and o
           return { id: `tp-section-${index + 1}`, name: part.name ?? source.section.title, references: [source.reference], goals: part.goals, mistakes: [] }
         })
         let result
-        if (role.mode === "create") result = await base.execute("topic_createTopic", { topic: { type: "topic", version: "11-10-2026", name: plan.title, content } })
-        else result = await base.execute("topic_updateTopic", { topicId: role.scratchpadHandle, name: plan.title, content })
+        if (role.mode === "create") result = await base.execute("topic_createTopic", { scratchpad: { type: "topic", version: "11-10-2026", name: plan.title, content } })
+        else result = await base.execute("topic_updateTopic", { scratchpadId: role.scratchpadHandle, name: plan.title, content })
         if (!result.success) throw new Error(result.text)
         output = { summary: "Topic plan ready for learner confirmation.", evidence: content.flatMap((part) => part.references) }
         errorMessage = undefined
@@ -206,7 +206,7 @@ Submit a concise plan with submit_topic_plan: title, selected section IDs, and o
     recoveryMessage() { return `${errorMessage ?? "The plan is incomplete."} Select and read valid indexed sections, then use submit_topic_plan. If scope or sources are missing, use request_topic_clarification. No handoff or final reply is needed.` },
     finish() {
       if (!output) throw new Error("The planner did not submit a plan or clarification.")
-      return { reply: output.summary, learning: indexedJob.chat.learning, topicUpdates: [], topicMutations: [] }
+      return { reply: output.summary, learning: indexedJob.chat.learning, scratchpadUpdates: [], scratchpadMutations: [] }
     },
   }
   return { job: indexedJob, session, get output() { return output } }

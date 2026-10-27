@@ -10,7 +10,7 @@ for (const phase of ["awaiting_clarification", "awaiting_answer"] as const) {
   test(`${phase} renders with the appropriate question treatment`, async () => {
     const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
     const chat = newChat(runner.id)
-    const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
     const session = await createTutorSession(job, () => {})
     let question = "Can you provide an exam or exam-preparation question set on this topic?"
     if (phase === "awaiting_answer") question = "How does progressive disclosure reduce context usage?"

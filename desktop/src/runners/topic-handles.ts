@@ -6,9 +6,9 @@ export const TopicHandleSchema = z.string().regex(/^scratchpad_[1-9][0-9]*$/)
   .describe("Use the scratchpad_N handle from the scratchpad directory. UUIDs are internal and are not accepted.")
 
 export function createTopicHandles(job: WorkerJob) {
-  const ids = [...new Set([...job.chat.topicHandles, ...job.topics.map((topic) => topic.id), ...job.workspaceTopics.map((topic) => topic.id)])]
-  const readable = new Set([...job.topics, ...job.workspaceTopics].map((topic) => topic.id))
-  const writable = new Set(job.topics.filter((topic) => !topic.archived).map((topic) => topic.id))
+  const ids = [...new Set([...job.chat.scratchpadHandles, ...job.scratchpads.map((scratchpad) => scratchpad.id), ...job.workspaceScratchpads.map((scratchpad) => scratchpad.id)])]
+  const readable = new Set([...job.scratchpads, ...job.workspaceScratchpads].map((scratchpad) => scratchpad.id))
+  const writable = new Set(job.scratchpads.filter((scratchpad) => !scratchpad.archived).map((scratchpad) => scratchpad.id))
   const handles = new Map(ids.map((id, index) => [id, `scratchpad_${index + 1}`]))
   return {
     handle(id: string) {

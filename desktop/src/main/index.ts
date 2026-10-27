@@ -87,8 +87,8 @@ else {
         const page = z.coerce.number().int().min(1).max(1000).safeParse(/^\/(\d+)$/.exec(url.pathname)?.[1])
         if (!id.success || !page.success)
           return new Response("Source not found", { status: 404 })
-        const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+        const { scratchpads, chats } = repository.stateSnapshot
+        for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id.data))
           const material = owner?.materials.find((item) => item.id === id.data)
           if (!owner || !material) continue
@@ -133,7 +133,7 @@ else {
       function snapshot() {
         return SnapshotSchema.parse({
           runners: repository.publicRunners,
-          topics: repository.publicTopics,
+          scratchpads: repository.publicTopics,
           chats: repository.publicChats,
           runtime: runnerManager.statuses,
           connected: registry.statuses.some((provider) => provider.connected),
@@ -315,30 +315,37 @@ else {
         trusted(event)
         runnerManager.stop(IdSchema.parse(raw), IdSchema.optional().parse(rawChatId))
       })
-      ipcMain.handle(Channel.createTopic, async (event, raw) => {
+      ipcMain.handle(Channel.createScratchpad, async (event, raw) => {
         trusted(event)
-        return runnerManager.createTopic(CreateTopicSchema.parse(raw))
+        return runnerManager.createScratchpad(CreateTopicSchema.parse(raw))
       })
       ipcMain.handle(Channel.createChat, async (event, raw) => {
         trusted(event)
         const input = CreateChatSchema.parse(raw)
         const chat = newChat(input.runnerId)
         chat.scratchpadRequested = input.scratchpadRequested ?? false
+        chat.ownerScratchpadId = input.ownerScratchpadId
         await repository.mutate((workspace) => {
           if (!workspace.runners.some((runner) => runner.id === chat.runnerId))
             throw new Error("Runner not found.")
+          if (chat.ownerScratchpadId && !workspace.scratchpads.some((item) => item.id === chat.ownerScratchpadId))
+            throw new Error("Scratchpad not found.")
           workspace.chats.unshift(chat)
         })
         notify()
         return chat.id
       })
-      ipcMain.handle(Channel.archiveTopic, async (event, raw) => {
+      ipcMain.handle(Channel.deleteStagedChat, async (event, raw) => {
         trusted(event)
-        const { topicId, archived } = ArchiveTopicSchema.parse(raw)
+        await runnerManager.deleteStagedChat(IdSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.archiveScratchpad, async (event, raw) => {
+        trusted(event)
+        const { scratchpadId, archived } = ArchiveTopicSchema.parse(raw)
         await repository.mutate((workspace) => {
-          const topic = workspace.topics.find((item) => item.id === topicId)
-          if (!topic) throw new Error("This topic no longer exists.")
-          topic.archived = archived
+          const scratchpad = workspace.scratchpads.find((item) => item.id === scratchpadId)
+          if (!scratchpad) throw new Error("This topic no longer exists.")
+          scratchpad.archived = archived
         })
         notify()
       })
@@ -364,9 +371,9 @@ else {
       ipcMain.handle(Channel.reuseMaterials, async (event, raw) => {
         trusted(event)
         const { materialIds, draftIds } = z.object({ materialIds: MaterialDraftIdsSchema, draftIds: MaterialDraftIdsSchema }).parse(raw)
-        const { topics, chats } = repository.stateSnapshot
+        const { scratchpads, chats } = repository.stateSnapshot
         const paths = materialIds.map((id) => {
-          for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+          for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
             const owner = owners.find((item) => item.materials.some((material) => material.id === id))
             const material = owner?.materials.find((item) => item.id === id)
             if (owner && material) return join(directory, collection, owner.id, "assets", material.name)
@@ -408,7 +415,7 @@ else {
           return chats.some(
             (chat) =>
               chat.id === runtime.chatId &&
-              chat.messages.some((message) => message.topicIds.includes(owner.id)),
+              chat.messages.some((message) => message.scratchpadIds.includes(owner.id)),
           )
         })
         if (busy)
@@ -419,13 +426,13 @@ else {
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
         trusted(event)
-        const topic = repository.topic(IdSchema.parse(raw))
+        const scratchpad = repository.scratchpad(IdSchema.parse(raw))
         const result = await dialog.showOpenDialog({
           title: "Export study notes",
           properties: ["openDirectory", "createDirectory"],
         })
         if (!result.canceled && result.filePaths[0])
-          await repository.exportStudyFiles(topic, result.filePaths[0])
+          await repository.exportStudyFiles(scratchpad, result.filePaths[0])
       })
       ipcMain.handle(Channel.openDiagnostics, async (event, raw) => {
         trusted(event)
@@ -437,8 +444,8 @@ else {
       })
       ipcMain.handle(Channel.openWorkspace, async (event, raw) => {
         trusted(event)
-        const topic = repository.topic(IdSchema.parse(raw))
-        const path = join(directory, "scratchpads", topic.id)
+        const scratchpad = repository.scratchpad(IdSchema.parse(raw))
+        const path = join(directory, "scratchpads", scratchpad.id)
         await mkdir(path, { recursive: true, mode: 0o700 })
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
@@ -446,8 +453,8 @@ else {
       ipcMain.handle(Channel.openMaterial, async (event, raw) => {
         trusted(event)
         const id = IdSchema.parse(raw)
-        const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+        const { scratchpads, chats } = repository.stateSnapshot
+        for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id))
           const material = owner?.materials.find((item) => item.id === id)
           if (!owner || !material) continue

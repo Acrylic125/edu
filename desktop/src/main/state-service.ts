@@ -2,30 +2,34 @@ import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { type Topic, type Workspace } from "../shared/contracts"
 import { TopicMutationSchema, TopicStateSchema, TopicReferenceSchema, freshTopicState } from "../shared/topic-state"
-import { newTopic, type WorkspaceRepository } from "./workspace"
+import { newScratchpad, type WorkspaceRepository } from "./workspace"
 import { applyContentChanges } from "../shared/content-document"
 import { scratchpadMarkdown } from "../shared/scratchpad-markdown"
 import { importStructuredContent } from "./structured-content-migration"
 import { CreateGenericInputSchema, CreateTestInputSchema, GenericStateSchema, ScratchpadMutationSchema, ScratchpadStateSchema, ScratchpadTypeSchema, CreateTestQuestionInputSchema, TestStateSchema, scratchpadReferences, testScratchpadMarkdown } from "../shared/scratchpad-state"
 
-export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats">, threadId: string, input: z.infer<typeof TopicMutationSchema>) {
-  const { topics } = workspace
+export function applyTopicMutation(workspace: Pick<Workspace, "scratchpads" | "chats">, threadId: string, input: z.infer<typeof TopicMutationSchema>) {
+  const { scratchpads } = workspace
   const mutation = TopicMutationSchema.parse(input)
   if (mutation.type === "createTopic") {
-    if (topics.some((topic) => topic.id === mutation.topicId)) throw new Error("Topic already exists.")
-    const topic = newTopic(mutation.topic.name)
-    topic.id = mutation.topicId
-    topic.createdAt = mutation.createdAt ?? workspace.chats.find((chat) => chat.id === threadId)?.messages.findLast((message) => message.role === "user")?.createdAt ?? topic.createdAt
-    topic.state = TopicStateSchema.parse({ ...mutation.topic, createdAt: topic.createdAt, threadTutors: [{ id: threadId, progress: {} }] })
-    attachReferencedMaterials(topic, topic.state, workspace, mutation.materialIds)
-    topic.state.document ??= { version: 1, blocks: [] }
-    topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
-    topics.push(topic)
+    if (scratchpads.some((scratchpad) => scratchpad.id === mutation.scratchpadId)) throw new Error("Topic already exists.")
+    const scratchpad = newScratchpad(mutation.scratchpad.name)
+    scratchpad.id = mutation.scratchpadId
+    scratchpad.createdAt = mutation.createdAt ?? workspace.chats.find((chat) => chat.id === threadId)?.messages.findLast((message) => message.role === "user")?.createdAt ?? scratchpad.createdAt
+    scratchpad.state = TopicStateSchema.parse({ ...mutation.scratchpad, createdAt: scratchpad.createdAt, threadTutors: [{ id: threadId, progress: {} }] })
+    attachReferencedMaterials(scratchpad, scratchpad.state, workspace, mutation.materialIds)
+    scratchpad.state.document ??= { version: 1, blocks: [] }
+    scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
+    scratchpads.push(scratchpad)
+    const chat = workspace.chats.find((chat) => chat.id === threadId)
+    if (chat && !chat.ownerScratchpadId) {
+      chat.ownerScratchpadId = scratchpad.id
+    }
     return
   }
-  const topic = topics.find((topic) => topic.id === mutation.topicId)
-  if (!topic) throw new Error("Topic not found.")
-  const state = TopicStateSchema.parse(importStructuredContent(topic.state ?? { ...freshTopicState(topic.title, topic.createdAt), document: undefined }, topic.learning.notes))
+  const scratchpad = scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)
+  if (!scratchpad) throw new Error("Topic not found.")
+  const state = TopicStateSchema.parse(importStructuredContent(scratchpad.state ?? { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }, scratchpad.learning.notes))
   let thread = state.threadTutors.find((thread) => thread.id === threadId)
   if (!thread) {
     thread = { id: threadId, progress: {} }
@@ -48,10 +52,10 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
       }
     }
     TopicStateSchema.parse(state)
-    attachReferencedMaterials(topic, state, workspace, mutation.materialIds)
-    topic.title = state.name
+    attachReferencedMaterials(scratchpad, state, workspace, mutation.materialIds)
+    scratchpad.title = state.name
     state.revision++
-    topic.learning.outline = state.content.slice(0, 100).map((part) => part.name)
+    scratchpad.learning.outline = state.content.slice(0, 100).map((part) => part.name)
   } else if (mutation.type === "editTopicContent") {
     if (mutation.expectedRevision !== undefined && state.revision !== mutation.expectedRevision)
       throw new Error("Topic content changed during this turn. Read the latest state before editing.")
@@ -61,7 +65,7 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
     }
     state.revision++
   } else {
-    const part = state.content.find((part) => part.id === mutation.topicPartId)
+    const part = state.content.find((part) => part.id === mutation.scratchpadPartId)
     if (!part) throw new Error("Topic part not found.")
     const progress = thread.progress[part.id]
     if (mutation.type === "activatePart") {
@@ -72,8 +76,8 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
     } else if (mutation.type === "documentMistake") {
       part.mistakes.push({ context: mutation.context, issue: mutation.issue })
     } else if (mutation.type === "recordQuestion") {
-      if (!progress || progress.status !== "active") throw new Error("Activate the part before asking a question.")
-      progress.steps.push({ question: mutation.question })
+      // Asking visits the part; keeping both changes atomic avoids an ordering dependency on the model.
+      thread.progress[part.id] = { status: "active", steps: [...(progress?.steps ?? []), { question: mutation.question }] }
     } else if (mutation.type === "recordAnswer") {
       const step = progress?.steps[mutation.stepIndex]
       if (!step) throw new Error("Question not found in this thread.")
@@ -81,16 +85,16 @@ export function applyTopicMutation(workspace: Pick<Workspace, "topics" | "chats"
       step.answerFromUser = mutation.answerFromUser
     }
   }
-  validateDocumentSources(topic, state, workspace)
-  topic.state = TopicStateSchema.parse(state)
-  topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
+  validateDocumentSources(scratchpad, state, workspace)
+  scratchpad.state = TopicStateSchema.parse(state)
+  scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
 }
 
-function attachReferencedMaterials(topic: Topic, state: z.infer<typeof ScratchpadStateSchema>, workspace: Pick<Workspace, "topics" | "chats">, materialIds?: string[]) {
-  const available = [...workspace.topics, ...workspace.chats].flatMap((owner) => owner.materials)
+function attachReferencedMaterials(scratchpad: Topic, state: z.infer<typeof ScratchpadStateSchema>, workspace: Pick<Workspace, "scratchpads" | "chats">, materialIds?: string[]) {
+  const available = [...workspace.scratchpads, ...workspace.chats].flatMap((owner) => owner.materials)
   for (const reference of scratchpadReferences(state)) {
     if (reference.type === "website" || reference.type === "topic") continue
-    const attached = topic.materials.find((material) => reference.path === `assets/${material.name}`)
+    const attached = scratchpad.materials.find((material) => reference.path === `assets/${material.name}`)
     if (attached) {
       if ((reference.type === "pdf" || reference.type === "ppt") && reference.pages.some((range) => range.to > attached.pages.length))
         throw new Error(`Reference pages are outside ${attached.name}.`)
@@ -103,28 +107,28 @@ function attachReferencedMaterials(topic: Topic, state: z.infer<typeof Scratchpa
     const material = [...matches.values()][0]
     if ((reference.type === "pdf" || reference.type === "ppt") && reference.pages.some((range) => range.to > material.pages.length))
       throw new Error(`Reference pages are outside ${material.name}.`)
-    topic.materials.push(material)
+    scratchpad.materials.push(material)
   }
   for (const id of materialIds ?? []) {
-    if (topic.materials.some((material) => material.id === id)) continue
+    if (scratchpad.materials.some((material) => material.id === id)) continue
     const material = available.find((material) => material.id === id)
     if (!material) throw new Error("An attached source is unavailable. Attach it again before creating the scratchpad.")
-    if (topic.materials.some((attached) => attached.name === material.name))
+    if (scratchpad.materials.some((attached) => attached.name === material.name))
       throw new Error(`Two attached sources use the filename ${material.name}. Rename one before attaching both.`)
-    topic.materials.push(material)
+    scratchpad.materials.push(material)
   }
 }
 
-function validateDocumentSources(topic: Topic, state: z.infer<typeof TopicStateSchema> | z.infer<typeof TestStateSchema>, workspace: Pick<Workspace, "topics" | "chats">) {
+function validateDocumentSources(scratchpad: Topic, state: z.infer<typeof TopicStateSchema> | z.infer<typeof TestStateSchema>, workspace: Pick<Workspace, "scratchpads" | "chats">) {
   for (const block of state.document?.blocks ?? []) {
     if (block.type !== "source") continue
-    let material = topic.materials.find((material) => material.id === block.materialId)
+    let material = scratchpad.materials.find((material) => material.id === block.materialId)
     if (!material) {
-      material = [...workspace.topics, ...workspace.chats].flatMap((owner) => owner.materials).find((material) => material.id === block.materialId)
+      material = [...workspace.scratchpads, ...workspace.chats].flatMap((owner) => owner.materials).find((material) => material.id === block.materialId)
       if (!material) throw new Error(`Content source not found: ${block.materialId}`)
       const name = material.name
-      if (topic.materials.some((attached) => attached.name === name)) throw new Error("Content source filename conflicts with an existing attachment.")
-      topic.materials.push(material)
+      if (scratchpad.materials.some((attached) => attached.name === name)) throw new Error("Content source filename conflicts with an existing attachment.")
+      scratchpad.materials.push(material)
     }
     if (block.page > (material.pages.length || 1)) throw new Error(`Content source page is outside ${material.name}.`)
     if (block.presentation === "image" && material.kind === "text") throw new Error("Text sources cannot be rendered as slide images.")
@@ -134,20 +138,20 @@ function validateDocumentSources(topic: Topic, state: z.infer<typeof TopicStateS
 export class StateService {
   constructor(private repository: Pick<WorkspaceRepository, "stateSnapshot" | "mutate">, readonly threadId: string) {}
 
-  private topic(id: string) {
-    const topic = this.repository.stateSnapshot.topics.find((topic) => topic.id === id)
-    if (!topic) throw new Error("Topic not found.")
-    return { topic, state: TopicStateSchema.parse(topic.state ?? freshTopicState(topic.title, topic.createdAt)) }
+  private scratchpad(id: string) {
+    const scratchpad = this.repository.stateSnapshot.scratchpads.find((scratchpad) => scratchpad.id === id)
+    if (!scratchpad) throw new Error("Topic not found.")
+    return { scratchpad, state: TopicStateSchema.parse(scratchpad.state ?? freshTopicState(scratchpad.title, scratchpad.createdAt)) }
   }
 
-  async getMistakesForTopic(topics: string[] | null) {
-    const selected = this.repository.stateSnapshot.topics.filter((topic) => (topic.state?.type === "topic" || !topic.state) && (topics === null || topics.includes(topic.id)))
-    if (topics?.some((id) => !selected.some((topic) => topic.id === id))) throw new Error("Topic not found.")
-    return selected.flatMap((topic) => this.topic(topic.id).state.content.flatMap((part) => part.mistakes.map((mistake) => ({ topicId: topic.id, topicName: topic.title, topicPartId: part.id, partName: part.name, ...mistake }))))
+  async getMistakesForTopic(scratchpads: string[] | null) {
+    const selected = this.repository.stateSnapshot.scratchpads.filter((scratchpad) => (scratchpad.state?.type === "topic" || !scratchpad.state) && (scratchpads === null || scratchpads.includes(scratchpad.id)))
+    if (scratchpads?.some((id) => !selected.some((scratchpad) => scratchpad.id === id))) throw new Error("Topic not found.")
+    return selected.flatMap((scratchpad) => this.scratchpad(scratchpad.id).state.content.flatMap((part) => part.mistakes.map((mistake) => ({ scratchpadId: scratchpad.id, scratchpadName: scratchpad.title, scratchpadPartId: part.id, partName: part.name, ...mistake }))))
   }
 
-  async whereAmI(topicId: string) {
-    const { state } = this.topic(topicId)
+  async whereAmI(scratchpadId: string) {
+    const { state } = this.scratchpad(scratchpadId)
     const thread = state.threadTutors.find((thread) => thread.id === this.threadId)
     return state.content.flatMap((part) => {
       const progress = thread?.progress[part.id]
@@ -156,8 +160,8 @@ export class StateService {
     })
   }
 
-  async whatIsNext(topicId: string) {
-    const { state } = this.topic(topicId)
+  async whatIsNext(scratchpadId: string) {
+    const { state } = this.scratchpad(scratchpadId)
     const options = state.threadTutors.flatMap((thread) => state.content.flatMap((part) => {
       const progress = thread.progress[part.id]
       if (!progress || progress.status !== "active") return []
@@ -169,8 +173,8 @@ export class StateService {
     return options
   }
 
-  async getTopicProgress(topicId: string) {
-    const { state } = this.topic(topicId)
+  async getTopicProgress(scratchpadId: string) {
+    const { state } = this.scratchpad(scratchpadId)
     return state.content.map((part) => ({
       part,
       threads: state.threadTutors.flatMap((thread) => {
@@ -181,10 +185,10 @@ export class StateService {
     }))
   }
 
-  async getQuestions(topicId: string, topicPartId: string) {
-    const { state } = this.topic(topicId)
-    if (!state.content.some((part) => part.id === topicPartId)) throw new Error("Topic part not found.")
-    return state.threadTutors.flatMap((thread) => (thread.progress[topicPartId]?.steps ?? []).map((step, stepIndex) => ({ threadId: thread.id, stepIndex, ...step })))
+  async getQuestions(scratchpadId: string, scratchpadPartId: string) {
+    const { state } = this.scratchpad(scratchpadId)
+    if (!state.content.some((part) => part.id === scratchpadPartId)) throw new Error("Topic part not found.")
+    return state.threadTutors.flatMap((thread) => (thread.progress[scratchpadPartId]?.steps ?? []).map((step, stepIndex) => ({ threadId: thread.id, stepIndex, ...step })))
   }
 
   async write(mutation: z.infer<typeof ScratchpadMutationSchema>) {
@@ -192,46 +196,46 @@ export class StateService {
     await this.repository.mutate((workspace) => applyScratchpadMutation(workspace, this.threadId, mutation))
   }
 
-  async activatePart(topicId: string, topicPartId: string) {
-    await this.write({ type: "activatePart", topicId, topicPartId })
+  async activatePart(scratchpadId: string, scratchpadPartId: string) {
+    await this.write({ type: "activatePart", scratchpadId, scratchpadPartId })
   }
 
-  async complete(topicId: string, topicPartId: string) {
-    await this.write({ type: "complete", topicId, topicPartId })
+  async complete(scratchpadId: string, scratchpadPartId: string) {
+    await this.write({ type: "complete", scratchpadId, scratchpadPartId })
   }
 
-  async documentMistake(topicId: string, topicPartId: string, context: string, issue: string) {
-    await this.write({ type: "documentMistake", topicId, topicPartId, context, issue })
+  async documentMistake(scratchpadId: string, scratchpadPartId: string, context: string, issue: string) {
+    await this.write({ type: "documentMistake", scratchpadId, scratchpadPartId, context, issue })
   }
 
-  async recordQuestion(topicId: string, topicPartId: string, question: string) {
-    await this.write({ type: "recordQuestion", topicId, topicPartId, question })
+  async recordQuestion(scratchpadId: string, scratchpadPartId: string, question: string) {
+    await this.write({ type: "recordQuestion", scratchpadId, scratchpadPartId, question })
   }
 
-  async recordAnswer(topicId: string, topicPartId: string, answerFromUser: string, stepIndex?: number) {
-    const { state } = this.topic(topicId)
-    const steps = state.threadTutors.find((thread) => thread.id === this.threadId)?.progress[topicPartId]?.steps ?? []
-    await this.write({ type: "recordAnswer", topicId, topicPartId, answerFromUser, stepIndex: stepIndex ?? steps.length - 1 })
+  async recordAnswer(scratchpadId: string, scratchpadPartId: string, answerFromUser: string, stepIndex?: number) {
+    const { state } = this.scratchpad(scratchpadId)
+    const steps = state.threadTutors.find((thread) => thread.id === this.threadId)?.progress[scratchpadPartId]?.steps ?? []
+    await this.write({ type: "recordAnswer", scratchpadId, scratchpadPartId, answerFromUser, stepIndex: stepIndex ?? steps.length - 1 })
   }
 
-  async updateTopic(topicId: string, update: Omit<Extract<z.infer<typeof TopicMutationSchema>, { type: "updateTopic" }>, "type" | "topicId">) {
-    await this.write({ type: "updateTopic", topicId, ...update })
+  async updateTopic(scratchpadId: string, update: Omit<Extract<z.infer<typeof TopicMutationSchema>, { type: "updateTopic" }>, "type" | "scratchpadId">) {
+    await this.write({ type: "updateTopic", scratchpadId, ...update })
   }
 
-  async createTopic(topic: Extract<z.input<typeof TopicMutationSchema>, { type: "createTopic" }>["topic"]) {
-    const topicId = randomUUID()
-    await this.write(TopicMutationSchema.parse({ type: "createTopic", topicId, topic }))
-    return topicId
+  async createScratchpad(scratchpad: Extract<z.input<typeof TopicMutationSchema>, { type: "createTopic" }>["scratchpad"]) {
+    const scratchpadId = randomUUID()
+    await this.write(TopicMutationSchema.parse({ type: "createTopic", scratchpadId, scratchpad }))
+    return scratchpadId
   }
 
   private test(id: string) {
-    const scratchpad = this.repository.stateSnapshot.topics.find((item) => item.id === id)
+    const scratchpad = this.repository.stateSnapshot.scratchpads.find((item) => item.id === id)
     if (!scratchpad) throw new Error("Test scratchpad not found.")
     return TestStateSchema.parse(scratchpad.state)
   }
 
   async getTestMistakes(id: string) {
-    return this.test(id).content.flatMap((part) => part.mistakes.map((mistake) => ({ topicPartId: part.id, ...mistake })))
+    return this.test(id).content.flatMap((part) => part.mistakes.map((mistake) => ({ scratchpadPartId: part.id, ...mistake })))
   }
 
   async whereAmIForTest(id: string) {
@@ -245,47 +249,47 @@ export class StateService {
   }
 
   async getGenericReferences(id: string) {
-    const scratchpad = this.repository.stateSnapshot.topics.find((item) => item.id === id)
+    const scratchpad = this.repository.stateSnapshot.scratchpads.find((item) => item.id === id)
     if (!scratchpad) throw new Error("Generic scratchpad not found.")
     return GenericStateSchema.parse(scratchpad.state).references
   }
 
   async createTest(test: z.input<typeof CreateTestInputSchema>) {
-    const topicId = randomUUID()
-    await this.write(ScratchpadMutationSchema.parse({ type: "createTest", topicId, test }))
-    return topicId
+    const scratchpadId = randomUUID()
+    await this.write(ScratchpadMutationSchema.parse({ type: "createTest", scratchpadId, test }))
+    return scratchpadId
   }
 
   async createGeneric(generic: z.infer<typeof CreateGenericInputSchema>) {
-    const topicId = randomUUID()
-    await this.write({ type: "createGeneric", topicId, generic })
-    return topicId
+    const scratchpadId = randomUUID()
+    await this.write({ type: "createGeneric", scratchpadId, generic })
+    return scratchpadId
   }
 
-  async addTestQuestion(topicId: string, question: z.input<typeof CreateTestQuestionInputSchema>) {
-    await this.write({ type: "addTestQuestion", topicId, question })
+  async addTestQuestion(scratchpadId: string, question: z.input<typeof CreateTestQuestionInputSchema>) {
+    await this.write({ type: "addTestQuestion", scratchpadId, question })
   }
 
-  async recordTestAnswer(topicId: string, title: string, answer: string) {
-    await this.write({ type: "recordTestAnswer", topicId, title, answer })
+  async recordTestAnswer(scratchpadId: string, title: string, answer: string) {
+    await this.write({ type: "recordTestAnswer", scratchpadId, title, answer })
   }
 
-  async documentTestMistake(topicId: string, topicPartId: string, context: string, issue: string) {
-    await this.write({ type: "documentTestMistake", topicId, topicPartId, context, issue })
+  async documentTestMistake(scratchpadId: string, scratchpadPartId: string, context: string, issue: string) {
+    await this.write({ type: "documentTestMistake", scratchpadId, scratchpadPartId, context, issue })
   }
 
-  async addGenericReference(topicId: string, reference: z.infer<typeof TopicReferenceSchema>) {
-    await this.write({ type: "addGenericReference", topicId, reference })
+  async addGenericReference(scratchpadId: string, reference: z.infer<typeof TopicReferenceSchema>) {
+    await this.write({ type: "addGenericReference", scratchpadId, reference })
   }
 
 }
 
-export function existingScratchpadForCreation(workspace: Pick<Workspace, "topics" | "chats">, threadId: string, mutation: z.infer<typeof ScratchpadMutationSchema>) {
+export function existingScratchpadForCreation(workspace: Pick<Workspace, "scratchpads" | "chats">, threadId: string, mutation: z.infer<typeof ScratchpadMutationSchema>) {
   let type: z.infer<typeof ScratchpadTypeSchema> | undefined
   let name = ""
   if (mutation.type === "createTopic") {
     type = "topic"
-    name = mutation.topic.name
+    name = mutation.scratchpad.name
   } else if (mutation.type === "createTest") {
     type = "test"
     name = mutation.test.name
@@ -295,37 +299,37 @@ export function existingScratchpadForCreation(workspace: Pick<Workspace, "topics
   } else return
   const request = workspace.chats.find((chat) => chat.id === threadId)?.messages.findLast((message) => message.role === "user")
   const normalize = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase()
-  return workspace.topics.find((scratchpad) => !scratchpad.archived && request?.topicIds.includes(scratchpad.id) &&
+  return workspace.scratchpads.find((scratchpad) => !scratchpad.archived && request?.scratchpadIds.includes(scratchpad.id) &&
     scratchpad.state?.type === type && normalize(scratchpad.title) === normalize(name))
 }
 
-export function applyScratchpadMutation(workspace: Pick<Workspace, "topics" | "chats">, threadId: string, input: z.infer<typeof ScratchpadMutationSchema>) {
+export function applyScratchpadMutation(workspace: Pick<Workspace, "scratchpads" | "chats">, threadId: string, input: z.infer<typeof ScratchpadMutationSchema>) {
   const mutation = ScratchpadMutationSchema.parse(input)
-  if (workspace.topics.some((item) => item.id === mutation.topicId && item.archived))
+  if (workspace.scratchpads.some((item) => item.id === mutation.scratchpadId && item.archived))
     throw new Error("Archived scratchpads are read-only.")
   const existing = existingScratchpadForCreation(workspace, threadId, mutation)
   if (existing) {
-    if (existing.id === mutation.topicId) return
+    if (existing.id === mutation.scratchpadId) return
     throw new Error("This request already has a scratchpad with this name and type. Update the existing scratchpad instead of creating another copy.")
   }
   const request = workspace.chats.find((chat) => chat.id === threadId)?.messages.findLast((message) => message.role === "user")
   const topicMutation = TopicMutationSchema.safeParse(mutation)
   if (topicMutation.success) {
     applyTopicMutation(workspace, threadId, topicMutation.data)
-    if (topicMutation.data.type === "createTopic" && request && !request.topicIds.includes(mutation.topicId))
-      request.topicIds.push(mutation.topicId)
+    if (topicMutation.data.type === "createTopic" && request && !request.scratchpadIds.includes(mutation.scratchpadId))
+      request.scratchpadIds.push(mutation.scratchpadId)
     return
   }
   if (mutation.type === "createTest" || mutation.type === "createGeneric") {
-    if (workspace.topics.some((item) => item.id === mutation.topicId)) throw new Error("Scratchpad already exists.")
+    if (workspace.scratchpads.some((item) => item.id === mutation.scratchpadId)) throw new Error("Scratchpad already exists.")
     let state: z.infer<typeof ScratchpadStateSchema>
     // Legacy staged creations have no timestamp; their initiating message is stable across replays.
     const createdAt = mutation.createdAt ?? request?.createdAt ?? new Date().toISOString()
     if (mutation.type === "createTest") {
       state = TestStateSchema.parse({ ...mutation.test, createdAt, questions: mutation.test.questions.map((question) => ({ ...question, threadWriters: [threadId] })) })
     } else state = GenericStateSchema.parse({ ...mutation.generic, createdAt })
-    const scratchpad = newTopic(state.name)
-    scratchpad.id = mutation.topicId
+    const scratchpad = newScratchpad(state.name)
+    scratchpad.id = mutation.scratchpadId
     scratchpad.createdAt = createdAt
     scratchpad.state = state
     scratchpad.planConfirmed = true
@@ -336,11 +340,15 @@ export function applyScratchpadMutation(workspace: Pick<Workspace, "topics" | "c
       scratchpad.learning.notes = scratchpadMarkdown(state, scratchpad.materials)
     }
     attachReferencedMaterials(scratchpad, state, workspace, mutation.materialIds)
-    workspace.topics.push(scratchpad)
-    if (request && !request.topicIds.includes(mutation.topicId)) request.topicIds.push(mutation.topicId)
+    workspace.scratchpads.push(scratchpad)
+    const chat = workspace.chats.find((chat) => chat.id === threadId)
+    if (chat && !chat.ownerScratchpadId) {
+      chat.ownerScratchpadId = scratchpad.id
+    }
+    if (request && !request.scratchpadIds.includes(mutation.scratchpadId)) request.scratchpadIds.push(mutation.scratchpadId)
     return
   }
-  const scratchpad = workspace.topics.find((item) => item.id === mutation.topicId)
+  const scratchpad = workspace.scratchpads.find((item) => item.id === mutation.scratchpadId)
   if (!scratchpad) throw new Error("Scratchpad not found.")
   if (mutation.type === "addGenericReference" || mutation.type === "updateGeneric") {
     const state = GenericStateSchema.parse(scratchpad.state)
@@ -370,7 +378,7 @@ export function applyScratchpadMutation(workspace: Pick<Workspace, "topics" | "c
     question.answer = mutation.answer
     if (!question.threadWriters.includes(threadId)) question.threadWriters.push(threadId)
   } else if (mutation.type === "documentTestMistake") {
-    const part = state.content.find((part) => part.id === mutation.topicPartId)
+    const part = state.content.find((part) => part.id === mutation.scratchpadPartId)
     if (!part) throw new Error("Test content part not found.")
     part.mistakes.push({ context: mutation.context, issue: mutation.issue })
   } else if (mutation.type === "editTestContent") {

@@ -1,4 +1,6 @@
+import { testStaging } from "./staging"
 import { testPlanConfirmation } from "./plan-confirmation"
+import { testResponseChoice } from "./response-choice"
 import { testTestScratchpad } from "./test-scratchpad"
 import { Profiler } from "react"
 import { createRoot } from "react-dom/client"
@@ -12,7 +14,7 @@ import { useChatTabs } from "../../src/renderer/chat-tabs"
 import { SnapshotSchema } from "../../src/shared/contracts"
 import { ThemeProvider } from "@edu/ui/theme"
 import imageUrl from "./diagram.svg"
-import { testMessageClipboard } from "./message-clipboard"
+import { testMessageClipboard, testPastedTopicMentions } from "./message-clipboard"
 import { testChatAttachments } from "./chat-attachments"
 import { testChatSubmission } from "./chat-submission"
 import { testModelPicker } from "./model-picker"
@@ -38,7 +40,9 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testPastedTopicMentions(root, host)
   await testPlanConfirmation(root, host)
+  await testResponseChoice(root, host)
   await testChatSubmission(root, host)
   await testModelPicker(root, host)
   await testMessageClipboard(root, host)
@@ -47,6 +51,7 @@ async function runRenderingTests() {
   await testScratchpadMismatchBanner(root, host)
   await testChatTabs(root, host)
   await testThreadContextMenu(root, host)
+  await testStaging(root, host)
   await testChatScroll(root, host)
   await testTopicTerminology(root, host)
   const durations: { actual: number; base: number }[] = []
@@ -54,10 +59,10 @@ async function runRenderingTests() {
   function render(notes: string, reply = "Working") {
     flushSync(() => root.render(
       <Profiler id="workspace" onRender={(_id, _phase, actual, base) => durations.push({ actual, base })}>
-        <section id="scratchpad"><StudyMarkdown text={notes} topics={[]} materials={[]} onOpenTopic={() => {}} onOpenMaterial={() => {}} /></section>
+        <section id="scratchpad"><StudyMarkdown text={notes} scratchpads={[]} materials={[]} onOpenScratchpad={() => {}} onOpenMaterial={() => {}} /></section>
         <section id="chat">
-          {Array.from({ length: 20 }, (_, index) => <StudyMarkdown key={index} text={lesson} topics={[]} materials={[]} onOpenTopic={() => {}} onOpenMaterial={() => {}} />)}
-          <StudyMarkdown text={reply} topics={[]} materials={[]} onOpenTopic={() => {}} onOpenMaterial={() => {}} />
+          {Array.from({ length: 20 }, (_, index) => <StudyMarkdown key={index} text={lesson} scratchpads={[]} materials={[]} onOpenScratchpad={() => {}} onOpenMaterial={() => {}} />)}
+          <StudyMarkdown text={reply} scratchpads={[]} materials={[]} onOpenScratchpad={() => {}} onOpenMaterial={() => {}} />
         </section>
       </Profiler>,
     ))
@@ -99,16 +104,16 @@ async function runRenderingTests() {
   console.log(`Rendering benchmark: 12 streaming updates across 20 math/code messages: ${elapsed.toFixed(1)} ms`)
   console.log(`Profiler: actual ${actual.toFixed(1)} ms / base ${base.toFixed(1)} ms`)
 
-  const topicId = crypto.randomUUID()
+  const scratchpadId = crypto.randomUUID()
   const materialId = crypto.randomUUID()
-  const references = `[Related](edu-topic://${topicId})\n\n[Source](edu-material://${materialId}/1)\n\n**Check:** Explain the slope.`
+  const references = `[Related](edu-topic://${scratchpadId})\n\n[Source](edu-material://${materialId}/1)\n\n**Check:** Explain the slope.`
   let opened = ""
   function renderReferences(title: string, name: string, showSourcePreviews: boolean, checkLabel: string) {
     flushSync(() => root.render(<StudyMarkdown
       text={references}
-      topics={[{ id: topicId, title }]}
+      scratchpads={[{ id: scratchpadId, title }]}
       materials={[{ id: materialId, name, kind: "pdf" }]}
-      onOpenTopic={(id) => { opened = `${title}:${id}` }}
+      onOpenScratchpad={(id) => { opened = `${title}:${id}` }}
       onOpenMaterial={(id) => { opened = `${name}:${id}` }}
       showSourcePreviews={showSourcePreviews}
       checkLabel={checkLabel}
@@ -119,7 +124,7 @@ async function runRenderingTests() {
   renderReferences("New topic", "old.pdf", false, "TEST")
   assert(host.querySelector(".markdown button") === topicLink && topicLink.textContent === "@New topic", "Topic labels must update without reparsing or replacing links")
   topicLink.click()
-  assert(opened === `New topic:${topicId}`, "Memoized Markdown must use current topic callbacks")
+  assert(opened === `New topic:${scratchpadId}`, "Memoized Markdown must use current topic callbacks")
   assert(host.querySelector('section[aria-label="TEST"]') !== null, "Understanding-check labels must update through memoized Markdown")
   renderReferences("New topic", "new.pdf", true, "TEST")
   assert(host.querySelector(`img[src="edu-source://${materialId}/1"]`) !== null, "Source preview changes must invalidate Markdown")
@@ -133,12 +138,12 @@ async function runRenderingTests() {
   const createdAt = new Date().toISOString()
   const snapshot = SnapshotSchema.parse({
     runners: [{ id: runnerId, name: "Tutor", provider: "codex", model: "test" }],
-    topics: [{
-      id: topicId, title: "Derivatives", createdAt, planConfirmed: true, materials: [],
+    scratchpads: [{
+      id: scratchpadId, title: "Derivatives", createdAt, planConfirmed: true, materials: [],
       learning: { phase: "ready_to_continue", outline: [], currentSection: "", pendingQuestion: "", nextAction: "", notes },
     }],
     chats: [{
-      id: chatId, title: "Derivatives", createdAt, runnerId, phase: "ready_to_continue", materials: [],
+      id: chatId, ownerScratchpadId: scratchpadId, title: "Derivatives", createdAt, runnerId, phase: "ready_to_continue", materials: [],
       messages: Array.from({ length: 20 }, () => ({ id: crypto.randomUUID(), role: "assistant", content: lesson, createdAt })),
     }],
     runtime: [{ runnerId, chatId, status: "running", activity: "Thinking", reply: "Working" }],
@@ -147,7 +152,7 @@ async function runRenderingTests() {
   })
   flushSync(() => {
     useWorkspace.getState().setSnapshot(snapshot)
-    useTopicViews.getState().select(topicId)
+    useTopicViews.getState().select(scratchpadId)
     useChatTabs.getState().select(chatId)
     root.render(<ThemeProvider><App /></ThemeProvider>)
   })
@@ -163,7 +168,7 @@ async function runRenderingTests() {
   }
   const workspaceElapsed = performance.now() - workspaceStarted
   const committed = structuredClone(snapshot)
-  committed.topics[0].learning.notes += "\n\nCommitted lesson."
+  committed.scratchpads[0].learning.notes += "\n\nCommitted lesson."
   flushSync(() => useWorkspace.getState().setSnapshot(committed))
   assert(workspaceImage !== null && host.querySelector(".study-document img") === workspaceImage, "Full workspace snapshots and commits must preserve scratchpad images")
   assert(host.querySelector('[aria-label="Mermaid diagram"] svg') === workspaceDiagram, "Full workspace snapshots and commits must preserve scratchpad diagrams")

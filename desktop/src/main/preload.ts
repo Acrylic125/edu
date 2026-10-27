@@ -37,9 +37,10 @@ const bridge: DesktopBridge = {
   removeRunner: (id) => ipcRenderer.invoke(Channel.removeRunner, id),
   startRunner: (id) => ipcRenderer.invoke(Channel.startRunner, id),
   stopRunner: (id, chatId) => ipcRenderer.invoke(Channel.stopRunner, id, chatId),
-  createTopic: (input) => ipcRenderer.invoke(Channel.createTopic, input),
+  createScratchpad: (input) => ipcRenderer.invoke(Channel.createScratchpad, input),
   createChat: (input) => ipcRenderer.invoke(Channel.createChat, input),
-  archiveTopic: (input) => ipcRenderer.invoke(Channel.archiveTopic, input),
+  deleteStagedChat: (chatId) => ipcRenderer.invoke(Channel.deleteStagedChat, chatId),
+  archiveScratchpad: (input) => ipcRenderer.invoke(Channel.archiveScratchpad, input),
   send: (input) => ipcRenderer.invoke(Channel.send, input),
   retry: (input) => ipcRenderer.invoke(Channel.retry, input),
   selectMaterials: async (draftIds) =>
@@ -58,11 +59,11 @@ const bridge: DesktopBridge = {
   removeChatMaterial: (chatId, materialId) => ipcRenderer.invoke(Channel.removeChatMaterial, { chatId, materialId }),
   importMaterials: (owner, draftIds = []) =>
     ipcRenderer.invoke(Channel.importMaterials, { owner, draftIds }),
-  exportNotes: (topicId) => ipcRenderer.invoke(Channel.exportNotes, topicId),
+  exportNotes: (scratchpadId) => ipcRenderer.invoke(Channel.exportNotes, scratchpadId),
   openDiagnostics: (chatId) =>
     ipcRenderer.invoke(Channel.openDiagnostics, chatId),
-  openWorkspace: (topicId) =>
-    ipcRenderer.invoke(Channel.openWorkspace, topicId),
+  openWorkspace: (scratchpadId) =>
+    ipcRenderer.invoke(Channel.openWorkspace, scratchpadId),
   openMaterial: (materialId) =>
     ipcRenderer.invoke(Channel.openMaterial, materialId),
 }

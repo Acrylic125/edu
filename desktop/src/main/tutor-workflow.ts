@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto"
+import { constants } from "node:fs"
+import { copyFile, mkdir } from "node:fs/promises"
+import { join } from "node:path"
 import { z } from "zod"
-import { CompleteOutputSchema, PreparedContextSchema, RoleBatchSchema, RoleJobSchema, RoleRequestSchema, RoleSummarySchema, WorkflowRecordSchema, WorkflowRequestSchema } from "../shared/tutor-workflow"
+import { CompleteOutputSchema, PreparedContextSchema, RoleBatchSchema, RoleJobSchema, RoleRequestSchema, RoleRequestsSchema, RoleSummarySchema, WorkflowRecordSchema, WorkflowRequestSchema } from "../shared/tutor-workflow"
 import { LearningStateSchema, MessageSchema, ProviderSessionSchema, type WorkerJob } from "../shared/contracts"
 import type { WorkspaceRepository } from "./workspace"
+import { newChat } from "./workspace"
+import { stripTopicMentions } from "../shared/topic-mentions"
 import { createTopicHandles } from "../runners/topic-handles"
 import { applyScratchpadMutation } from "./state-service"
 import { ScratchpadMutationSchema } from "../shared/scratchpad-state"
@@ -45,11 +50,58 @@ export class TutorWorkflowRepository {
     return turn
   }
 
+  async redirectCreation(chatId: string, turnId: string, input: z.infer<typeof RoleRequestSchema>[]) {
+    const current = this.get(chatId, turnId)
+    if (current.redirectedTurnId) return this.workspace.workflow(current.redirectedTurnId)
+    const requests = RoleRequestsSchema.parse(input)
+    if (!current.source.chat.ownerScratchpadId || !requests.some((request) => request.target.mode === "create")) return
+    const message = current.source.chat.messages.find((message) => message.id === current.learnerMessageId)
+    if (!message) throw new Error("The creation request is missing.")
+    const staged = newChat(current.source.runner.id, stripTopicMentions(message.content).slice(0, 80))
+    staged.scratchpadRequested = true
+    staged.messages = [structuredClone(message)]
+    staged.scratchpadHandles = [...current.source.chat.scratchpadHandles]
+    const materials = [...current.source.chat.materials, ...current.source.scratchpads.flatMap((scratchpad) => scratchpad.materials)]
+    staged.materials = [...new Map(materials.filter((material) => message.materialIds?.includes(material.id)).map((material) => [material.id, material])).values()]
+    const assetDirectory = join(this.workspace.directory, "chats", staged.id, "assets")
+    if (staged.materials.length) {
+      await mkdir(assetDirectory, { recursive: true })
+      for (const material of staged.materials) {
+        let sourceDirectory = current.source.assetDirectory
+        if (!current.source.chat.materials.some((item) => item.id === material.id)) {
+          const scratchpad = current.source.scratchpads.find((scratchpad) => scratchpad.materials.some((item) => item.id === material.id))
+          if (!scratchpad?.assetDirectory) throw new Error("The request attachment is unavailable.")
+          sourceDirectory = scratchpad.assetDirectory
+        }
+        await copyFile(join(sourceDirectory, material.name), join(assetDirectory, material.name), constants.COPYFILE_EXCL)
+      }
+    }
+    const moved = WorkflowRecordSchema.parse({
+      turnId: randomUUID(), attemptId: randomUUID(), chatId: staged.id, learnerMessageId: message.id, status: "failed",
+      source: { ...current.source, chat: staged, confirmScratchpadId: undefined, assetDirectory },
+    })
+    staged.failedTurnId = moved.turnId
+    // Save a resumable destination before removing the request from its original conversation.
+    await this.workspace.saveWorkflow(moved)
+    await this.workspace.mutateWorkflow(turnId, (turn, state) => {
+      const chat = state.chats.find((chat) => chat.id === chatId)
+      if (!chat || chat.activeTurnId !== turnId || turn.status !== "running") throw new Error("The creation request is no longer active.")
+      chat.messages = chat.messages.filter((message) => message.id !== turn.learnerMessageId)
+      chat.activeTurnId = undefined
+      chat.failedTurnId = undefined
+      chat.turnError = undefined
+      turn.status = "failed"
+      turn.error = "This request moved to Staging."
+      turn.redirectedTurnId = moved.turnId
+      turn.attemptId = randomUUID()
+      state.chats.push(staged)
+    })
+    return this.workspace.workflow(moved.turnId)
+  }
+
   async assumeRole(chatId: string, turnId: string, tutorStepId: string, input: z.infer<typeof RoleRequestSchema>[]) {
     this.get(chatId, turnId)
-    const requests = z.array(RoleRequestSchema).min(1).max(12).parse(input)
-    if (requests.some((request) => request.replyToLearner) && (requests.length !== 1 || requests[0].requestedAccess !== "write"))
-      throw new Error("A direct learner reply requires one independent write role.")
+    const requests = RoleRequestsSchema.parse(input)
     const turn = await this.workspace.updateWorkflow(turnId, (turn) => {
       if (turn.batches.some((batch) => batch.tutorStepId === tutorStepId)) return
       const source = committedSource(turn)
@@ -57,13 +109,13 @@ export class TutorWorkflowRepository {
       const jobs = requests.map((request) => {
         if (request.context.learnerMessageIds.some((id) => !source.chat.messages.some((message) => message.id === id)))
           throw new Error("The role requested a message outside its pinned context.")
-        const dependencies = request.context.readDependencies.map((handle) => this.workspace.topic(handles.resolve(handle, false)))
+        const dependencies = request.context.readDependencies.map((handle) => this.workspace.scratchpad(handles.resolve(handle, false)))
         let scratchpadId: string = randomUUID()
         let snapshot: z.infer<typeof RoleJobSchema>["snapshot"] = null
         let role = request.target.mode === "create" ? request.target.type : "topic"
         if (request.target.mode === "existing") {
           scratchpadId = handles.resolve(request.target.scratchpadHandle, request.requestedAccess === "write")
-          snapshot = structuredClone(this.workspace.topic(scratchpadId))
+          snapshot = structuredClone(this.workspace.scratchpad(scratchpadId))
           role = snapshot.state?.type ?? "topic"
         } else {
           if (request.requestedAccess !== "write") throw new Error("Creation requires write access.")
@@ -71,7 +123,7 @@ export class TutorWorkflowRepository {
           if (command && command.type !== role) throw new Error(`${command.command} requires the matching creation role.`)
           handles.register(scratchpadId)
         }
-        const materials = [...source.chat.materials, ...(snapshot?.materials ?? []), ...dependencies.flatMap((topic) => topic.materials)]
+        const materials = [...source.chat.materials, ...(snapshot?.materials ?? []), ...dependencies.flatMap((scratchpad) => scratchpad.materials)]
         if (request.context.materialIds.some((id) => !materials.some((material) => material.id === id)))
           throw new Error("The role requested a material outside its granted sources.")
         return RoleJobSchema.parse({
@@ -80,12 +132,12 @@ export class TutorWorkflowRepository {
           baseVersion: snapshot && scratchpadVersion(snapshot), snapshot, dependencies, request, operations: [],
         })
       })
-      const handleIds = [...new Set([...source.chat.topicHandles, ...source.topics.map((topic) => topic.id), ...source.workspaceTopics.map((topic) => topic.id), ...jobs.filter((job) => job.mode === "create").map((job) => job.scratchpadId)])]
+      const handleIds = [...new Set([...source.chat.scratchpadHandles, ...source.scratchpads.map((scratchpad) => scratchpad.id), ...source.workspaceScratchpads.map((scratchpad) => scratchpad.id), ...jobs.filter((job) => job.mode === "create").map((job) => job.scratchpadId)])]
       for (const job of jobs) job.handleIds = handleIds
       const writes = jobs.filter((job) => job.access === "write").map((job) => job.scratchpadId)
       if (new Set(writes).size !== writes.length) throw new Error("Writes to the same scratchpad must run in later batches.")
       for (const job of jobs) {
-        const reads = new Set([job.scratchpadId, ...job.dependencies.map((topic) => topic.id)])
+        const reads = new Set([job.scratchpadId, ...job.dependencies.map((scratchpad) => scratchpad.id)])
         if (jobs.some((other) => other.jobId !== job.jobId && other.access === "write" && reads.has(other.scratchpadId)))
           throw new Error("Dependent tasks must run in a later batch after their prerequisite commits.")
       }
@@ -100,7 +152,7 @@ export class TutorWorkflowRepository {
     await this.workspace.updateWorkflow(turnId, (turn) => {
       const job = turn.batches.flatMap((batch) => batch.jobs).find((job) => job.jobId === jobId)
       if (!job || job.status !== "working") throw new Error("This role stage is not writable.")
-      if (job.access !== "write" || mutation.topicId !== job.scratchpadId) throw new Error("This role cannot write that scratchpad.")
+      if (job.access !== "write" || mutation.scratchpadId !== job.scratchpadId) throw new Error("This role cannot write that scratchpad.")
       const tool = scratchpadToolDefinitions.find((tool) => tool.writer && tool.operation === mutation.type)
       if (!tool || tool.role !== job.role) throw new Error("This mutation does not belong to the assigned scratchpad role.")
       if (tool.creation && job.mode !== "create") throw new Error("An existing scratchpad role cannot create another target.")
@@ -111,9 +163,9 @@ export class TutorWorkflowRepository {
         if (JSON.stringify(existing.mutation) !== JSON.stringify(mutation)) throw new Error("A logical operation cannot change on replay.")
         return
       }
-      const candidate = { topics: [...turn.source.topics], chats: [turn.source.chat] }
-      candidate.topics = candidate.topics.filter((topic) => topic.id !== job.scratchpadId)
-      if (job.snapshot) candidate.topics.push({ ...job.snapshot, assetDirectory: turn.source.assetDirectory })
+      const candidate = { scratchpads: [...turn.source.scratchpads], chats: [turn.source.chat] }
+      candidate.scratchpads = candidate.scratchpads.filter((scratchpad) => scratchpad.id !== job.scratchpadId)
+      if (job.snapshot) candidate.scratchpads.push({ ...job.snapshot, assetDirectory: turn.source.assetDirectory })
       const staged = structuredClone(candidate)
       for (const operation of job.operations) applyScratchpadMutation(staged, chatId, operation.mutation)
       applyScratchpadMutation(staged, chatId, mutation)
@@ -146,7 +198,7 @@ export class TutorWorkflowRepository {
     await this.workspace.updateWorkflow(turnId, (turn) => {
       const job = turn.batches.flatMap((batch) => batch.jobs).find((job) => job.jobId === jobId)
       if (!job || job.status !== "working" || !job.request.context.materialIds.includes(materialId)) throw new Error("This source read is not granted to the role.")
-      const material = [...turn.source.chat.materials, ...(job.snapshot?.materials ?? []), ...job.dependencies.flatMap((topic) => topic.materials)].find((material) => material.id === materialId)
+      const material = [...turn.source.chat.materials, ...(job.snapshot?.materials ?? []), ...job.dependencies.flatMap((scratchpad) => scratchpad.materials)].find((material) => material.id === materialId)
       if (!material || firstPage < 1 || !Number.isInteger(firstPage) || !Number.isInteger(lastPage) || lastPage < firstPage || lastPage > (material.pages.length || 1)) throw new Error("The read evidence is outside the source.")
       for (let page = firstPage; page <= lastPage; page++) {
         if (!job.readEvidence.some((entry) => entry.materialId === materialId && entry.page === page)) job.readEvidence.push({ materialId, page })
@@ -162,15 +214,15 @@ export class TutorWorkflowRepository {
       if (batch.receipt) return
       for (const job of batch.jobs) {
         if (job.status !== "ready" || !job.output) throw new Error("Every required role must be ready before committing.")
-        const current = state.topics.find((topic) => topic.id === job.scratchpadId) ?? null
+        const current = state.scratchpads.find((scratchpad) => scratchpad.id === job.scratchpadId) ?? null
         if (job.mode === "existing" && scratchpadVersion(current) !== job.baseVersion) throw new Error("Scratchpad changed since this role started. Correct the revision conflict before retrying.")
         if (job.mode === "create" && current) throw new Error("The allocated scratchpad identity is already in use.")
         for (const dependency of job.dependencies) {
-          const latest = state.topics.find((topic) => topic.id === dependency.id) ?? null
+          const latest = state.scratchpads.find((scratchpad) => scratchpad.id === dependency.id) ?? null
           if (scratchpadVersion(latest) !== scratchpadVersion(dependency)) throw new Error("A read dependency changed during this role task. Correct the revision conflict before retrying.")
         }
         for (const operation of job.operations) applyScratchpadMutation(state, chatId, operation.mutation)
-        job.committedSnapshot = state.topics.find((topic) => topic.id === job.scratchpadId)
+        job.committedSnapshot = state.scratchpads.find((scratchpad) => scratchpad.id === job.scratchpadId)
         job.status = "committed"
       }
       batch.receipt = {
@@ -179,7 +231,7 @@ export class TutorWorkflowRepository {
           const { response: _response, ...summary } = RoleSummarySchema.parse(job.output)
           return { ...summary, jobId: job.jobId,
             scratchpadId: job.scratchpadId, scratchpadHandle: job.scratchpadHandle, role: job.role,
-            version: scratchpadVersion(state.topics.find((topic) => topic.id === job.scratchpadId) ?? null),
+            version: scratchpadVersion(state.scratchpads.find((scratchpad) => scratchpad.id === job.scratchpadId) ?? null),
           }
         }),
       }
@@ -196,14 +248,14 @@ export class TutorWorkflowRepository {
     const plans = batch.jobs.flatMap((job) => job.committedSnapshot?.state?.type === "topic" ? [job.committedSnapshot] : [])
     const questions = batch.jobs.flatMap((job) => job.output?.needsClarification ? [job.output.summary] : [])
     const escape = (text: string) => text.replace(/[\\`*_[\]<>]/g, "\\$&")
-    const replies = plans.map((topic) => {
-      if (topic.state?.type !== "topic") throw new Error("A topic plan is required.")
-      const parts = topic.state.content.map((part, index) => {
+    const replies = plans.map((scratchpad) => {
+      if (scratchpad.state?.type !== "topic") throw new Error("A topic plan is required.")
+      const parts = scratchpad.state.content.map((part, index) => {
         const goals = part.goals.map((goal) => escape(goal.objective)).join("; ")
         const citations = part.references.map((reference) => {
           if (reference.type === "website") return `[Source](${reference.url})`
           if (reference.type === "topic") return `[Related topic](edu-topic://${reference.id})`
-          const material = topic.materials.find((material) => `assets/${material.name}` === reference.path)
+          const material = scratchpad.materials.find((material) => `assets/${material.name}` === reference.path)
           if (!material) throw new Error("The plan source is missing from its topic.")
           if (reference.type === "pdf" || reference.type === "ppt") {
             const pages = reference.pages.map((range) => range.from === range.to ? `${range.from}` : `${range.from}–${range.to}`).join(", ")
@@ -213,13 +265,13 @@ export class TutorWorkflowRepository {
         }).join(" · ")
         return `${index + 1}. ${escape(part.name)}${goals ? `: ${goals}` : ""} ${citations}`
       })
-      return `**${escape(topic.title)}**\n\n${parts.join("\n")}`
+      return `**${escape(scratchpad.title)}**\n\n${parts.join("\n")}`
     })
     let reply = questions.join("\n\n")
     if (plans.length) reply = `${replies.join("\n\n")}\n\nConfirm this plan to begin, or tell me what to change.`
     const learning = LearningStateSchema.parse({ ...turn.source.chat.learning,
       phase: plans.length ? "awaiting_plan_confirmation" : "awaiting_clarification",
-      outline: plans.flatMap((topic) => topic.state?.type === "topic" ? topic.state.content.map((part) => part.name) : []).slice(0, 100),
+      outline: plans.flatMap((scratchpad) => scratchpad.state?.type === "topic" ? scratchpad.state.content.map((part) => part.name) : []).slice(0, 100),
       currentSection: "", pendingQuestion: plans.length ? "" : questions.join("\n\n"), pendingCheck: undefined, responseQuestion: undefined, privateAnswerKey: "",
       nextAction: plans.length ? "Wait for learner confirmation before teaching." : "Wait for the missing scope or source information.",
       workpad: plans.length ? "The committed topic plan is awaiting learner confirmation. No lesson or check has been generated." : questions.join("\n\n"),
@@ -274,15 +326,15 @@ export class TutorWorkflowRepository {
       if (!chat) throw new Error("Chat not found.")
       const createdIds = turn.batches.flatMap((batch) => batch.jobs.filter((job) => job.mode === "create" && job.committedSnapshot).map((job) => job.scratchpadId))
       const message = MessageSchema.parse({ id: randomUUID(), role: "assistant", content, durationMs,
-        createdAt: new Date().toISOString(), responseQuestion: handoff.learning.responseQuestion, topicIds: createdIds,
+        createdAt: new Date().toISOString(), responseQuestion: handoff.learning.responseQuestion, scratchpadIds: createdIds,
       })
       if (!chat.titleGenerated && createdIds.length) {
-        const topic = state.topics.find((topic) => topic.id === createdIds[0] && topic.state?.type === "topic")
-        if (topic) { chat.title = topic.title; chat.titleGenerated = true }
+        const scratchpad = state.scratchpads.find((scratchpad) => scratchpad.id === createdIds[0] && scratchpad.state?.type === "topic")
+        if (scratchpad) { chat.title = scratchpad.title; chat.titleGenerated = true }
       }
       chat.learning = handoff.learning
       chat.providerSession = turn.providerSession
-      chat.topicHandles = [...new Set([...chat.topicHandles, ...createdIds])]
+      chat.scratchpadHandles = [...new Set([...chat.scratchpadHandles, ...createdIds])]
       if (createdIds.length) chat.scratchpadRequested = false
       chat.messages.push(message)
       if (chat.activeTurnId === turnId) chat.activeTurnId = undefined
@@ -343,6 +395,7 @@ export class TutorWorkflowRepository {
 
   async retry(chatId: string, turnId: string) {
     const previous = this.get(chatId, turnId)
+    if (previous.redirectedTurnId) throw new Error("This request moved to Staging.")
     await reconcileNativeProcesses(previous.nativeProcesses)
     if (previous.nativeInvocations.some((invocation) => ["active", "uncertain"].includes(invocation.status) && !invocation.registered))
       throw new Error("A native attempt has unresolved status. Reconcile that attempt before retrying.")

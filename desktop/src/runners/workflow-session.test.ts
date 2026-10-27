@@ -4,10 +4,10 @@ import { DocumentSectionSchema } from "../shared/document-index"
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 import { test } from "node:test"
-import { newChat, newTopic } from "../main/workspace"
+import { newChat, newScratchpad } from "../main/workspace"
 import { WorkerJobSchema } from "../shared/contracts"
 import { createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
-import { RoleJobSchema } from "../shared/tutor-workflow"
+import { RoleJobSchema, RoleRequestSchema } from "../shared/tutor-workflow"
 import { ScratchpadMutationSchema } from "../shared/scratchpad-state"
 import { TopicStateSchema } from "../shared/topic-state"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -19,7 +19,7 @@ import { TutorWorkflowRepository } from "../main/tutor-workflow"
 test("Tutor discovers teaching skills through headers and reads bodies only on demand", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const { session } = await createWorkflowTutorSession(job, [], "", () => {})
   assert.match(session.instructions, /Make what you write, understandable to humans/)
   assert.doesNotMatch(session.instructions, /## Vary the rhythm/)
@@ -36,11 +36,11 @@ test("Tutor discovers teaching skills through headers and reads bodies only on d
 test("Tutor receives a directory and teaching tools without scratchpad state or management access", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Continue", createdAt: new Date().toISOString(), topicIds: [] })
-  const scratchpad = newTopic("Fractions", "generic")
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Continue", createdAt: new Date().toISOString(), scratchpadIds: [] })
+  const scratchpad = newScratchpad("Fractions", "generic")
   scratchpad.learning.notes += "A private scratchpad payload."
-  chat.topicHandles.push(scratchpad.id)
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...scratchpad, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  chat.scratchpadHandles.push(scratchpad.id)
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const { session } = await createWorkflowTutorSession(job, [], "", () => {})
   assert.equal(session.instructions.includes("A private scratchpad payload."), false)
   assert.equal(session.instructions.includes("MANAGE_GENERIC"), false)
@@ -54,10 +54,10 @@ test("assuming a role injects its own management body and leaves general skills 
   for (const type of ["topic", "test", "generic"] as const) {
     const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
     const chat = newChat(runner.id)
-    const target = newTopic("Assigned task", type)
+    const target = newScratchpad("Assigned task", type)
     target.planConfirmed = true
-    chat.topicHandles = [target.id]
-    const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    chat.scratchpadHandles = [target.id]
+    const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
     const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: type, access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
       request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Update the assigned scratchpad", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } },
     })
@@ -82,10 +82,10 @@ test("an existing open topic can save a teaching handoff after its creation turn
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
   chat.scratchpadRequested = true
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Continue with the first section", createdAt: new Date().toISOString(), topicIds: [] })
-  const topic = newTopic("Vector Spaces")
-  chat.topicHandles.push(topic.id)
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...topic, assetDirectory: "/tmp" }], openedTopicId: topic.id, skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Continue with the first section", createdAt: new Date().toISOString(), scratchpadIds: [] })
+  const scratchpad = newScratchpad("Vector Spaces")
+  chat.scratchpadHandles.push(scratchpad.id)
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: "/tmp" }], openedScratchpadId: scratchpad.id, skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const { session } = await createWorkflowTutorSession(job, [], "", () => {})
 
   const result = await session.execute("save_learning_state", {
@@ -101,12 +101,12 @@ test("an existing open topic can save a teaching handoff after its creation turn
 test("a read-only generic role cannot write or read another scratchpad's state or skills", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  const target = newTopic("Fractions", "generic")
-  const other = newTopic("Assessment", "test")
+  const target = newScratchpad("Fractions", "generic")
+  const other = newScratchpad("Assessment", "test")
   other.learning.notes = "Private assessment notes"
   chat.learning.privateAnswerKey = "Private answer key"
-  chat.topicHandles = [target.id, other.id]
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [target, other].map((topic) => ({ ...topic, assetDirectory: "/tmp" })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  chat.scratchpadHandles = [target.id, other.id]
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [target, other].map((scratchpad) => ({ ...scratchpad, assetDirectory: "/tmp" })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "generic", access: "read", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
     request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Read the notes", requestedAccess: "read", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } },
   })
@@ -125,7 +125,7 @@ test("roles can read recorded questions with ungranted source blocks while mater
   for (const access of ["read", "write"] as const) {
     const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
     const chat = newChat(runner.id)
-    const target = newTopic("Vector spaces")
+    const target = newScratchpad("Vector spaces")
     const material = { id: randomUUID(), name: "Vector Spaces.pdf", kind: "pdf" as const, text: "Ungrantable source text", pages: ["Ungrantable source text"] }
     const granted = { id: randomUUID(), name: "exercise.txt", kind: "text" as const, text: "Granted exercise text", pages: ["Granted exercise text"] }
     const question = "Which vector-space axiom fails?"
@@ -137,14 +137,14 @@ test("roles can read recorded questions with ungranted source blocks while mater
       document: { version: 1, blocks: [{ type: "source", id: "source-1", sectionId: "tp-axioms", materialId: material.id, page: 1, presentation: "link" }] },
       threadTutors: [{ id: chat.id, progress: { "tp-axioms": { status: "active", steps: [{ question }] } } }],
     })
-    chat.topicHandles = [target.id]
-    const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    chat.scratchpadHandles = [target.id]
+    const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
     for (const materialIds of [[], [granted.id]]) {
       const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "topic", access, mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
         request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Return the exact recorded question", requestedAccess: access, context: { learnerMessageIds: [], materialIds, readDependencies: [], relevantContext: "" } },
       })
       const { session } = await createWorkflowRoleSession(job, role, async () => {}, () => {})
-      const questions = await session.execute("topic_getQuestions", { topicId: "scratchpad_1", topicPartId: "tp-axioms" })
+      const questions = await session.execute("topic_getQuestions", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-axioms" })
       assert.equal(questions.success, true, questions.text)
       assert.ok(questions.text.includes(question))
       const scratchpad = await session.execute("read_scratchpad", { scratchpadId: "scratchpad_1" })
@@ -173,9 +173,9 @@ test("role writer tools persist a stage before reporting success and reuse the a
   const chat = newChat(runner.id)
   const material = { id: randomUUID(), name: "fractions.txt", kind: "text" as const, text: "One half is two quarters.", pages: ["One half is two quarters."] }
   chat.materials.push(material)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Create some notes", createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Create some notes", createdAt: new Date().toISOString(), scratchpadIds: [] })
   await workspace.mutate((state) => state.chats.push(chat))
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ target: { mode: "create", type: "generic" }, task: "Create notes", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [material.id], readDependencies: [], relevantContext: "" } }])
@@ -188,9 +188,9 @@ test("role writer tools persist a stage before reporting success and reuse the a
   const reopened = new WorkspaceRepository(directory)
   await reopened.load()
   const saved = new TutorWorkflowRepository(reopened).get(turn.chatId, turn.turnId).batches[0].jobs[0]
-  assert.equal(saved.operations[0]?.mutation.topicId, role.scratchpadId)
+  assert.equal(saved.operations[0]?.mutation.scratchpadId, role.scratchpadId)
   assert.deepEqual(saved.readEvidence, [{ materialId: material.id, page: 1 }])
-  assert.equal(reopened.stateSnapshot.topics.length, 0)
+  assert.equal(reopened.stateSnapshot.scratchpads.length, 0)
   const resumed = await createWorkflowRoleSession(job, saved, (mutation) => workflows.stage(turn.chatId, turn.turnId, role.jobId, "create", mutation), () => {})
   assert.equal(resumed.session.instructions.includes('"reviewedPages":[1]'), true, "Recovery must identify pages already verified by the host")
   assert.match(resumed.session.instructions, /already applied/)
@@ -207,11 +207,11 @@ test("a role reads a granted scratchpad image from that scratchpad's asset direc
   await writeFile(join(assetDirectory, "diagram.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY9sAAAAASUVORK5CYII=", "base64"))
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  const target = newTopic("Fractions", "generic")
+  const target = newScratchpad("Fractions", "generic")
   const image = { id: randomUUID(), name: "diagram.png", kind: "image" as const, text: "Fraction diagram", pages: ["Fraction diagram"] }
   target.materials.push(image)
-  chat.topicHandles = [target.id]
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], workspaceTopics: [{ ...target, notes: target.learning.notes, assetDirectory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "chat-assets") })
+  chat.scratchpadHandles = [target.id]
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], workspaceScratchpads: [{ ...target, notes: target.learning.notes, assetDirectory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "chat-assets") })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "generic", access: "read", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
     request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Inspect the diagram", requestedAccess: "read", context: { learnerMessageIds: [], materialIds: [image.id], readDependencies: [], relevantContext: "" } },
   })
@@ -229,9 +229,9 @@ for (const replyToLearner of [false, true]) test(`a draft topic role returns its
   await workspace.load()
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Propose a fractions plan", createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Propose a fractions plan", createdAt: new Date().toISOString(), scratchpadIds: [] })
   await workspace.mutate((state) => state.chats.push(chat))
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ target: { mode: "create", type: "topic" }, task: "Save the proposed plan and wait for confirmation", requestedAccess: "write", replyToLearner, context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } }])
@@ -242,14 +242,14 @@ for (const replyToLearner of [false, true]) test(`a draft topic role returns its
   const inspected = z.object({ section: DocumentSectionSchema }).parse(JSON.parse(source.text))
   const created = await session.execute("submit_topic_plan", { title: "Fractions", sections: [{ sectionId: inspected.section.id, goals: [] }] })
   assert.equal(created.success, true, created.text)
-  const edit = await session.execute("topic_editContent", { topicId: role.scratchpadHandle, changes: [{ action: "add", block: { type: "markdown", id: "lesson", sectionId: "tp-halves", content: ["Start teaching halves"] } }] })
+  const edit = await session.execute("topic_editContent", { scratchpadId: role.scratchpadHandle, changes: [{ action: "add", block: { type: "markdown", id: "lesson", sectionId: "tp-halves", content: ["Start teaching halves"] } }] })
   assert.equal(edit.success, false)
   const finished = await session.execute("finish_role", { summary: "Proposed the fractions plan. Awaiting learner confirmation.", evidence: [] })
   assert.equal(finished.success, false, "Completed planning no longer accepts an extra finish_role call")
   assert.equal(session.tools.some((tool) => tool.type === "function" && tool.function.name === "topic_editContent"), false)
   await workflows.ready(turn.chatId, turn.turnId, role.jobId, context.output!)
   await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
-  const saved = workspace.topic(role.scratchpadId)
+  const saved = workspace.scratchpad(role.scratchpadId)
   assert.equal(saved.planConfirmed, false)
   assert.deepEqual(saved.state?.type === "topic" && saved.state.document?.blocks, [])
   await workflows.presentPlan(turn.chatId, turn.turnId, batch.batchId)
@@ -266,7 +266,7 @@ test("planning section IDs produce canonical asset references owned by the host"
   const material = { id: randomUUID(), name: "vector-spaces-copy.pdf", kind: "pdf" as const, text: "Vector spaces and their axioms. ".repeat(4), pages: ["6.1 Vector spaces\n" + "Vector spaces and their axioms. ".repeat(4)] }
   chat.materials.push(material)
   await writeFile(join(directory, material.name), "Embedded text fixture")
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: randomUUID(), scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "create", snapshot: null, baseVersion: null, operations: [], request: { target: { mode: "create", type: "topic" }, task: "Plan vector spaces", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [material.id], readDependencies: [], relevantContext: "" } } })
   const context = await createWorkflowRoleSession(job, role, async () => {}, () => {})
   const line = context.session.instructions.split("\n").find((line) => line.startsWith("Indexed curriculum sections: "))!
@@ -281,7 +281,7 @@ test("a tutorial-only upload stays reserved for practice instead of becoming cur
   const chat = newChat(runner.id)
   const material = { id: randomUUID(), name: "tutorial.txt", kind: "text" as const, text: "1. Vector spaces\nPRACTICE_QUESTION_SENTINEL: Which sets are vector spaces?", pages: [] }
   chat.materials.push(material)
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: randomUUID(), scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "create", snapshot: null, baseVersion: null, operations: [],
     request: { target: { mode: "create", type: "topic" }, task: "Plan vector spaces", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [material.id], readDependencies: [], relevantContext: "" } },
   })
@@ -301,10 +301,10 @@ test("confirmed topics retain lesson editing while existing drafts return to Tut
   for (const planConfirmed of [false, true]) {
     const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
     const chat = newChat(runner.id)
-    const target = newTopic("Fractions")
+    const target = newScratchpad("Fractions")
     target.planConfirmed = planConfirmed
-    chat.topicHandles = [target.id]
-    const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    chat.scratchpadHandles = [target.id]
+    const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
     const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
       request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Continue fractions", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } },
     })
@@ -316,7 +316,7 @@ test("confirmed topics retain lesson editing while existing drafts return to Tut
       assert.match(session.instructions, /submit_topic_plan/)
       assert.doesNotMatch(session.instructions, /Before activating a part/)
     }
-    const result = await session.execute("topic_editContent", { topicId: role.scratchpadHandle, changes: [{ action: "add", block: { type: "markdown", id: "halves", content: ["One half is two quarters."] } }] })
+    const result = await session.execute("topic_editContent", { scratchpadId: role.scratchpadHandle, changes: [{ action: "add", block: { type: "markdown", id: "halves", content: ["One half is two quarters."] } }] })
     assert.equal(result.success, planConfirmed, result.text)
     let finished
     if (planConfirmed) finished = await session.execute("finish_role", { summary: "Returned current learning position to Tutor", evidence: [] })
@@ -329,31 +329,31 @@ test("a practice choice cannot activate or assess an untouched part, while Proce
   for (const choice of ["Quick practice", "Keep looking for practice", "Proceed"]) {
     const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
     const chat = newChat(runner.id)
-    const target = newTopic("MIPS arithmetic")
+    const target = newScratchpad("MIPS arithmetic")
     target.planConfirmed = true
     target.state = TopicStateSchema.parse({ ...target.state,
       content: ["addition", "subtraction"].map((name) => ({ id: `tp-${name}`, name, references: [], goals: [], mistakes: [] })),
       threadTutors: [{ id: chat.id, progress: { "tp-addition": { status: "completed", steps: [{ question: "Translate total = price + tax", answerFromUser: "add $s4, $s5, $s6" }] } } }],
     })
-    chat.topicHandles = [target.id]
+    chat.scratchpadHandles = [target.id]
     chat.learning.phase = "awaiting_choice"
     chat.learning.responseQuestion = { prompt: "Proceed to subtraction or practice addition?", options: ["Proceed", choice === "Keep looking for practice" ? choice : "Quick practice"] }
-    chat.messages.push({ id: randomUUID(), role: "user", content: choice, createdAt: new Date().toISOString(), topicIds: [target.id] })
-    const job = WorkerJobSchema.parse({ runner, chat, topics: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+    chat.messages.push({ id: randomUUID(), role: "user", content: choice, createdAt: new Date().toISOString(), scratchpadIds: [target.id] })
+    const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...target, assetDirectory: "/tmp" }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
     const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
       request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Continue the lesson", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [chat.messages[0].id], materialIds: [], readDependencies: [], relevantContext: "" } },
     })
     const mutations: z.infer<typeof ScratchpadMutationSchema>[] = []
     const { session } = await createWorkflowRoleSession(job, role, async (mutation) => { mutations.push(mutation) }, () => {})
-    const activated = await session.execute("topic_activatePart", { topicId: "scratchpad_1", topicPartId: "tp-subtraction" })
+    const activated = await session.execute("topic_activatePart", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-subtraction" })
     assert.equal(activated.success, choice === "Proceed", activated.text)
-    const question = await session.execute("topic_recordQuestion", { topicId: "scratchpad_1", topicPartId: "tp-subtraction", question: "Which source is subtracted?" })
+    const question = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-subtraction", question: "Which source is subtracted?" })
     assert.equal(question.success, choice === "Proceed", question.text)
     if (choice !== "Proceed") {
       assert.deepEqual(mutations, [])
-      const practice = await session.execute("topic_activatePart", { topicId: "scratchpad_1", topicPartId: "tp-addition" })
+      const practice = await session.execute("topic_activatePart", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-addition" })
       assert.equal(practice.success, true, practice.text)
-      const recorded = await session.execute("topic_recordQuestion", { topicId: "scratchpad_1", topicPartId: "tp-addition", question: "Diagnose an incorrect addition destination." })
+      const recorded = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-addition", question: "Diagnose an incorrect addition destination." })
       assert.equal(recorded.success, true, recorded.text)
       const unavailable = await session.execute("save_learning_state", { ...chat.learning, phase: "awaiting_choice", nextAction: "Wait for a new choice; practice sourcing is unavailable", question: "Proceed or keep looking for practice?", responseOptions: ["Proceed", "Keep looking for practice"] })
       assert.equal(unavailable.success, true, unavailable.text)
@@ -364,13 +364,13 @@ test("a practice choice cannot activate or assess an untouched part, while Proce
 test("invalid delegation stays in Tutor until corrected without yielding or saving", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const tutor = await createWorkflowTutorSession(job, [], "", () => {})
   let yielded = false
   void tutor.session.completion.then(() => { yielded = true })
   const context = { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" }
   const request = { target: { mode: "create", type: "test" }, task: "Create a test on MIPS Part 1", requestedAccess: "read", replyToLearner: true, context }
-  for (const type of ["topic", "test", "generic"]) {
+  for (const type of ["topic", "test", "generic"] as const) {
     for (const replyToLearner of [false, true]) {
       const denied = await tutor.session.execute("assume_role", { requests: [{ ...request, target: { mode: "create", type }, replyToLearner }] })
       assert.equal(denied.success, false, denied.text)
@@ -393,4 +393,24 @@ test("invalid delegation stays in Tutor until corrected without yielding or savi
   await tutor.session.completion
   assert.equal(yielded, true)
   assert.deepEqual(tutor.requests, [write])
+})
+
+test("delegation still accepts read tasks, independent batches, and writes for every scratchpad type", async () => {
+  const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
+  const chat = newChat(runner.id)
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const context = { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" }
+  const read = { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Read source coverage", requestedAccess: "read", replyToLearner: false, context }
+  const batches = z.array(z.array(RoleRequestSchema)).parse([[read], [read, { ...read, target: { mode: "existing", scratchpadHandle: "scratchpad_2" } }]])
+  for (const type of ["topic", "test", "generic"] as const) {
+    for (const replyToLearner of [false, true]) {
+      batches.push([{ ...read, target: { mode: "create", type }, requestedAccess: "write", replyToLearner }])
+    }
+  }
+  for (const requests of batches) {
+    const tutor = await createWorkflowTutorSession(job, [], "", () => {})
+    const result = await tutor.session.execute("assume_role", { requests })
+    assert.equal(result.success, true, result.text)
+    assert.deepEqual(tutor.requests, requests)
+  }
 })
