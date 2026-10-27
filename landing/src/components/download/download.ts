@@ -18,14 +18,9 @@ class DownloadSection extends HTMLElement {
     // Icons and trail tips share coordinates so they stay aligned when the orbit changes shape.
     const spiralPoint = (progress: number, index: number) => {
       const radiusScale = 4 - 3 * progress;
-      let horizontalScale = radiusScale;
-      if (height >= width) {
-        // Keep portrait logos outside the copy until the reveal settles.
-        horizontalScale += Math.sin(Math.PI * progress) * 6;
-      }
       const angle = -Math.PI / 2 + index * Math.PI * 2 / 3 + (progress - 1) * Math.PI * 4 / 3;
       return {
-        x: width / 2 + Math.cos(angle) * orbitRadiusX * horizontalScale,
+        x: width / 2 + Math.cos(angle) * orbitRadiusX * radiusScale,
         y: height / 2 + Math.sin(angle) * orbitRadiusY * radiusScale,
       };
     };
