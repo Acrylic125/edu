@@ -59,3 +59,24 @@ export function ContextMenuItem({ className, ...props }: ContextMenuPrimitive.It
     />
   )
 }
+
+export const ContextMenuSub = ContextMenuPrimitive.SubmenuRoot
+
+export function ContextMenuSubTrigger({ className, ...props }: ContextMenuPrimitive.SubmenuTrigger.Props) {
+  return <ContextMenuPrimitive.SubmenuTrigger
+    className={cn("flex cursor-default select-none items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none data-[highlighted]:bg-accent data-[popup-open]:bg-accent [&_svg]:size-4 [&_svg]:shrink-0", className)}
+    {...props}
+  />
+}
+
+export function ContextMenuSubContent({ className, ...props }: ContextMenuPrimitive.Popup.Props) {
+  return <ContextMenuPrimitive.Portal>
+    <ContextMenuPrimitive.Positioner className="z-50 outline-none" side="right" align="start" sideOffset={4}>
+      <ContextMenuPrimitive.Popup
+        data-slot="context-menu-sub-content"
+        className={cn("max-h-[min(20rem,var(--available-height))] min-w-48 overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg outline-none", className)}
+        {...props}
+      />
+    </ContextMenuPrimitive.Positioner>
+  </ContextMenuPrimitive.Portal>
+}

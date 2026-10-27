@@ -50,7 +50,7 @@ const SaveLearningStateInputSchema = z.object({
   question: z.string().max(20_000).optional().describe("Question for a standalone conversation without an active topic. Topic checks come from the recorded step. For a navigation choice, including proceed or quick practice within a topic, use phase awaiting_choice and supply its prompt here and its options in responseOptions."),
   responseOptions: LearningStateSchema.shape.responseQuestion.unwrap().shape.options.optional(),
   pendingCheck: LearningStateSchema.shape.pendingCheck.unwrap().extend({
-    topicId: TopicHandleSchema,
+    scratchpadId: TopicHandleSchema,
   }).optional().describe("Reference an unanswered recorded topic question. May be omitted when exactly one unanswered question exists."),
 })
 
@@ -62,25 +62,25 @@ const ReadMaterialSchema = z.object({
 })
 const replyParser = unified().use(remarkParse)
 const ReadTopicNotesSchema = z.object({
-  topicId: z.string().uuid(),
+  scratchpadId: z.string().uuid(),
   offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(20_000).default(20_000),
 })
-const TopicReadSchema = z.object({ topicId: z.uuid(), threadId: z.string().optional() })
-const QuestionsSchema = z.object({ topicId: z.uuid(), topicPartId: TopicPartIdSchema })
-const MistakesSchema = z.object({ topics: z.array(z.uuid()).nullable() })
+const TopicReadSchema = z.object({ scratchpadId: z.uuid(), threadId: z.string().optional() })
+const QuestionsSchema = z.object({ scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema })
+const MistakesSchema = z.object({ scratchpads: z.array(z.uuid()).nullable() })
 const CoverageQuerySchema = z.object({
-  topics: z.array(TopicHandleSchema).nullable(),
+  scratchpads: z.array(TopicHandleSchema).nullable(),
   offset: z.number().int().nonnegative().default(0),
   limit: z.number().int().min(1).max(100).default(25),
 })
-const ReadTopicEvidenceSchema = ReadTopicNotesSchema.omit({ topicId: true }).extend({ topicId: TopicHandleSchema, topicPartId: TopicPartIdSchema })
+const ReadTopicEvidenceSchema = ReadTopicNotesSchema.omit({ scratchpadId: true }).extend({ scratchpadId: TopicHandleSchema, scratchpadPartId: TopicPartIdSchema })
 const ScratchpadDirectorySchema = z.object({
   query: z.string().max(1000).default(""), type: ScratchpadTypeSchema.optional(),
   includeArchived: z.boolean().default(true), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(100).default(25),
 })
 class WritePrerequisiteError extends Error {
-  constructor(message: string, readonly prerequisite: "creation" | "confirmation", readonly topicId?: string) {
+  constructor(message: string, readonly prerequisite: "creation" | "confirmation", readonly scratchpadId?: string) {
     super(message)
   }
 }
@@ -104,7 +104,7 @@ const tools: ChatCompletionTool[] = [
     function: {
       name: "read_material",
       description:
-        "Read an accessible chat or scratchpad source. Pages are 1-based. Set includeVisuals=true to inspect a PDF slide or diagram. Limit: 15 text pages or 3 visual pages. When quoting or examining the source image itself, display it using ![description](prune-source://id/page). Create original illustrations to explain concepts.",
+        "Read an accessible chat or scratchpad source. Pages are 1-based. Set includeVisuals=true to inspect a PDF slide or diagram. Limit: 15 text pages or 3 visual pages. When quoting or examining the source image itself, display it using ![description](edu-source://id/page). Create original illustrations to explain concepts.",
       parameters: z.toJSONSchema(ReadMaterialSchema),
     },
   },
@@ -114,7 +114,7 @@ const tools: ChatCompletionTool[] = [
       name: "read_scratchpad",
       description:
         "Read a scratchpad, its type, role skill, state and markdown, including archived scratchpads. Excludes private chat handoffs. offset and limit count characters; follow nextOffset until null for a complete review.",
-      parameters: z.toJSONSchema(ReadTopicNotesSchema.omit({ topicId: true }).extend({ scratchpadId: TopicHandleSchema })),
+      parameters: z.toJSONSchema(ReadTopicNotesSchema.omit({ scratchpadId: true }).extend({ scratchpadId: TopicHandleSchema })),
     },
   },
   {
@@ -162,15 +162,15 @@ export async function createTutorSession(
   const request = job.chat.messages.findLast((message) => message.role === "user")
   const command = parseScratchpadCommand(request?.content ?? "")
   const scratchpadRequested = job.chat.scratchpadRequested || command !== undefined
-  const topicHandles = createTopicHandles(job)
-  const focusedIds = new Set(selectTutorTopicIds(job.chat, job.openedTopicId, job.confirmTopicId))
-  const focusedTopics = [...new Map([...job.workspaceTopics, ...job.topics].map((topic) => [topic.id, topic])).values()].filter((topic) => focusedIds.has(topic.id))
-  const currentTests = job.topics.filter((topic) => topic.state?.type === "test")
+  const scratchpadHandles = createTopicHandles(job)
+  const focusedIds = new Set(selectTutorTopicIds(job.chat, job.openedScratchpadId, job.confirmScratchpadId))
+  const focusedTopics = [...new Map([...job.workspaceScratchpads, ...job.scratchpads].map((scratchpad) => [scratchpad.id, scratchpad])).values()].filter((scratchpad) => focusedIds.has(scratchpad.id))
+  const currentTests = job.scratchpads.filter((scratchpad) => scratchpad.state?.type === "test")
   let savedTestScope: string[] | null = null
   if (currentTests.length) {
-    savedTestScope = [...new Set(currentTests.flatMap((topic) => {
-      if (topic.state?.type !== "test") return []
-      return scratchpadReferences(topic.state).flatMap((reference) => {
+    savedTestScope = [...new Set(currentTests.flatMap((scratchpad) => {
+      if (scratchpad.state?.type !== "test") return []
+      return scratchpadReferences(scratchpad.state).flatMap((reference) => {
         if (reference.type === "topic") return [reference.id]
         return []
       })
@@ -186,10 +186,10 @@ export async function createTutorSession(
       sourceUrl: `edu-material://${material.id}/1`,
       numberedSections: materialSections(material),
     }))
-  const focusedScratchpads = focusedTopics.map((topic) => ({
-    id: topicHandles.handle(topic.id), title: topic.title,
-    planConfirmed: job.topics.find((target) => target.id === topic.id)?.planConfirmed ?? false,
-    materials: describe(topic.materials ?? []), ...scratchpadContext(topic, job.chat),
+  const focusedScratchpads = focusedTopics.map((scratchpad) => ({
+    id: scratchpadHandles.handle(scratchpad.id), title: scratchpad.title,
+    planConfirmed: job.scratchpads.find((target) => target.id === scratchpad.id)?.planConfirmed ?? false,
+    materials: describe(scratchpad.materials ?? []), ...scratchpadContext(scratchpad, job.chat),
   }))
   const instructions = `Tutor the learner using the supplied scratchpad management skills.
 
@@ -231,7 +231,7 @@ ${chatTeachingInstructions}
 - The app generates the directory, section anchors and terminology table from JSON. Supply sectionId on lesson blocks, source blocks by materialId/page, and term blocks for terminology.
 - Maintain explanations with topic_editContent. Read existing block IDs before editing. Supply only changed blocks. Save the scratchpad walkthrough separately from the chat explanation; use present only for an explicit request to show stored blocks. Learning tools record questions, answers and progress separately. Keep assessment keys in the private handoff. Continue the source order and preserve earlier working.
 - Progress tools update structured evidence; save_learning_state updates only the private chat handoff.
-- Record each check and follow-up once with topic_recordQuestion. In save_learning_state, select it by pendingCheck (topicId, topicPartId, stepIndex); omit the reference only when exactly one unanswered check exists. The app derives the private handoff and displayed question from that recorded step. Do not repeat the question in your final reply or supply a second copy of its text. For a standalone conversation without an active topic, supply question once in save_learning_state.
+- Record each check and follow-up once with topic_recordQuestion. In save_learning_state, select it by pendingCheck (scratchpadId, scratchpadPartId, stepIndex); omit the reference only when exactly one unanswered check exists. The app derives the private handoff and displayed question from that recorded step. Do not repeat the question in your final reply or supply a second copy of its text. For a standalone conversation without an active topic, supply question once in save_learning_state.
 - When present selects stored blocks, the app uses them as the explanation. Otherwise write the chat explanation or feedback in the final reply. The app renders the recorded question. Do not generate Check callouts. Include needed citations and source content within the explanation blocks selected by present, or within your final reply when no blocks are selected. Use exact material IDs and pages read with read_material.
 - Tool errors and recovery prompts are internal. Repair them, then answer the original learner request with feedback, an explanation, or the pending question. Do not substitute a report about tool calls or retries for the lesson.
 - Test and generic scratchpads have no topic-plan gate. Test questions and answers are maintained by test tools; generic markdown is maintained by generic_updateScratchpad.
@@ -241,22 +241,22 @@ ${chatTeachingInstructions}
 Explicit scratchpad mentions or instructions take precedence over the open scratchpad.
 Scratchpad creation requested: ${scratchpadRequested}.
 Explicit creation command this turn: ${command ? `${command.command}; create a ${command.type} scratchpad. Learner instruction: ${JSON.stringify(command.instruction)}` : "none; infer type from the learner request and context"}.
-Opened scratchpad: ${job.openedTopicId ? topicHandles.handle(job.openedTopicId) : "none"}.
-Plan confirmed this turn: ${job.confirmTopicId ? topicHandles.handle(job.confirmTopicId) : "none"}.
+Opened scratchpad: ${job.openedScratchpadId ? scratchpadHandles.handle(job.openedScratchpadId) : "none"}.
+Plan confirmed this turn: ${job.confirmScratchpadId ? scratchpadHandles.handle(job.confirmScratchpadId) : "none"}.
 ${visualizationInstructions}
 Chat materials: ${JSON.stringify(describe(job.chat.materials))}
-Chat handoff: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.parse(JSON.stringify(job.chat.learning))), topicHandles.referenceHandle))}
-Workspace scratchpad directory: ${JSON.stringify(job.workspaceTopics.map((topic) => ({ id: topicHandles.handle(topic.id), type: topic.state?.type ?? "topic", title: topic.title, archived: topic.archived, access: job.topics.some((tagged) => tagged.id === topic.id && !tagged.archived) ? "read/write" : "read", notesCharacters: topic.notes.length })))}
-Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.parse(JSON.stringify(focusedScratchpads))), topicHandles.referenceHandle))}`
+Chat handoff: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.parse(JSON.stringify(job.chat.learning))), scratchpadHandles.referenceHandle))}
+Workspace scratchpad directory: ${JSON.stringify(job.workspaceScratchpads.map((scratchpad) => ({ id: scratchpadHandles.handle(scratchpad.id), type: scratchpad.state?.type ?? "topic", title: scratchpad.title, archived: scratchpad.archived, access: job.scratchpads.some((tagged) => tagged.id === scratchpad.id && !tagged.archived) ? "read/write" : "read", notesCharacters: scratchpad.notes.length })))}
+Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.parse(JSON.stringify(focusedScratchpads))), scratchpadHandles.referenceHandle))}`
   const sources = [
     ...job.chat.materials.map((material) => ({
       material,
       directory: job.assetDirectory,
     })),
-    ...[...job.topics, ...job.workspaceTopics].flatMap((topic) =>
-      (topic.materials ?? []).map((material) => ({
+    ...[...job.scratchpads, ...job.workspaceScratchpads].flatMap((scratchpad) =>
+      (scratchpad.materials ?? []).map((material) => ({
         material,
-        directory: topic.assetDirectory ?? job.assetDirectory,
+        directory: scratchpad.assetDirectory ?? job.assetDirectory,
       })),
     ),
   ]
@@ -301,19 +301,19 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
       throw new Error(`Read all cited pages before using this content: ${[...missingPages].map(([name, pages]) => `${name}, pages ${[...pages].sort((left, right) => left - right).join(", ")}`).join("; ")}. Read the missing source content, then retry the write.`)
     return [...referencedIds]
   }
-  let staged = WorkspaceSchema.parse({ version: 2, runners: [job.runner], chats: [job.chat], topics: job.topics })
-  for (const topic of job.workspaceTopics) {
-    if (!staged.topics.some((item) => item.id === topic.id)) {
-      staged.topics.push({ ...job.topics[0], id: topic.id, title: topic.title, archived: topic.archived, createdAt: topic.state?.createdAt ?? new Date().toISOString(), titleGenerated: false, materials: topic.materials ?? [], planConfirmed: false, state: topic.state ?? freshTopicState(topic.title, new Date().toISOString()), learning: { ...job.chat.learning, notes: topic.notes } })
+  let staged = WorkspaceSchema.parse({ version: 2, runners: [job.runner], chats: [job.chat], scratchpads: job.scratchpads })
+  for (const scratchpad of job.workspaceScratchpads) {
+    if (!staged.scratchpads.some((item) => item.id === scratchpad.id)) {
+      staged.scratchpads.push({ ...job.scratchpads[0], id: scratchpad.id, title: scratchpad.title, archived: scratchpad.archived, createdAt: scratchpad.state?.createdAt ?? new Date().toISOString(), titleGenerated: false, materials: scratchpad.materials ?? [], planConfirmed: false, state: scratchpad.state ?? freshTopicState(scratchpad.title, new Date().toISOString()), learning: { ...job.chat.learning, notes: scratchpad.notes } })
     }
   }
-  for (const topic of staged.topics) {
-    if (!topic.state || topic.state.type === "generic") continue
-    topic.state = importStructuredContent(topic.state, topic.learning.notes)
-    if (topic.state.type !== "generic") topic.learning.notes = scratchpadMarkdown(topic.state, topic.materials)
+  for (const scratchpad of staged.scratchpads) {
+    if (!scratchpad.state || scratchpad.state.type === "generic") continue
+    scratchpad.state = importStructuredContent(scratchpad.state, scratchpad.learning.notes)
+    if (scratchpad.state.type !== "generic") scratchpad.learning.notes = scratchpadMarkdown(scratchpad.state, scratchpad.materials)
   }
-  const topicMutations: z.infer<typeof ScratchpadMutationSchema>[] = [...(stage?.priorMutations ?? [])]
-  const writable = new Set(job.topics.filter((topic) => !topic.archived).map((topic) => topic.id))
+  const scratchpadMutations: z.infer<typeof ScratchpadMutationSchema>[] = [...(stage?.priorMutations ?? [])]
+  const writable = new Set(job.scratchpads.filter((scratchpad) => !scratchpad.archived).map((scratchpad) => scratchpad.id))
   let writes = Promise.resolve()
   const stateService = new StateService({
     get stateSnapshot() { return structuredClone(staged) },
@@ -329,10 +329,10 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
   }, job.chat.id)
   for (const mutation of stage?.operations ?? []) {
     await stateService.write(mutation)
-    topicMutations.push(mutation)
+    scratchpadMutations.push(mutation)
     if (["createTopic", "createTest", "createGeneric"].includes(mutation.type)) {
-      writable.add(mutation.topicId)
-      topicHandles.register(mutation.topicId)
+      writable.add(mutation.scratchpadId)
+      scratchpadHandles.register(mutation.scratchpadId)
     }
   }
   let saved: LearningState | undefined
@@ -341,23 +341,23 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
   const pendingPhases = ["awaiting_answer", "awaiting_clarification", "contested"]
   const questionText = (text: string) => text.replace(/\s+/g, " ").trim()
   function activeTopicParts() {
-    return staged.topics.flatMap((topic) => {
-      if (!writable.has(topic.id) || topic.archived || !topic.planConfirmed || topic.state?.type !== "topic") return []
-      const progress = topic.state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress ?? {}
+    return staged.scratchpads.flatMap((scratchpad) => {
+      if (!writable.has(scratchpad.id) || scratchpad.archived || !scratchpad.planConfirmed || scratchpad.state?.type !== "topic") return []
+      const progress = scratchpad.state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress ?? {}
       return Object.entries(progress).filter(([, part]) => part.status === "active")
-        .map(([partId, part]) => ({ topicId: topic.id, partId, ...part }))
+        .map(([partId, part]) => ({ scratchpadId: scratchpad.id, partId, ...part }))
     })
   }
   function lessonBody(fallback: string) {
-    const mutation = topicMutations.findLast((mutation) =>
+    const mutation = scratchpadMutations.findLast((mutation) =>
       (mutation.type === "editTopicContent" || mutation.type === "editTestContent") && mutation.present?.length)
     if (!mutation || (mutation.type !== "editTopicContent" && mutation.type !== "editTestContent")) return fallback
-    const topic = staged.topics.find((topic) => topic.id === mutation.topicId)
-    if (!topic?.state || topic.state.type === "generic") return fallback
+    const scratchpad = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)
+    if (!scratchpad?.state || scratchpad.state.type === "generic") return fallback
     return (mutation.present ?? []).map((id) => {
-      const block = topic.state?.type !== "generic" ? topic.state?.document?.blocks.find((block) => block.id === id) : undefined
+      const block = scratchpad.state?.type !== "generic" ? scratchpad.state?.document?.blocks.find((block) => block.id === id) : undefined
       if (!block) throw new Error(`Presented content block not found: ${id}`)
-      return renderContentBlock(block, topic.materials)
+      return renderContentBlock(block, scratchpad.materials)
     }).join("\n\n")
   }
   function prepareReply(reply: string) {
@@ -377,18 +377,23 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     }
     for (const edit of edits.reverse()) reply = reply.slice(0, edit.start) + reply.slice(edit.end)
     reply = reply.trim()
-    if (saved.pendingQuestion && !saved.responseQuestion)
-      reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
+    if (saved.pendingQuestion && !saved.responseQuestion) {
+      if (saved.phase === "awaiting_clarification") {
+        reply += `\n\n${saved.pendingQuestion}`
+      } else {
+        reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
+      }
+    }
     return reply.trim()
   }
   function learningStateError(state: LearningState) {
     const active = activeTopicParts()
     if (pendingPhases.includes(state.phase) && active.length && !active.some((part) => {
-      if (state.pendingCheck?.topicId !== part.topicId || state.pendingCheck.topicPartId !== part.partId) return false
+      if (state.pendingCheck?.scratchpadId !== part.scratchpadId || state.pendingCheck.scratchpadPartId !== part.partId) return false
       const step = part.steps[state.pendingCheck.stepIndex]
       return step !== undefined && step.answerFromUser === undefined
     })) {
-      return "Select an unanswered recorded check with pendingCheck (topicId, topicPartId, stepIndex)."
+      return "Select an unanswered recorded check with pendingCheck (scratchpadId, scratchpadPartId, stepIndex)."
     }
   }
   const completion = Promise.withResolvers<void>()
@@ -404,9 +409,9 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
       for (let page = firstPage; page <= lastPage; page++) pages.add(page)
       readPages.set(id, pages)
     },
-    instructions: topicHandles.modelText(instructions),
+    instructions: scratchpadHandles.modelText(instructions),
     tools,
-    modelText: topicHandles.modelText,
+    modelText: scratchpadHandles.modelText,
     async readMessageImages(message: WorkerJob["chat"]["messages"][number]) {
       const content: ChatCompletionContentPart[] = []
       if (message.role !== "user") return content
@@ -420,7 +425,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
         if (source.material.kind !== "image") continue
         const [png] = await readSourceImages(source.material, source.directory, 1, 1)
         content.push(
-          { type: "text", text: `Attached image: ${source.material.name}. Source: prune-source://${id}/1` },
+          { type: "text", text: `Attached image: ${source.material.name}. Source: edu-source://${id}/1` },
           { type: "image_url", image_url: { url: `data:image/png;base64,${png.toString("base64")}`, detail: "high" } },
         )
         readPages.set(id, new Set([1]))
@@ -443,7 +448,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
       try {
         if (writer || name === "save_learning_state") {
           const serialized = JSON.stringify(input)
-          if (serialized) input = mapTopicReferenceIds(z.json().parse(JSON.parse(topicHandles.storageText(serialized))), (id) => topicHandles.resolve(id, false))
+          if (serialized) input = mapTopicReferenceIds(z.json().parse(JSON.parse(scratchpadHandles.storageText(serialized))), (id) => scratchpadHandles.resolve(id, false))
         }
         if (roleTool) {
           if (roleTool.creation && command && roleTool.role !== command.type)
@@ -452,67 +457,67 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
           const identity = z.object({ threadId: z.string().optional() }).parse(argumentsObject)
           if (identity.threadId !== undefined && identity.threadId !== job.chat.id) throw new Error("Only the current thread's progress can be accessed or written.")
           if (roleTool.operation === "getMistakesForTopic") {
-            const { topics } = z.object({ topics: z.array(z.string()).nullable() }).parse(argumentsObject)
-            input = { ...argumentsObject, topics: topics?.map((handle) => topicHandles.resolve(handle, false)) ?? null }
+            const { scratchpads } = z.object({ scratchpads: z.array(z.string()).nullable() }).parse(argumentsObject)
+            input = { ...argumentsObject, scratchpads: scratchpads?.map((handle) => scratchpadHandles.resolve(handle, false)) ?? null }
           } else if (!roleTool.creation) {
-            let topicId
+            let scratchpadId
             try {
-              topicId = topicHandles.resolve(argumentsObject[roleTool.target] ?? null, writer)
+              scratchpadId = scratchpadHandles.resolve(argumentsObject[roleTool.target] ?? null, writer)
             } catch (error) {
               if (writer && scratchpadRequested && writable.size === 0 && error instanceof Error)
                 throw new WritePrerequisiteError(error.message, "creation")
               throw error
             }
-            const target = staged.topics.find((item) => item.id === topicId)
+            const target = staged.scratchpads.find((item) => item.id === scratchpadId)
             if ((target?.state?.type ?? "topic") !== roleTool.role)
               throw new Error(`${name} requires a ${roleTool.role} scratchpad. This target is ${target?.state?.type ?? "topic"}.`)
-            input = { ...argumentsObject, topicId }
-            if (writer) saveKey = `${name}:${topicHandles.handle(topicId)}`
+            input = { ...argumentsObject, scratchpadId }
+            if (writer) saveKey = `${name}:${scratchpadHandles.handle(scratchpadId)}`
           }
         }
         if (name === "list_scratchpads") {
           const { query, type, includeArchived, offset, limit } = ScratchpadDirectorySchema.parse(input)
-          const directory = staged.topics.filter((topic) => (!type || (topic.state?.type ?? "topic") === type) && (includeArchived || !topic.archived) && topic.title.toLowerCase().includes(query.toLowerCase()))
+          const directory = staged.scratchpads.filter((scratchpad) => (!type || (scratchpad.state?.type ?? "topic") === type) && (includeArchived || !scratchpad.archived) && scratchpad.title.toLowerCase().includes(query.toLowerCase()))
           if (offset > directory.length) throw new Error("Offset is outside the scratchpad directory.")
           const page = directory.slice(offset, offset + limit)
           let nextOffset: number | null = null
           if (offset + page.length < directory.length) nextOffset = offset + page.length
-          result = JSON.stringify({ scratchpads: page.map((topic) => ({ handle: topicHandles.handle(topic.id), title: topic.title, type: topic.state?.type ?? "topic", archived: topic.archived, writable: writable.has(topic.id) })), nextOffset, total: directory.length })
+          result = JSON.stringify({ scratchpads: page.map((scratchpad) => ({ handle: scratchpadHandles.handle(scratchpad.id), title: scratchpad.title, type: scratchpad.state?.type ?? "topic", archived: scratchpad.archived, writable: writable.has(scratchpad.id) })), nextOffset, total: directory.length })
         } else if (name === "read_skill") {
           const { path } = z.object({ path: z.enum(skillFiles) }).parse(input)
           if (stage?.skillPaths && !stage.skillPaths.includes(path)) throw new Error("This skill is not granted to the current role.")
           activity("Reading tutoring guidance")
           result = await readFile(join(job.skillDirectory, path), "utf8")
         } else if (name === "test_getCoveredTopics") {
-          const { topics, offset, limit } = CoverageQuerySchema.parse(input)
-          const topicIds = topics?.map((handle) => topicHandles.resolve(handle, false)) ?? savedTestScope
-          const entries = staged.topics.flatMap((topic) => {
-            const state = topic.state
-            if (state?.type !== "topic" || (topicIds && !topicIds.includes(topic.id))) return []
+          const { scratchpads, offset, limit } = CoverageQuerySchema.parse(input)
+          const scratchpadIds = scratchpads?.map((handle) => scratchpadHandles.resolve(handle, false)) ?? savedTestScope
+          const entries = staged.scratchpads.flatMap((scratchpad) => {
+            const state = scratchpad.state
+            if (state?.type !== "topic" || (scratchpadIds && !scratchpadIds.includes(scratchpad.id))) return []
             return state.content.flatMap((part) => {
               const coverage = topicPartCoverage(state, part)
               if (coverage.coverage === "untaught") return []
-              return [{ topicId: topicHandles.handle(topic.id), title: topic.title, archived: topic.archived, part: {
+              return [{ scratchpadId: scratchpadHandles.handle(scratchpad.id), title: scratchpad.title, archived: scratchpad.archived, part: {
                 id: part.id, parent: part.parent, name: part.name, plannedObjectives: part.goals.map((goal) => goal.objective), mistakeCount: part.mistakes.length, ...coverage,
               } }]
             })
           })
           if (offset > entries.length) throw new Error("Offset is outside the covered topic inventory.")
           const page = entries.slice(offset, offset + limit)
-          const inventory = [...new Set(page.map((entry) => entry.topicId))].map((topicId) => {
-            const topic = page.find((entry) => entry.topicId === topicId)!
-            return { topicId, title: topic.title, archived: topic.archived, parts: page.filter((entry) => entry.topicId === topicId).map((entry) => entry.part) }
+          const inventory = [...new Set(page.map((entry) => entry.scratchpadId))].map((scratchpadId) => {
+            const scratchpad = page.find((entry) => entry.scratchpadId === scratchpadId)!
+            return { scratchpadId, title: scratchpad.title, archived: scratchpad.archived, parts: page.filter((entry) => entry.scratchpadId === scratchpadId).map((entry) => entry.part) }
           })
           let nextOffset: number | null = null
           if (offset + page.length < entries.length) nextOffset = offset + page.length
-          result = JSON.stringify({ topics: inventory, offset, nextOffset, totalParts: entries.length })
+          result = JSON.stringify({ scratchpads: inventory, offset, nextOffset, totalParts: entries.length })
         } else if (name === "read_topic_evidence") {
-          const { topicId: handle, topicPartId, offset, limit } = ReadTopicEvidenceSchema.parse(input)
-          const topicId = topicHandles.resolve(handle, false)
-          const topic = staged.topics.find((topic) => topic.id === topicId)
-          const state = topic?.state
+          const { scratchpadId: handle, scratchpadPartId, offset, limit } = ReadTopicEvidenceSchema.parse(input)
+          const scratchpadId = scratchpadHandles.resolve(handle, false)
+          const scratchpad = staged.scratchpads.find((scratchpad) => scratchpad.id === scratchpadId)
+          const state = scratchpad?.state
           if (state?.type !== "topic") throw new Error("Teaching evidence requires a topic scratchpad.")
-          const part = state.content.find((part) => part.id === topicPartId)
+          const part = state.content.find((part) => part.id === scratchpadPartId)
           if (!part) throw new Error("Topic part not found.")
           const evidence = JSON.stringify(mapTopicReferenceIds(z.json().parse({ part,
             threads: state.threadTutors.flatMap((thread) => {
@@ -521,26 +526,26 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
               return []
             }),
             blocks: state.document?.blocks.filter((block) => block.type !== "term" && block.sectionId === part.id) ?? [],
-          }), topicHandles.referenceHandle))
+          }), scratchpadHandles.referenceHandle))
           if (offset > evidence.length) throw new Error("Offset is outside this topic part's evidence.")
           const end = Math.min(offset + limit, evidence.length)
           let nextOffset: number | null = null
           if (end < evidence.length) nextOffset = end
-          result = JSON.stringify({ topicId: handle, topicPartId, ...topicPartCoverage(state, part), evidence: evidence.slice(offset, end), offset, nextOffset, totalCharacters: evidence.length })
+          result = JSON.stringify({ scratchpadId: handle, scratchpadPartId, ...topicPartCoverage(state, part), evidence: evidence.slice(offset, end), offset, nextOffset, totalCharacters: evidence.length })
         } else if (name === "read_scratchpad") {
           const argumentsObject = z.object({ scratchpadId: TopicHandleSchema, offset: ReadTopicNotesSchema.shape.offset, limit: ReadTopicNotesSchema.shape.limit }).parse(input)
-          const topicId = topicHandles.resolve(argumentsObject.scratchpadId, false)
+          const scratchpadId = scratchpadHandles.resolve(argumentsObject.scratchpadId, false)
           const { offset, limit } = argumentsObject
-          const topic = staged.topics.find((item) => item.id === topicId)
-          if (!topic) throw new Error("Topic not found in this workspace.")
-          const notes = topic.learning.notes
+          const scratchpad = staged.scratchpads.find((item) => item.id === scratchpadId)
+          if (!scratchpad) throw new Error("Topic not found in this workspace.")
+          const notes = scratchpad.learning.notes
           if (offset > notes.length) throw new Error("Offset is outside this topic's notes.")
           const end = Math.min(offset + limit, notes.length)
           let nextOffset: number | null = null
           if (end < notes.length) nextOffset = end
-          activity(`Reading ${topic.title} study history`)
+          activity(`Reading ${scratchpad.title} study history`)
           result = JSON.stringify({
-            scratchpadId: topicHandles.handle(topicId), type: topic.state?.type ?? "topic", roleSkill: `skills/MANAGE_${(topic.state?.type ?? "topic").toUpperCase()}.md`, state: topic.state, title: topic.title, archived: topic.archived,
+            scratchpadId: scratchpadHandles.handle(scratchpadId), type: scratchpad.state?.type ?? "topic", roleSkill: `skills/MANAGE_${(scratchpad.state?.type ?? "topic").toUpperCase()}.md`, state: scratchpad.state, title: scratchpad.title, archived: scratchpad.archived,
             notes: notes.slice(offset, end), offset, nextOffset, totalCharacters: notes.length,
           })
         } else if (name === "read_material") {
@@ -574,7 +579,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             const images = await readSourceImages(material, directory, firstPage, lastPage)
             for (let page = firstPage; page <= lastPage; page++) {
               const png = images[page - firstPage]
-              const url = `prune-source://${id}/${page}`
+              const url = `edu-source://${id}/${page}`
               result += `\nSource image page ${page}: ![${material.name}, page ${page}](${url}). Embed this image when quoting or examining the source figure itself. For explaining concepts, create an original illustration. Exclude answer annotations for pending assessments.`
               sourceImages.push(
                 {
@@ -598,32 +603,32 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
           const operation = roleTool.operation
           const argumentsObject = z.record(z.string(), z.json()).parse(input)
           if (operation === "getMistakesForTopic") {
-            const mistakes = await stateService.getMistakesForTopic(MistakesSchema.parse(input).topics)
-            result = JSON.stringify(mistakes.map((mistake) => ({ ...mistake, topicId: topicHandles.handle(mistake.topicId) })))
+            const mistakes = await stateService.getMistakesForTopic(MistakesSchema.parse(input).scratchpads)
+            result = JSON.stringify(mistakes.map((mistake) => ({ ...mistake, scratchpadId: scratchpadHandles.handle(mistake.scratchpadId) })))
           } else if (!roleTool.writer) {
-            const { topicId } = TopicReadSchema.parse(input)
-            if (operation === "whereAmI" && roleTool.role === "topic") result = JSON.stringify(await stateService.whereAmI(topicId))
-            else if (operation === "whereAmI") result = JSON.stringify(await stateService.whereAmIForTest(topicId))
-            else if (operation === "getTopicProgress") result = JSON.stringify(await stateService.getTopicProgress(topicId))
-            else if (operation === "whatIsNext") result = JSON.stringify(await stateService.whatIsNext(topicId))
-            else if (operation === "getQuestions" && roleTool.role === "topic") result = JSON.stringify(await stateService.getQuestions(topicId, QuestionsSchema.parse(input).topicPartId))
-            else if (operation === "getQuestions") result = JSON.stringify(await stateService.getTestQuestions(topicId))
-            else if (operation === "getTestMistakes") result = JSON.stringify(await stateService.getTestMistakes(topicId))
-            else if (operation === "getGenericReferences") result = JSON.stringify(await stateService.getGenericReferences(topicId))
+            const { scratchpadId } = TopicReadSchema.parse(input)
+            if (operation === "whereAmI" && roleTool.role === "topic") result = JSON.stringify(await stateService.whereAmI(scratchpadId))
+            else if (operation === "whereAmI") result = JSON.stringify(await stateService.whereAmIForTest(scratchpadId))
+            else if (operation === "getTopicProgress") result = JSON.stringify(await stateService.getTopicProgress(scratchpadId))
+            else if (operation === "whatIsNext") result = JSON.stringify(await stateService.whatIsNext(scratchpadId))
+            else if (operation === "getQuestions" && roleTool.role === "topic") result = JSON.stringify(await stateService.getQuestions(scratchpadId, QuestionsSchema.parse(input).scratchpadPartId))
+            else if (operation === "getQuestions") result = JSON.stringify(await stateService.getTestQuestions(scratchpadId))
+            else if (operation === "getTestMistakes") result = JSON.stringify(await stateService.getTestMistakes(scratchpadId))
+            else if (operation === "getGenericReferences") result = JSON.stringify(await stateService.getGenericReferences(scratchpadId))
             else throw new Error("This role tool is not available.")
           } else {
-            const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { topicId: stage?.creationId ?? randomUUID() } : {}) })
-            const target = staged.topics.find((topic) => topic.id === mutation.topicId)
+            const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { scratchpadId: stage?.creationId ?? randomUUID(), createdAt: new Date().toISOString() } : {}) })
+            const target = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)
             let draftContent
-            if (mutation.type === "createTopic") draftContent = mutation.topic.content
+            if (mutation.type === "createTopic") draftContent = mutation.scratchpad.content
             if (mutation.type === "updateTopic" && !target?.planConfirmed) draftContent = mutation.content
             if (draftContent?.some((part) => !part.references.length))
               throw new Error("Every draft curriculum part needs source references from an existing walkthrough. Research sources before proposing a plan.")
             const materials = [...new Map([...job.chat.materials, ...(target?.materials ?? [])].map((material) => [material.id, material])).values()]
             if (mutation.type === "createTopic") {
-              if (materials.length && !mutation.topic.content.length)
+              if (materials.length && !mutation.scratchpad.content.length)
                 throw new Error("Read the attached materials and propose a source-linked curriculum before creating the topic.")
-              const referencedIds = requireMaterialGrounding(mutation.topic.content, materials, mutation.materialIds)
+              const referencedIds = requireMaterialGrounding(mutation.scratchpad.content, materials, mutation.materialIds)
               const planningMaterials = [...new Map([
                 ...materials,
                 ...sources.map(({ material }) => material).filter((material) => referencedIds.includes(material.id)),
@@ -645,9 +650,9 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
               }
             }
             if (!roleTool.creation) {
-              if (!writable.has(mutation.topicId)) throw new Error("Only tagged or newly created scratchpads can be written.")
+              if (!writable.has(mutation.scratchpadId)) throw new Error("Only tagged or newly created scratchpads can be written.")
               if (roleTool.role === "topic" && !target?.planConfirmed && mutation.type !== "updateTopic")
-                throw new WritePrerequisiteError("Wait for the learner to confirm the proposed plan. Present the plan and save phase awaiting_plan_confirmation; do not retry teaching before approval.", "confirmation", mutation.topicId)
+                throw new WritePrerequisiteError("Wait for the learner to confirm the proposed plan. Present the plan and save phase awaiting_plan_confirmation; do not retry teaching before approval.", "confirmation", mutation.scratchpadId)
               if (mutation.type === "updateTopic" && target) {
                 if (mutation.content !== undefined) mutation.expectedContent = TopicStateSchema.parse(target.state).content
               }
@@ -656,31 +661,31 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
               if (mutation.type === "updateTest" && target) mutation.expectedState = TestStateSchema.parse(target.state)
             }
             const existing = existingScratchpadForCreation(staged, job.chat.id, mutation)
-            const replayed = stage?.persist && topicMutations.some((previous) => scratchpadOperationId("", previous) === scratchpadOperationId("", mutation))
+            const replayed = stage?.persist && scratchpadMutations.some((previous) => scratchpadOperationId("", previous) === scratchpadOperationId("", mutation))
             if (replayed) {
-              result = JSON.stringify({ scratchpadId: topicHandles.handle(mutation.topicId), type: roleTool.role, staged: true, reused: true })
+              result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), type: roleTool.role, staged: true, reused: true })
             } else if (existing) {
-              result = JSON.stringify({ scratchpadId: topicHandles.handle(existing.id), type: existing.state?.type, staged: true, reused: true, nextAction: "Use the matching update tool to revise this scratchpad." })
+              result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(existing.id), type: existing.state?.type, staged: true, reused: true, nextAction: "Use the matching update tool to revise this scratchpad." })
             } else {
               const before = structuredClone(staged)
               try {
                 await stateService.write(mutation)
-                if ("materialIds" in mutation) mutation.materialIds = staged.topics.find((topic) => topic.id === mutation.topicId)?.materials.map((material) => material.id)
+                if ("materialIds" in mutation) mutation.materialIds = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.materials.map((material) => material.id)
                 await stage?.persist?.(mutation)
               } catch (error) {
                 staged = before
                 throw error
               }
-              topicMutations.push(mutation)
+              scratchpadMutations.push(mutation)
               if (roleTool.creation) {
-                writable.add(mutation.topicId)
-                topicHandles.register(mutation.topicId)
+                writable.add(mutation.scratchpadId)
+                scratchpadHandles.register(mutation.scratchpadId)
               }
               activity("Staging scratchpad state")
               let nextAction = "Maintain this scratchpad with its matching role tools."
               if (mutation.type === "createTopic") nextAction = "Present the proposed plan and save phase awaiting_plan_confirmation. Wait for learner approval before activating parts or recording questions."
               if (mutation.type === "createTopic" && stage?.persist) nextAction = "The planning role is complete. The host will validate and commit before Tutor presents the plan for learner confirmation."
-              result = JSON.stringify({ scratchpadId: topicHandles.handle(mutation.topicId), type: roleTool.role, staged: true, nextAction, ...((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && { state: staged.topics.find((topic) => topic.id === mutation.topicId)?.state }) })
+              result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), type: roleTool.role, staged: true, nextAction, ...((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && { state: staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.state }) })
             }
           }
         } else if (name === "save_learning_state") {
@@ -689,18 +694,18 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
           const active = activeTopicParts()
           const unanswered = active.flatMap((part) => part.steps.flatMap((step, stepIndex) => {
             if (step.answerFromUser !== undefined) return []
-            return [{ topicId: part.topicId, topicPartId: part.partId, stepIndex, question: step.question }]
+            return [{ scratchpadId: part.scratchpadId, scratchpadPartId: part.partId, stepIndex, question: step.question }]
           }))
           let pendingQuestion = handoff.question ?? handoff.pendingQuestion
           let pendingCheck: LearningState["pendingCheck"]
           if (pendingPhases.includes(handoff.phase) && active.length) {
             let selected
             if (handoff.pendingCheck) {
-              const topicId = topicHandles.resolve(handoff.pendingCheck.topicId, false)
-              selected = unanswered.find((step) => step.topicId === topicId && step.topicPartId === handoff.pendingCheck?.topicPartId && step.stepIndex === handoff.pendingCheck.stepIndex)
+              const scratchpadId = scratchpadHandles.resolve(handoff.pendingCheck.scratchpadId, false)
+              selected = unanswered.find((step) => step.scratchpadId === scratchpadId && step.scratchpadPartId === handoff.pendingCheck?.scratchpadPartId && step.stepIndex === handoff.pendingCheck.stepIndex)
             } else if (unanswered.length === 1) selected = unanswered[0]
-            if (!selected) throw new Error("Select an unanswered recorded check with pendingCheck (topicId, topicPartId, stepIndex). Use topic_recordQuestion first if none exists.")
-            pendingCheck = { topicId: selected.topicId, topicPartId: selected.topicPartId, stepIndex: selected.stepIndex }
+            if (!selected) throw new Error("Select an unanswered recorded check with pendingCheck (scratchpadId, scratchpadPartId, stepIndex). Use topic_recordQuestion first if none exists.")
+            pendingCheck = { scratchpadId: selected.scratchpadId, scratchpadPartId: selected.scratchpadPartId, stepIndex: selected.stepIndex }
             pendingQuestion = selected.question
           }
           if (!pendingPhases.includes(handoff.phase)) pendingQuestion = ""
@@ -709,10 +714,10 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             candidate.responseQuestion = LearningStateSchema.shape.responseQuestion.unwrap().parse({ prompt: pendingQuestion || handoff.question || "", options: handoff.responseOptions })
           if (candidate.responseQuestion && pendingPhases.includes(candidate.phase))
             candidate.responseQuestion.prompt = pendingQuestion
-          const created = topicMutations.some((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type))
-          if (scratchpadRequested && !created && (!job.openedTopicId || command !== undefined) && !["awaiting_choice", "awaiting_clarification"].includes(candidate.phase))
+          const created = scratchpadMutations.some((mutation) => ["createTopic", "createTest", "createGeneric"].includes(mutation.type))
+          if (scratchpadRequested && !created && (!job.openedScratchpadId || command !== undefined) && !["awaiting_choice", "awaiting_clarification"].includes(candidate.phase))
             throw new Error("Infer the scratchpad type from this chat and create it with the matching role tool before saving, or ask a focused clarification if the learner's goal is unclear.")
-          const draftIds = new Set(staged.topics.filter((topic) => writable.has(topic.id) && !topic.archived && !topic.planConfirmed && topic.state?.type === "topic" && topic.state.content.length > 0).map((topic) => topic.id))
+          const draftIds = new Set(staged.scratchpads.filter((scratchpad) => writable.has(scratchpad.id) && !scratchpad.archived && !scratchpad.planConfirmed && scratchpad.state?.type === "topic" && scratchpad.state.content.length > 0).map((scratchpad) => scratchpad.id))
           if (candidate.phase === "awaiting_plan_confirmation" && draftIds.size) {
             delete candidate.responseQuestion
           }
@@ -721,10 +726,10 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
           for (const [key, issue] of writePrerequisites) {
             let resolved = false
             if (issue.prerequisite === "creation" && created) {
-              const createdTopic = topicMutations.some((mutation) => mutation.type === "createTopic")
+              const createdTopic = scratchpadMutations.some((mutation) => mutation.type === "createTopic")
               resolved = !createdTopic || (candidate.phase === "awaiting_plan_confirmation" && draftIds.size > 0)
             }
-            if (issue.prerequisite === "confirmation" && candidate.phase === "awaiting_plan_confirmation" && issue.topicId && draftIds.has(issue.topicId)) resolved = true
+            if (issue.prerequisite === "confirmation" && candidate.phase === "awaiting_plan_confirmation" && issue.scratchpadId && draftIds.has(issue.scratchpadId)) resolved = true
             if (resolved) {
               saveErrors.delete(key)
               writePrerequisites.delete(key)
@@ -758,16 +763,19 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
       }
       if (success && (roleTool || name === "read_scratchpad" || name === "test_getCoveredTopics")) {
         const parsed = z.json().safeParse(JSON.parse(result))
-        if (parsed.success) result = JSON.stringify(mapTopicReferenceIds(parsed.data, topicHandles.referenceHandle))
+        if (parsed.success) result = JSON.stringify(mapTopicReferenceIds(parsed.data, scratchpadHandles.referenceHandle))
       }
-      return { text: topicHandles.modelText(result), images: sourceImages, success }
+      return { text: scratchpadHandles.modelText(result), images: sourceImages, success }
+    },
+    get clarificationQuestion() {
+      if (saved?.phase === "awaiting_clarification") return saved.pendingQuestion
     },
     get saved() {
       return saved !== undefined && saveErrors.size === 0 && !learningStateError(saved)
     },
     get saveError() {
       if (saveErrors.size) {
-        return topicHandles.modelText([...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected scratchpad write. ${error}`).join("\n"))
+        return scratchpadHandles.modelText([...saveErrors.entries()].map(([key, error]) => `Correct ${key}; save_learning_state cannot repair a rejected scratchpad write. ${error}`).join("\n"))
       }
       if (saved) return learningStateError(saved)
     },
@@ -777,14 +785,14 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     recoveryMessage(reply: string) {
       const request = job.chat.messages.findLast((message) => message.role === "user")
       const error = session.saveError
-      return `Internal app correction, not a learner message.\nOriginal learner request: ${JSON.stringify(topicHandles.modelText(request?.content ?? ""))}\n${error ?? "A complete saved handoff and a learner-facing reply are required."}\nRepair outstanding writes with their original tool and target and maintain the scratchpad. Save the private handoff with save_learning_state. Reply to the original learner with only the subject explanation or feedback. The app renders the recorded question; do not repeat it. Place any needed references beside the relevant explanation. Keep internal tool errors, write operations, and retries out of the lesson.`
+      return `Internal app correction, not a learner message.\nOriginal learner request: ${JSON.stringify(scratchpadHandles.modelText(request?.content ?? ""))}\n${error ?? "A complete saved handoff and a learner-facing reply are required."}\nRepair outstanding writes with their original tool and target and maintain the scratchpad. Save the private handoff with save_learning_state. Reply to the original learner with only the subject explanation or feedback. The app renders the recorded question; do not repeat it. Place any needed references beside the relevant explanation. Keep internal tool errors, write operations, and retries out of the lesson.`
     },
     previewReply(reply: string) {
       if (saveErrors.size || (saved && learningStateError(saved))) return ""
-      return topicHandles.storageText(prepareReply(reply))
+      return scratchpadHandles.storageText(prepareReply(reply))
     },
     finish(reply: string) {
-      reply = topicHandles.storageText(prepareReply(reply))
+      reply = scratchpadHandles.storageText(prepareReply(reply))
       if (!saved || saveErrors.size || learningStateError(saved))
         throw new Error(
           [...saveErrors.values()].join("\n") ||
@@ -796,8 +804,8 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
       return {
         reply,
         learning: saved,
-        topicUpdates: [],
-        topicMutations,
+        scratchpadUpdates: [],
+        scratchpadMutations,
       }
     },
   }

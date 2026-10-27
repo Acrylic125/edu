@@ -1,6 +1,7 @@
 .pnpm-store
 temp
 .DS_Store
+.env
 .tmp
 .local-test-env/
 __pycache__/

@@ -1,4 +1,4 @@
 export const links = {
-  download: "",
+  download: import.meta.env.DOWNLOAD_URL ?? "",
   skill: "",
 };

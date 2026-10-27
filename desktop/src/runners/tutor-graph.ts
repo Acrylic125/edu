@@ -4,7 +4,7 @@ import { z } from "zod"
 import { ToolSchema } from "@modelcontextprotocol/sdk/types.js"
 import type { WorkflowHost } from "../main/tutor-workflow"
 import { MessageSchema, ProviderSessionSchema, WorkerResultSchema, type WorkerJob } from "../shared/contracts"
-import { CompleteOutputSchema, RoleSummarySchema, TutorDecisionSchema } from "../shared/tutor-workflow"
+import { CompleteOutputSchema, RoleRequestsSchema, RoleSummarySchema, TutorDecisionSchema } from "../shared/tutor-workflow"
 import { createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
 import type { createTutorSession } from "./tutor"
 import { committedSource } from "./workflow-context"
@@ -32,7 +32,7 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       if (role.output) return { output: role.output }
       if (role.role === "topic" && role.access === "write" && !role.snapshot?.planConfirmed) {
         const saved = role.operations.findLast((operation) => operation.mutation.type === "createTopic" || operation.mutation.type === "updateTopic")?.mutation
-        if (saved?.type === "createTopic") return { output: { summary: "Recovered the staged topic plan for confirmation.", evidence: saved.topic.content.flatMap((part) => part.references) } }
+        if (saved?.type === "createTopic") return { output: { summary: "Recovered the staged topic plan for confirmation.", evidence: saved.scratchpad.content.flatMap((part) => part.references) } }
         if (saved?.type === "updateTopic" && saved.content) return { output: { summary: "Recovered the staged topic plan for confirmation.", evidence: saved.content.flatMap((part) => part.references) } }
       }
       const context = await createWorkflowRoleSession({ ...committedSource(turn), ...connection, apiKey: connection.apiKey ?? "" }, role, async (mutation) => {
@@ -53,6 +53,7 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
   const State = new StateSchema({
     chatId: z.string().uuid(), turnId: z.string().uuid(), contextVersion: z.string().uuid().optional(),
     decision: TutorDecisionSchema.optional(), batchId: z.string().uuid().optional(), jobId: z.string().uuid().optional(),
+    delegationError: z.string().optional(),
     completion: CompleteOutputSchema.optional(),
     overBudget: z.boolean().default(false), directPlan: z.boolean().default(false),
     singleTurn: z.boolean().default(false), directResult: WorkerResultSchema.optional(),
@@ -71,22 +72,22 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       }
       if (command || turn.source.chat.scratchpadRequested) return { directPlan: false }
       const source = committedSource(turn)
-      const targets = selectTutorTopicIds(source.chat, source.openedTopicId, source.confirmTopicId)
+      const targets = selectTutorTopicIds(source.chat, source.openedScratchpadId, source.confirmScratchpadId)
       if (targets.length !== 1) return { directPlan: false }
-      const topic = source.topics.find((topic) => topic.id === targets[0] && !topic.archived)
-      if (topic?.state?.type !== "topic" || !topic.planConfirmed) return { directPlan: false }
+      const scratchpad = source.scratchpads.find((scratchpad) => scratchpad.id === targets[0] && !scratchpad.archived)
+      if (scratchpad?.state?.type !== "topic" || !scratchpad.planConfirmed) return { directPlan: false }
       const summary = turn.summary?.summary ?? ""
       const contextBytes = Buffer.byteLength(JSON.stringify({ messages: source.chat.messages, learning: source.chat.learning, summary }))
       // Leave room for the role's management instructions, current target, and tool schemas.
       if (summary.length > 20_000 || contextBytes > (budget.maxInputTokens - budget.reserveTokens) / 2) return { directPlan: false }
       const handles = createTopicHandles({ ...source, apiKey: "" })
       const batch = await repository.assumeRole(chatId, turnId, turnId, [{
-        target: { mode: "existing", scratchpadHandle: handles.handle(topic.id) },
-        task: "Handle the latest learner request for this topic. Use the saved handoff and recorded evidence to assess any pending answer and continue the sourced lesson. Honor explicit changes of section or scope. Ask one check when teaching, then save the handoff and reply. If the request needs work outside this target or ungranted dependencies, return it to Tutor with finish_role and needsCoordination before making any writes.",
+        target: { mode: "existing", scratchpadHandle: handles.handle(scratchpad.id) },
+        task: "Handle the latest learner request for this topic. Use the saved handoff and recorded evidence to assess any pending answer and honor the latest navigation choice. If the learner selects practice, source practice on the completed part; if unavailable, explain the limitation and wait for a new choice. Begin the next part only after the learner chooses to proceed. Honor explicit changes of section or scope. Ask one check when teaching, then save the handoff and reply. If the request needs work outside this target or ungranted dependencies, return it to Tutor with finish_role and needsCoordination before making any writes.",
         requestedAccess: "write", replyToLearner: true,
         context: {
           learnerMessageIds: source.chat.messages.map((message) => message.id),
-          materialIds: [...new Set([...source.chat.materials, ...topic.materials].map((material) => material.id))],
+          materialIds: [...new Set([...source.chat.materials, ...scratchpad.materials].map((material) => material.id))],
           readDependencies: [], relevantContext: summary,
         },
       }])
@@ -114,12 +115,13 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       await repository.saveReply(chatId, turnId, result.reply, handoff)
       return { completion: await repository.complete(chatId, turnId) }
     })
-    .addNode("prepare_context", async ({ chatId, turnId }) => {
+    .addNode("prepare_context", async ({ chatId, turnId, delegationError }) => {
       const turn = await repository.get(chatId, turnId)
-      const key = `role-isolation-v2:${turn.batches.at(-1)?.batchId ?? "entry"}:${turn.summary?.summaryId ?? "full"}`
+      const key = `role-isolation-v2:${turn.batches.at(-1)?.batchId ?? "entry"}:${turn.summary?.summaryId ?? "full"}:${delegationError ?? ""}`
       const saved = turn.contexts.find((context) => context.key === key)
       const source = committedSource(turn)
       const { session } = await createWorkflowTutorSession({ ...source, ...connection, apiKey: connection.apiKey ?? "" }, turn.batches.flatMap((batch) => batch.receipt ? [batch.receipt] : []), turn.summary?.summary ?? "", activity)
+      if (delegationError) session.instructions += `\nCorrect the rejected delegation before continuing. No role ran and no writes were committed for that request.\n${delegationError}`
       const context = saved ?? await repository.saveContext(chatId, turnId, {
         contextVersion: randomUUID(), tutorStepId: randomUUID(), key, source, summary: turn.summary?.summary ?? "", instructions: session.instructions,
         tools: session.tools.map((tool) => {
@@ -145,7 +147,7 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
         tools: [], get saved() { return true }, hasReply(reply: string) { return reply.trim().length > 0 },
         async readMessageImages() { return [] },
         async execute() { return { success: false, text: "No tools are available while summarizing.", images: [] } },
-        finish(reply: string) { return { reply: MessageSchema.shape.content.trim().min(1).max(30_000).parse(reply), learning: job.chat.learning, topicUpdates: [], topicMutations: [] } },
+        finish(reply: string) { return { reply: MessageSchema.shape.content.trim().min(1).max(30_000).parse(reply), learning: job.chat.learning, scratchpadUpdates: [], scratchpadMutations: [] } },
       }
       const result = await native(job, session, `${context.tutorStepId}:summary`)
       const before = Buffer.byteLength(JSON.stringify(eligible))
@@ -165,15 +167,18 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
         tutor.session.tools = context.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } }))
       }
       const result = await native(job, tutor.session, context.tutorStepId)
-      if (tutor.requests) return { decision: TutorDecisionSchema.parse({ action: "delegate", requests: tutor.requests }) }
+      if (tutor.requests) return { decision: TutorDecisionSchema.parse({ action: "delegate", requests: tutor.requests }), delegationError: undefined }
       const handoffRef = await repository.saveHandoff(chatId, turnId, context.tutorStepId, result.learning, result.providerSession)
-      return { decision: TutorDecisionSchema.parse({ action: "reply", reply: result.reply, handoffRef }) }
+      return { decision: TutorDecisionSchema.parse({ action: "reply", reply: result.reply, handoffRef }), delegationError: undefined }
     })
     .addNode("assume_role", async ({ chatId, turnId, contextVersion, decision }) => {
       if (decision?.action !== "delegate") throw new Error("Delegation requests are required.")
+      const requests = RoleRequestsSchema.safeParse(decision.requests)
+      // Older builds checkpointed requests before checking access; retry must let Tutor repair them.
+      if (!requests.success) return { delegationError: requests.error.message }
       const turn = await repository.get(chatId, turnId)
       const context = turn.contexts.find((context) => context.contextVersion === contextVersion)!
-      const batch = await repository.assumeRole(chatId, turnId, context?.tutorStepId ?? turn.learnerMessageId, decision.requests)
+      const batch = await repository.assumeRole(chatId, turnId, context?.tutorStepId ?? turn.learnerMessageId, requests.data)
       return { batchId: batch.batchId }
     })
     .addNode("topic_role", async (state) => { await roleGraph.invoke({ chatId: state.chatId, turnId: state.turnId, jobId: state.jobId! }); return {} })
@@ -209,11 +214,12 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
     .addConditionalEdges("prepare_context", ({ overBudget }) => overBudget ? "compact_history" : "tutor", ["compact_history", "tutor"])
     .addEdge("compact_history", "prepare_context")
     .addConditionalEdges("tutor", ({ decision }) => decision?.action === "delegate" ? "assume_role" : "save_reply", ["assume_role", "save_reply"])
-    .addConditionalEdges("assume_role", async ({ chatId, turnId, batchId }) => {
+    .addConditionalEdges("assume_role", async ({ chatId, turnId, batchId, delegationError }) => {
+      if (delegationError) return "prepare_context"
       const turn = await repository.get(chatId, turnId)
       const batch = turn.batches.find((batch) => batch.batchId === batchId)!
       return batch.jobs.map((job) => new Send(`${job.role}_role`, { chatId, turnId, jobId: job.jobId }))
-    }, ["topic_role", "test_role", "generic_role"])
+    }, ["prepare_context", "topic_role", "test_role", "generic_role"])
     .addEdge("topic_role", "commit").addEdge("test_role", "commit").addEdge("generic_role", "commit")
     .addConditionalEdges("commit", async ({ chatId, turnId, batchId }) => {
       const turn = await repository.get(chatId, turnId)

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
 import { z } from "zod"
-import { newChat, newTopic } from "../main/workspace"
+import { newChat, newScratchpad } from "../main/workspace"
 import { WorkerJobSchema } from "../shared/contracts"
 import { createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
 import { RoleJobSchema } from "../shared/tutor-workflow"
@@ -37,9 +37,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 `, { mode: 0o700 })
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Create notes", createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Create notes", createdAt: new Date().toISOString(), scratchpadIds: [] })
   chat.providerSession = { provider: "codex", threadId: "old-full-transcript", home: directory, executable, toolVersion: 23, status: "ready" }
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "assets"), codex: { executable, home: directory } })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "assets"), codex: { executable, home: directory } })
   const tutor = await createWorkflowTutorSession(job, [], "Earlier conversation summary", () => {})
   await runCodexTutorTurn(job, () => {}, () => {}, () => {}, undefined, () => {}, tutor.session)
   assert.equal(tutor.requests?.[0].task, "Create notes")
@@ -73,7 +73,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
   chat.materials.push({ id: randomUUID(), name: "fractions.txt", kind: "text", text: "Halves and quarters", pages: [] })
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "assets"), codex: { executable, home: directory } })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: join(directory, "assets"), codex: { executable, home: directory } })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: randomUUID(), scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "create", baseVersion: null, snapshot: null, operations: [], request: { target: { mode: "create", type: "topic" }, task: "Plan fractions", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [chat.materials[0].id], readDependencies: [], relevantContext: "" } } })
   let persisted = false
   const { session } = await createWorkflowRoleSession(job, role, async () => { persisted = true }, () => {})
@@ -93,7 +93,7 @@ test("ordinary Codex turns resume the native conversation and send only the new 
   const log = join(directory, "requests.jsonl")
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "First learner message", createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "First learner message", createdAt: new Date().toISOString(), scratchpadIds: [] })
   await writeFile(executable, `#!${process.execPath}
 import { createInterface } from "node:readline";
 import { appendFileSync } from "node:fs";
@@ -117,15 +117,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
 });
 `, { mode: 0o700 })
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory, codex: { executable, home: directory } })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory, codex: { executable, home: directory } })
   const first = await createWorkflowTutorSession(job, [], "", () => {})
   first.session.resumeProviderSession = true
   const previewsBeforeSave: string[] = []
   const result = await runCodexTutorTurn(job, () => {}, () => {}, () => {}, undefined, (text) => { if (!first.session.saved && text) previewsBeforeSave.push(text) }, first.session)
   assert.deepEqual(previewsBeforeSave, ["A ", "A response"], "Provider deltas must reach the learner before the handoff is saved")
   job.chat.providerSession = result.providerSession
-  job.chat.messages.push({ id: randomUUID(), role: "assistant", content: result.reply, createdAt: new Date().toISOString(), topicIds: [] })
-  job.chat.messages.push({ id: randomUUID(), role: "user", content: "Second learner message", createdAt: new Date().toISOString(), topicIds: [] })
+  job.chat.messages.push({ id: randomUUID(), role: "assistant", content: result.reply, createdAt: new Date().toISOString(), scratchpadIds: [] })
+  job.chat.messages.push({ id: randomUUID(), role: "user", content: "Second learner message", createdAt: new Date().toISOString(), scratchpadIds: [] })
   const second = await createWorkflowTutorSession(job, [], "", () => {})
   second.session.resumeProviderSession = true
   await runCodexTutorTurn(job, () => {}, () => {}, () => {}, undefined, () => {}, second.session)
@@ -135,9 +135,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const input = requests.filter((request) => request.method === "turn/start").at(-1)?.params
   assert.match(JSON.stringify(input), /Second learner message/)
   assert.equal(JSON.stringify(input).includes("First learner message"), false)
-  const target = newTopic("Response notes", "generic")
-  job.topics = [{ ...target, assetDirectory: directory }]
-  job.chat.topicHandles = [target.id]
+  const target = newScratchpad("Response notes", "generic")
+  job.scratchpads = [{ ...target, assetDirectory: directory }]
+  job.chat.scratchpadHandles = [target.id]
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: target.id, scratchpadHandle: "scratchpad_1", role: "generic", access: "write", mode: "existing", snapshot: target, baseVersion: "v1", operations: [],
     request: { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Reply to the learner", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [job.chat.messages.at(-1)!.id], materialIds: [], readDependencies: [], relevantContext: "" } },
   })

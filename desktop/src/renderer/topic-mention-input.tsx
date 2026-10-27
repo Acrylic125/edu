@@ -41,30 +41,30 @@ import { parseScratchpadCommand, scratchpadCommands } from "../shared/scratchpad
 import { parseTopicMentions, topicMention } from "../shared/topic-mentions"
 import type { Snapshot } from "../shared/contracts"
 
-type Topic = Pick<Snapshot["topics"][number], "id" | "title" | "archived" | "state">
+type Topic = Pick<Snapshot["scratchpads"][number], "id" | "title" | "archived" | "state">
 
 class TopicMentionNode extends TextNode {
-  __topicId: string
+  __scratchpadId: string
 
   static getType() {
     return "topic-mention"
   }
 
   static clone(node: TopicMentionNode) {
-    return new TopicMentionNode(node.__topicId, node.__text, node.__key)
+    return new TopicMentionNode(node.__scratchpadId, node.__text, node.__key)
   }
 
-  static importJSON(json: Spread<{ topicId: string }, SerializedTextNode>) {
-    return $createTopicMentionNode(json.topicId, json.text.slice(1)).updateFromJSON(json)
+  static importJSON(json: Spread<{ scratchpadId: string }, SerializedTextNode>) {
+    return $createTopicMentionNode(json.scratchpadId, json.text.slice(1)).updateFromJSON(json)
   }
 
-  constructor(topicId: string, text: string, key?: NodeKey) {
+  constructor(scratchpadId: string, text: string, key?: NodeKey) {
     super(text, key)
-    this.__topicId = topicId
+    this.__scratchpadId = scratchpadId
   }
 
   exportJSON() {
-    return { ...super.exportJSON(), topicId: this.__topicId }
+    return { ...super.exportJSON(), scratchpadId: this.__scratchpadId }
   }
 
   createDOM(config: EditorConfig) {
@@ -88,10 +88,25 @@ class TopicMentionNode extends TextNode {
   }
 }
 
-function $createTopicMentionNode(topicId: string, title: string) {
+function $createTopicMentionNode(scratchpadId: string, title: string) {
   return $applyNodeReplacement(
-    new TopicMentionNode(topicId, `@${title}`).setMode("token"),
+    new TopicMentionNode(scratchpadId, `@${title}`).setMode("token"),
   )
+}
+
+function TopicMentions({ scratchpads }: { scratchpads: Topic[] }) {
+  const [editor] = useLexicalComposerContext()
+  useEffect(() => editor.registerNodeTransform(TextNode, (node) => {
+    if (!node.isSimpleText()) return
+    const [mention] = parseTopicMentions(node.getTextContent())
+    if (!mention) return
+    const parts = node.splitText(mention.start, mention.end)
+    let target = parts[0]
+    if (mention.start > 0) target = parts[1]
+    const title = scratchpads.find((scratchpad) => scratchpad.id === mention.id)?.title ?? mention.title
+    target.replace($createTopicMentionNode(mention.id, title))
+  }), [editor, scratchpads])
+  return null
 }
 
 class ScratchpadCommandNode extends TextNode {
@@ -216,14 +231,14 @@ function CommandTypeahead() {
 }
 
 class TopicOption extends MenuOption {
-  constructor(readonly topic: Topic) {
-    super(topic.id)
+  constructor(readonly scratchpad: Topic) {
+    super(scratchpad.id)
   }
 }
 
 function serialize(node: LexicalNode): string {
   if (node instanceof TopicMentionNode)
-    return topicMention(node.__topicId, node.getTextContent().slice(1))
+    return topicMention(node.__scratchpadId, node.getTextContent().slice(1))
   if ($isLineBreakNode(node)) return "\n"
   if ($isTextNode(node)) return node.getTextContent()
   if ($isRootNode(node)) return node.getChildren().map(serialize).join("\n")
@@ -251,7 +266,7 @@ function SubmitOnEnter({ onSubmit }: { onSubmit: () => void }) {
   return null
 }
 
-function TopicTypeahead({ topics }: { topics: Topic[] }) {
+function TopicTypeahead({ scratchpads }: { scratchpads: Topic[] }) {
   const [editor] = useLexicalComposerContext()
   const [query, setQuery] = useState<string | null>(null)
   const trigger = useBasicTypeaheadTriggerMatch("@", {
@@ -260,15 +275,15 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
     allowWhitespace: true,
   })
   const search = query?.toLowerCase() ?? ""
-  const options = topics
-    .filter((topic) => topic.title.toLowerCase().includes(search))
+  const options = scratchpads
+    .filter((scratchpad) => scratchpad.title.toLowerCase().includes(search))
     .sort((left, right) => {
       if (left.archived === right.archived) return 0
       if (left.archived) return 1
       return -1
     })
     .slice(0, 8)
-    .map((topic) => new TopicOption(topic))
+    .map((scratchpad) => new TopicOption(scratchpad))
 
   return (
     <LexicalTypeaheadMenuPlugin
@@ -278,7 +293,7 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
       commandPriority={COMMAND_PRIORITY_NORMAL}
       onSelectOption={(option, textNode, closeMenu) => {
         editor.update(() => {
-          const mention = $createTopicMentionNode(option.topic.id, option.topic.title)
+          const mention = $createTopicMentionNode(option.scratchpad.id, option.scratchpad.title)
           if (textNode) textNode.replace(mention)
           const space = $createTextNode(" ")
           mention.insertAfter(space)
@@ -296,7 +311,7 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
             </p>
             {options.length === 0 ? (
               <p className="px-3 py-2 text-sm text-muted-foreground">
-                {topics.length === 0 ? "Create a topic to tag it here." : "No matching topics"}
+                {scratchpads.length === 0 ? "Create a topic to tag it here." : "No matching topics"}
               </p>
             ) : (
               <ul role="listbox" aria-label="Scratchpads">
@@ -313,10 +328,10 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
                       selectOptionAndCleanUp(option)
                     }}
                   >
-                    <Badge variant={option.topic.state?.type ?? "topic"}>
-                      {{ topic: "Topic", test: "Test", generic: "Generic" }[option.topic.state?.type ?? "topic"]}
+                    <Badge variant={option.scratchpad.state?.type ?? "topic"}>
+                      {{ topic: "Topic", test: "Test", generic: "Generic" }[option.scratchpad.state?.type ?? "topic"]}
                     </Badge>
-                    <span className="truncate">{option.topic.title}</span>
+                    <span className="truncate">{option.scratchpad.title}</span>
                   </li>
                 ))}
               </ul>
@@ -332,7 +347,7 @@ function TopicTypeahead({ topics }: { topics: Topic[] }) {
 export function TopicMentionInput({
   label,
   initialValue,
-  topics,
+  scratchpads,
   placeholder,
   autoFocus,
   className,
@@ -341,7 +356,7 @@ export function TopicMentionInput({
 }: {
   label: string
   initialValue: string
-  topics: Topic[]
+  scratchpads: Topic[]
   placeholder: string
   autoFocus?: boolean
   className: string
@@ -367,7 +382,7 @@ export function TopicMentionInput({
           for (const mention of parseTopicMentions(initialValue)) {
             append(initialValue.slice(cursor, mention.start))
             const title =
-              topics.find((topic) => topic.id === mention.id)?.title ?? mention.title
+              scratchpads.find((scratchpad) => scratchpad.id === mention.id)?.title ?? mention.title
             paragraph.append($createTopicMentionNode(mention.id, title))
             cursor = mention.end
           }
@@ -392,6 +407,7 @@ export function TopicMentionInput({
           ErrorBoundary={LexicalErrorBoundary}
         />
       </div>
+      <TopicMentions scratchpads={scratchpads} />
       <ScratchpadCommands />
       <HistoryPlugin />
       {autoFocus && <AutoFocusPlugin defaultSelection="rootEnd" />}
@@ -400,7 +416,7 @@ export function TopicMentionInput({
         onChange={(state) => onChange(state.read(() => serialize($getRoot())))}
       />
       <CommandTypeahead />
-      <TopicTypeahead topics={topics} />
+      <TopicTypeahead scratchpads={scratchpads} />
       <SubmitOnEnter onSubmit={onSubmit} />
     </LexicalComposer>
   )

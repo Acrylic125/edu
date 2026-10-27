@@ -201,8 +201,8 @@ function ProviderEditor({ provider }: {
     actionLabel = "Cancel sign-in"
     if (cliProvider) actionLabel = "Connecting…"
   }
-  let binaryPlaceholder = "Installed Codex (bundled fallback)"
-  let binaryHelp = "Leave empty to use a compatible installed Codex, falling back to the bundled runtime."
+  let binaryPlaceholder = "/absolute/path/to/codex"
+  let binaryHelp = "Leave empty to detect a compatible installed Codex CLI automatically. Set a path only for a custom installation."
   if (cliProvider) {
     binaryPlaceholder = "/absolute/path/to/agy"
     if (provider.id === "claude") binaryPlaceholder = "/absolute/path/to/claude"
@@ -211,8 +211,7 @@ function ProviderEditor({ provider }: {
   let runtimeSource = "Installed Codex"
   if (provider.id === "claude") runtimeSource = "Installed Claude Code"
   else if (provider.id === "antigravity") runtimeSource = "Installed Antigravity CLI"
-  if (provider.runtime?.source === "bundled") runtimeSource = "Bundled fallback"
-  else if (provider.runtime?.source === "custom") runtimeSource = "Custom binary"
+  if (provider.runtime?.source === "custom") runtimeSource = "Custom binary"
   if (!provider.runtime) runtimeSource = "Not detected"
 
   async function perform(scope: "save" | "connection", operation: () => Promise<void>) {

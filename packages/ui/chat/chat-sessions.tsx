@@ -9,9 +9,16 @@ import {
   type ReactNode,
 } from "react"
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual"
-import { MenuIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
+import { ArchiveIcon, CopyIcon, MenuIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react"
 
 import { Button } from "../primitives/button"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../primitives/context-menu"
 import {
   Dialog,
   DialogContent,
@@ -43,6 +50,8 @@ export function ChatSessions({
   onSelect,
   onNew,
   onClose,
+  onCopyId,
+  onDelete,
   children,
 }: {
   sessions: { id: string; title: string }[]
@@ -51,12 +60,16 @@ export function ChatSessions({
   onSelect: (id: string) => void
   onNew: () => void
   onClose: (id: string) => void
+  onCopyId?: (id: string) => void
+  onDelete?: (id: string) => void
   children: ReactNode
 }) {
   const value = activeId ?? "new"
   const panelId = useId()
   const scroll = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<string | null>(null)
+  const revealedValue = useRef<string | undefined>(undefined)
+  const closing = useRef(false)
   const sessionById = new Map(sessions.map((session) => [session.id, session]))
   const tabs = openIds.flatMap((id) => {
     if (id === "new") return []
@@ -84,8 +97,11 @@ export function ChatSessions({
   })
 
   useLayoutEffect(() => {
-    if (activeIndex >= 0)
+    // Removing earlier tabs changes the active index without requesting navigation.
+    if (activeIndex >= 0 && revealedValue.current !== value && !closing.current)
       virtualizer.scrollToIndex(activeIndex, { align: "auto" })
+    revealedValue.current = value
+    closing.current = false
     if (pendingFocus.current === value || pendingFocus.current === "closed") {
       const button = scroll.current?.querySelector<HTMLButtonElement>(
         '[role="tab"][aria-selected="true"]',
@@ -95,7 +111,7 @@ export function ChatSessions({
         pendingFocus.current = null
       }
     }
-  }, [activeIndex, value, virtualizer])
+  }, [activeIndex, value, openIds, virtualizer])
 
   function select(id: string) {
     if (id === "new") onNew()
@@ -121,6 +137,7 @@ export function ChatSessions({
   }
 
   function close(id: string) {
+    closing.current = true
     // Keep keyboard focus in the tab strip when its focused control is removed.
     if (scroll.current?.contains(document.activeElement))
       pendingFocus.current = "closed"
@@ -154,35 +171,69 @@ export function ChatSessions({
                     transform: `translateX(${item.start}px)`,
                   }}
                 >
-                  <button
-                    ref={(element) => {
-                      if (
-                        element &&
-                        (pendingFocus.current === tab.id ||
-                          (pendingFocus.current === "closed" &&
-                            tab.id === value))
-                      ) {
-                        element.focus({ preventScroll: true })
-                        pendingFocus.current = null
-                      }
-                    }}
-                    type="button"
-                    role="tab"
-                    id={`${panelId}-${tab.id}`}
-                    aria-controls={panelId}
-                    aria-selected={tab.id === value}
-                    tabIndex={tab.id === value ? 0 : -1}
-                    title={title}
-                    className={cn(
-                      "h-full w-full truncate rounded-full py-2 pl-3 pr-8 text-left text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      tab.id === value &&
-                        "bg-accent font-medium text-foreground",
-                    )}
-                    onClick={() => select(tab.id)}
-                    onKeyDown={(event) => navigate(event, item.index)}
-                  >
-                    {title}
-                  </button>
+                  <ContextMenu>
+                    <ContextMenuTrigger render={<button
+                      ref={(element) => {
+                        if (
+                          element &&
+                          (pendingFocus.current === tab.id ||
+                            (pendingFocus.current === "closed" &&
+                              tab.id === value))
+                        ) {
+                          element.focus({ preventScroll: true })
+                          pendingFocus.current = null
+                        }
+                      }}
+                      type="button"
+                      role="tab"
+                      id={`${panelId}-${tab.id}`}
+                      aria-controls={panelId}
+                      aria-selected={tab.id === value}
+                      tabIndex={tab.id === value ? 0 : -1}
+                      title={title}
+                      className={cn(
+                        "h-full w-full truncate rounded-full py-2 pl-3 pr-8 text-left text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                        tab.id === value &&
+                          "bg-accent font-medium text-foreground",
+                      )}
+                      onClick={() => select(tab.id)}
+                      onKeyDown={(event) => navigate(event, item.index)}
+                    >
+                      {title}
+                    </button>} />
+                    <ContextMenuContent finalFocus={() => {
+                      // Archiving can remove the trigger before the menu restores focus.
+                      if (document.getElementById(`${panelId}-${tab.id}`)) return true
+                      restoreChatFocus(true)
+                      return false
+                    }}>
+                      <ContextMenuItem onClick={() => close(tab.id)}>
+                        <ArchiveIcon aria-hidden="true" />
+                        Archive Thread
+                      </ContextMenuItem>
+                      <ContextMenuItem disabled={tabs.length < 2} onClick={() => {
+                        select(tab.id)
+                        for (const other of tabs) {
+                          if (other.id !== tab.id) close(other.id)
+                        }
+                      }}>
+                        <ArchiveIcon aria-hidden="true" />
+                        Archive all but this
+                      </ContextMenuItem>
+                      {onDelete && tab.id !== "new" && (
+                        <ContextMenuItem className="text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive"
+                          onClick={() => onDelete(tab.id)}>
+                          <Trash2Icon aria-hidden="true" />
+                          Delete Thread
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuSeparator />
+                      <ContextMenuItem disabled={tab.id === "new" || !onCopyId} onClick={() => onCopyId?.(tab.id)}>
+                        <CopyIcon aria-hidden="true" />
+                        Copy Thread ID
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                   <button
                     type="button"
                     aria-label={`Close ${title}`}

@@ -2,7 +2,8 @@ import { create } from "zustand"
 import { z } from "zod"
 import { IdSchema } from "../shared/contracts"
 
-const TopicHistorySchema = z.array(IdSchema)
+export const stagingId = "staging"
+const TopicHistorySchema = z.array(z.union([IdSchema, z.literal(stagingId)]))
 const storageKey = "edu:topic-view-history"
 
 export function createTopicViews(storage?: Pick<Storage, "getItem" | "setItem">) {
@@ -19,7 +20,7 @@ export function createTopicViews(storage?: Pick<Storage, "getItem" | "setItem">)
     select: (id?: string) => void
     reconcile: (ids: string[]) => void
   }>((set, get) => ({
-    activeId: history[0],
+    activeId: undefined,
     history,
     select: (id) => {
       if (!id) {
@@ -30,7 +31,7 @@ export function createTopicViews(storage?: Pick<Storage, "getItem" | "setItem">)
     },
     reconcile: (ids) => {
       const current = get()
-      const available = new Set(ids)
+      const available = new Set([...ids, stagingId])
       const history = [...new Set(current.history)].filter((id) => available.has(id))
       let activeId = current.activeId
       if (activeId && !available.has(activeId)) activeId = history[0]

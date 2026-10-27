@@ -46,17 +46,17 @@ export const CreateTestInputSchema = z.object(TestStateSchema.shape).omit({ crea
   questions: z.array(CreateTestQuestionInputSchema).max(1000),
 })
 export const CreateGenericInputSchema = GenericStateSchema.omit({ createdAt: true })
-const TargetSchema = z.object({ topicId: z.uuid() })
+const TargetSchema = z.object({ scratchpadId: z.uuid() })
 const TestMutations = [
-  TargetSchema.extend({ type: z.literal("createTest"), test: CreateTestInputSchema, materialIds: z.array(z.uuid()).optional() }),
+  TargetSchema.extend({ type: z.literal("createTest"), createdAt: z.iso.datetime().optional(), test: CreateTestInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("addTestQuestion"), question: CreateTestQuestionInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("recordTestAnswer"), title: TestQuestionSchema.shape.title, answer: z.string().max(30_000) }),
-  TargetSchema.extend({ type: z.literal("documentTestMistake"), topicPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
+  TargetSchema.extend({ type: z.literal("documentTestMistake"), scratchpadPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
   TargetSchema.extend({ type: z.literal("updateTest"), name: TestStateSchema.shape.name.optional(), goals: TestStateSchema.shape.goals.optional(), references: TestStateSchema.shape.references.optional(), content: TestStateSchema.shape.content.optional(), expectedState: TestStateSchema.optional(), materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("editTestContent"), changes: ContentChangesSchema, present: z.array(ContentBlockIdSchema).min(1).max(100).optional().describe("Ordered stored block IDs to render in this chat reply."), expectedRevision: z.number().int().nonnegative().optional() }),
 ] as const
 const GenericMutations = [
-  TargetSchema.extend({ type: z.literal("createGeneric"), generic: CreateGenericInputSchema, materialIds: z.array(z.uuid()).optional() }),
+  TargetSchema.extend({ type: z.literal("createGeneric"), createdAt: z.iso.datetime().optional(), generic: CreateGenericInputSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("addGenericReference"), reference: TopicReferenceSchema, materialIds: z.array(z.uuid()).optional() }),
   TargetSchema.extend({ type: z.literal("updateGeneric"), name: GenericStateSchema.shape.name.optional(), summary: z.string().max(200_000).optional(), expectedSummary: z.string().optional() }),
 ] as const

@@ -1,12 +1,12 @@
 import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import { ChatSchema, MessageSchema, WorkspaceSchema, type Workspace } from "../shared/contracts"
-import { StoredWorkspaceSchema } from "./workspace-migrations"
+import { StoredJsonSchema, StoredWorkspaceSchema } from "./workspace-migrations"
 import { ConversationSummarySchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
 
 const ChatStateSchema = ChatSchema.omit({ messages: true })
 const SettingsSchema = WorkspaceSchema.pick({ runners: true, providerSettings: true })
-const RemovedFilesSchema = z.object({ topics: z.array(z.string().uuid()), chats: z.array(z.string().uuid()) })
+const RemovedFilesSchema = z.object({ scratchpads: z.array(z.string().uuid()), chats: z.array(z.string().uuid()) })
 const JsonRowSchema = z.object({ payload: z.string() })
 
 export class ChatDatabase {
@@ -17,7 +17,7 @@ export class ChatDatabase {
     try {
       database.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;")
       const version = z.object({ user_version: z.number() }).parse(database.prepare("PRAGMA user_version").get()).user_version
-      if (version > 1) throw new Error("This workspace needs a newer version of EdU.")
+      if (version > 2) throw new Error("This workspace needs a newer version of EdU.")
       database.exec(`
         CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
         CREATE TABLE IF NOT EXISTS tutor_workflows (id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
@@ -37,8 +37,24 @@ export class ChatDatabase {
           created_at TEXT NOT NULL
         ) STRICT;
         CREATE INDEX IF NOT EXISTS events_entity_sequence ON events(entity_id, sequence);
-        PRAGMA user_version = 1;
       `)
+      if (version < 2) {
+        database.exec("BEGIN IMMEDIATE")
+        try {
+          for (const [table, key] of [["metadata", "key"], ["chats", "id"], ["messages", "id"], ["tutor_workflows", "id"]]) {
+            const rows = database.prepare(`SELECT ${key} AS id, payload FROM ${table}`).all()
+            const update = database.prepare(`UPDATE ${table} SET payload = ? WHERE ${key} = ?`)
+            for (const row of rows) {
+              const stored = z.object({ id: z.string(), payload: z.string() }).parse(row)
+              update.run(JSON.stringify(StoredJsonSchema.parse(JSON.parse(stored.payload))), stored.id)
+            }
+          }
+          database.exec("UPDATE metadata SET key = 'scratchpads' WHERE key = 'topics'; PRAGMA user_version = 2; COMMIT;")
+        } catch (error) {
+          database.exec("ROLLBACK")
+          throw error
+        }
+      }
       return database
     } catch (error) {
       database.close()
@@ -62,11 +78,11 @@ export class ChatDatabase {
           .map((row) => MessageSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload)))
         return ChatSchema.parse({ ...chat, messages })
       }).sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
-      const topics = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'topics'").get())
+      const scratchpads = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'scratchpads'").get())
       const pending = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'files_pending'").get())
       return {
-        state: StoredWorkspaceSchema.parse({ version: 2, ...settings, chats, topics: JSON.parse(topics.payload) }),
-        needsMigration: !WorkspaceSchema.shape.topics.safeParse(JSON.parse(topics.payload)).success,
+        state: StoredWorkspaceSchema.parse({ version: 2, ...settings, chats, scratchpads: JSON.parse(scratchpads.payload) }),
+        needsMigration: !WorkspaceSchema.shape.scratchpads.safeParse(JSON.parse(scratchpads.payload)).success,
         filesPending: pending.payload === "true",
         removedFiles: RemovedFilesSchema.parse(JSON.parse(JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'removed_files'").get()).payload)),
       }
@@ -83,10 +99,10 @@ export class ChatDatabase {
       const metadata = database.prepare("INSERT INTO metadata(key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload")
       const event = database.prepare("INSERT INTO events(entity_id, type, payload, created_at) VALUES (?, ?, ?, ?)")
       const now = new Date().toISOString()
-      const oldTopicsRow = database.prepare("SELECT payload FROM metadata WHERE key = 'topics'").get()
-      let oldTopics: Workspace["topics"] = []
-      if (oldTopicsRow) oldTopics = StoredWorkspaceSchema.shape.topics.parse(JSON.parse(JsonRowSchema.parse(oldTopicsRow).payload))
-      const removedFiles = RemovedFilesSchema.parse({ topics: oldTopics.filter((topic) => !validated.topics.some((item) => item.id === topic.id)).map((topic) => topic.id), chats: [] })
+      const oldTopicsRow = database.prepare("SELECT payload FROM metadata WHERE key = 'scratchpads'").get()
+      let oldTopics: Workspace["scratchpads"] = []
+      if (oldTopicsRow) oldTopics = StoredWorkspaceSchema.shape.scratchpads.parse(JSON.parse(JsonRowSchema.parse(oldTopicsRow).payload))
+      const removedFiles = RemovedFilesSchema.parse({ scratchpads: oldTopics.filter((scratchpad) => !validated.scratchpads.some((item) => item.id === scratchpad.id)).map((scratchpad) => scratchpad.id), chats: [] })
       for (const chat of validated.chats) {
         const existing = database.prepare("SELECT payload FROM chats WHERE id = ?").get(chat.id)
         const { messages, ...header } = chat
@@ -121,7 +137,7 @@ export class ChatDatabase {
       }
       for (const [key, payload] of [
         ["settings", JSON.stringify(SettingsSchema.parse(validated))],
-        ["topics", JSON.stringify(validated.topics)],
+        ["scratchpads", JSON.stringify(validated.scratchpads)],
       ]) {
         const old = database.prepare("SELECT payload FROM metadata WHERE key = ?").get(key)
         if (!old || JsonRowSchema.parse(old).payload !== payload)
@@ -146,7 +162,7 @@ export class ChatDatabase {
     try {
       database.exec("BEGIN IMMEDIATE")
       database.prepare("UPDATE metadata SET payload = 'false' WHERE key = 'files_pending'").run()
-      database.prepare("UPDATE metadata SET payload = ? WHERE key = 'removed_files'").run(JSON.stringify({ topics: [], chats: [] }))
+      database.prepare("UPDATE metadata SET payload = ? WHERE key = 'removed_files'").run(JSON.stringify({ scratchpads: [], chats: [] }))
       database.exec("COMMIT")
     } finally {
       database.close()

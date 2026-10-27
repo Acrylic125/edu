@@ -3,6 +3,36 @@ import { TopicSchema, WorkspaceSchema } from "../shared/contracts"
 import { ScratchpadStateSchema } from "../shared/scratchpad-state"
 import { PartProgressSchema, TopicPartSchema, TopicReferenceSchema, TopicStateSchema } from "../shared/topic-state"
 
+const legacyScratchpadFields = new Map([
+  ["topic", "scratchpad"], ["topics", "scratchpads"], ["topicId", "scratchpadId"],
+  ["topicIds", "scratchpadIds"], ["topicPartId", "scratchpadPartId"], ["topicHandles", "scratchpadHandles"],
+  ["workspaceTopics", "workspaceScratchpads"], ["topicUpdates", "scratchpadUpdates"],
+  ["topicMutations", "scratchpadMutations"], ["openedTopicId", "openedScratchpadId"],
+  ["confirmTopicId", "confirmScratchpadId"],
+])
+
+function renameScratchpadFields(value: z.core.util.JSONType): z.core.util.JSONType {
+  if (Array.isArray(value)) return value.map(renameScratchpadFields)
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+      const renamed = legacyScratchpadFields.get(key) ?? key
+      // Prefer an already migrated field when both names exist.
+      if (renamed !== key && Object.hasOwn(value, renamed)) return [renamed, renameScratchpadFields(value[renamed])]
+      // Cached tool schemas also store field names in their required arrays.
+      if (key === "required" && Array.isArray(item)) {
+        return [key, item.map((field) => {
+          if (typeof field === "string") return legacyScratchpadFields.get(field) ?? field
+          return renameScratchpadFields(field)
+        })]
+      }
+      return [renamed, renameScratchpadFields(item)]
+    }))
+  }
+  return value
+}
+
+export const StoredJsonSchema = z.json().transform(renameScratchpadFields)
+
 const LegacyPartSchema = TopicPartSchema.extend({
   get parent() { return LegacyPartSchema.optional() },
   goals: z.object({
@@ -36,4 +66,4 @@ const LegacyTopicStateSchema = z.object(TopicStateSchema.shape).extend({
 
 export const StoredScratchpadStateSchema = z.union([ScratchpadStateSchema, LegacyTopicStateSchema])
 export const StoredTopicSchema = TopicSchema.extend({ state: StoredScratchpadStateSchema.optional() })
-export const StoredWorkspaceSchema = WorkspaceSchema.extend({ topics: z.array(StoredTopicSchema) })
+export const StoredWorkspaceSchema = WorkspaceSchema.extend({ scratchpads: z.array(StoredTopicSchema) })

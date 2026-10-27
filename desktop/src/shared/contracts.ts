@@ -49,7 +49,7 @@ export const ProviderStatusSchema = z.object({
   settings: ProviderSettingsSchema.optional(),
   runtime: z.object({
     executable: z.string(),
-    source: z.enum(["installed", "bundled", "custom"]),
+    source: z.enum(["installed", "custom"]),
   }).optional(),
 })
 export const CodexConnectionSchema = z.object({
@@ -84,7 +84,7 @@ export const MessageSchema = z.object({
   durationMs: z.number().nonnegative().optional(),
   responseQuestion: ResponseQuestionSchema.optional(),
   materialIds: z.array(IdSchema).optional(),
-  topicIds: z.array(IdSchema).default([]),
+  scratchpadIds: z.array(IdSchema).default([]),
 })
 export const MaterialSchema = z.object({
   id: IdSchema,
@@ -113,8 +113,8 @@ export const LearningStateSchema = z
     currentSection: z.string().max(1000),
     pendingQuestion: z.string().max(20_000),
     pendingCheck: z.object({
-      topicId: IdSchema,
-      topicPartId: TopicPartSchema.shape.id,
+      scratchpadId: IdSchema,
+      scratchpadPartId: TopicPartSchema.shape.id,
       stepIndex: z.number().int().nonnegative(),
     }).optional(),
     privateAnswerKey: z.string().max(20_000),
@@ -158,8 +158,9 @@ export const ProviderSessionSchema = z.object({
 export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
   runnerId: IdSchema,
   scratchpadRequested: z.boolean().default(false),
+  ownerScratchpadId: IdSchema.optional(),
   messages: z.array(MessageSchema),
-  topicHandles: z.array(IdSchema).default([]),
+  scratchpadHandles: z.array(IdSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
   activeTurnId: IdSchema.optional(),
   failedTurnId: IdSchema.optional(),
@@ -174,7 +175,7 @@ export const WorkspaceSchema = z.object({
     })),
     RunnerSchema,
   ])),
-  topics: z.array(TopicSchema),
+  scratchpads: z.array(TopicSchema),
   chats: z.array(ChatSchema),
   providerSettings: z.array(z.union([
     ProviderSettingsSchema,
@@ -184,7 +185,7 @@ export const WorkspaceSchema = z.object({
 // Version 1 stored one conversation per topic; it is migrated into independent chats on load.
 export const LegacyWorkspaceSchema = WorkspaceSchema.omit({ chats: true }).extend({
   version: z.literal(1),
-  topics: z.array(
+  scratchpads: z.array(
     TopicSchema.extend({ runnerId: IdSchema, messages: z.array(MessageSchema) }),
   ),
 })
@@ -228,7 +229,7 @@ export const PublicTopicSchema = TopicSchema.omit({
   materials: z.array(MaterialSchema.omit({ text: true, pages: true })),
 })
 export const PublicChatSchema = ChatSchema.omit({
-  topicHandles: true,
+  scratchpadHandles: true,
   providerSession: true,
   learning: true,
   materials: true,
@@ -238,7 +239,7 @@ export const PublicChatSchema = ChatSchema.omit({
 })
 export const SnapshotSchema = z.object({
   runners: z.array(RunnerSchema),
-  topics: z.array(PublicTopicSchema),
+  scratchpads: z.array(PublicTopicSchema),
   chats: z.array(PublicChatSchema),
   runtime: z.array(RuntimeSchema),
   connected: z.boolean(),
@@ -249,15 +250,16 @@ export const CreateTopicSchema = z.object({
   title: z.string().trim().min(1).max(30_000),
   runnerId: IdSchema.optional(),
 })
-export const CreateChatSchema = z.object({ runnerId: IdSchema, scratchpadRequested: z.boolean().optional() })
-export const ArchiveTopicSchema = z.object({ topicId: IdSchema, archived: z.boolean() })
+export const CreateChatSchema = z.object({ runnerId: IdSchema, ownerScratchpadId: IdSchema.optional(), scratchpadRequested: z.boolean().optional() })
+export const ArchiveTopicSchema = z.object({ scratchpadId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
+  messageId: IdSchema.optional(),
   materialIds: z.array(IdSchema).optional(),
-  content: z.string().max(30_000).refine((content) => content.trim().length > 0, "Message cannot be empty."),
-  confirmTopicId: IdSchema.optional(),
-  openedTopicId: IdSchema.optional(),
-})
+  content: z.string().max(30_000),
+  confirmScratchpadId: IdSchema.optional(),
+  openedScratchpadId: IdSchema.optional(),
+}).refine((input) => input.content.trim().length > 0 || (input.materialIds?.length ?? 0) > 0, "Message cannot be empty.")
 export const MaterialOwnerSchema = z.object({
   kind: z.enum(["topic", "chat"]),
   id: IdSchema,
@@ -285,7 +287,7 @@ export const ImportMaterialsSchema = z.object({
   draftIds: MaterialDraftIdsSchema.default([]),
 })
 export const TopicUpdateSchema = z.object({
-  topicId: IdSchema,
+  scratchpadId: IdSchema,
   learning: LearningStateSchema,
   expected: LearningStateSchema.optional(),
 })
@@ -300,8 +302,8 @@ export const WorkerJobSchema = z.object({
     }),
   }).optional(),
   chat: ChatSchema,
-  topics: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
-  workspaceTopics: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
+  scratchpads: z.array(TopicSchema.extend({ assetDirectory: z.string() })),
+  workspaceScratchpads: z.array(TopicSchema.pick({ id: true, title: true, archived: true }).extend({
     notes: LearningStateSchema.shape.notes,
     materials: z.array(MaterialSchema).optional(),
     assetDirectory: z.string().optional(),
@@ -314,14 +316,14 @@ export const WorkerJobSchema = z.object({
   skillDirectory: z.string(),
   assetDirectory: z.string(),
   sourceCacheDirectory: z.string().optional(),
-  confirmTopicId: IdSchema.optional(),
-  openedTopicId: IdSchema.optional(),
+  confirmScratchpadId: IdSchema.optional(),
+  openedScratchpadId: IdSchema.optional(),
 })
 export const WorkerResultSchema = z.object({
   reply: z.string().min(1).max(200_000),
   learning: LearningStateSchema,
-  topicUpdates: z.array(TopicUpdateSchema).default([]),
-  topicMutations: z.array(ScratchpadMutationSchema).default([]),
+  scratchpadUpdates: z.array(TopicUpdateSchema).default([]),
+  scratchpadMutations: z.array(ScratchpadMutationSchema).default([]),
   providerSession: ProviderSessionSchema.optional(),
 })
 
@@ -345,34 +347,37 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
 export const Channel = {
-  copyText: "prune:copy-text",
-  snapshot: "prune:snapshot",
-  update: "prune:update",
-  runtimeUpdate: "prune:runtime-update",
-  connect: "prune:connect",
-  disconnect: "prune:disconnect",
-  cancelConnection: "prune:cancel-connection",
-  refreshProviders: "prune:refresh-providers",
-  saveProvider: "prune:save-provider",
-  updateRunner: "prune:update-runner",
-  addRunner: "prune:add-runner",
-  removeRunner: "prune:remove-runner",
-  startRunner: "prune:start-runner",
-  stopRunner: "prune:stop-runner",
-  createTopic: "prune:create-topic",
-  createChat: "prune:create-chat",
-  archiveTopic: "prune:archive-topic",
-  send: "prune:send",
-  retry: "prune:retry",
-  importMaterials: "prune:import-materials",
-  selectMaterials: "prune:select-materials",
-  dropMaterials: "prune:drop-materials",
-  pasteMaterials: "prune:paste-materials",
-  discardMaterials: "prune:discard-materials",
-  exportNotes: "prune:export-notes",
-  openDiagnostics: "prune:open-diagnostics",
-  openWorkspace: "prune:open-workspace",
-  openMaterial: "prune:open-material",
+  copyText: "edu:copy-text",
+  reuseMaterials: "edu:reuse-materials",
+  snapshot: "edu:snapshot",
+  update: "edu:update",
+  runtimeUpdate: "edu:runtime-update",
+  connect: "edu:connect",
+  disconnect: "edu:disconnect",
+  cancelConnection: "edu:cancel-connection",
+  refreshProviders: "edu:refresh-providers",
+  saveProvider: "edu:save-provider",
+  updateRunner: "edu:update-runner",
+  addRunner: "edu:add-runner",
+  removeRunner: "edu:remove-runner",
+  startRunner: "edu:start-runner",
+  stopRunner: "edu:stop-runner",
+  createScratchpad: "edu:create-topic",
+  createChat: "edu:create-chat",
+  deleteStagedChat: "edu:delete-staged-chat",
+  archiveScratchpad: "edu:archive-topic",
+  send: "edu:send",
+  retry: "edu:retry",
+  importMaterials: "edu:import-materials",
+  removeChatMaterial: "edu:remove-chat-material",
+  selectMaterials: "edu:select-materials",
+  dropMaterials: "edu:drop-materials",
+  pasteMaterials: "edu:paste-materials",
+  discardMaterials: "edu:discard-materials",
+  exportNotes: "edu:export-notes",
+  openDiagnostics: "edu:open-diagnostics",
+  openWorkspace: "edu:open-workspace",
+  openMaterial: "edu:open-material",
 } as const
 
 export type Snapshot = z.infer<typeof SnapshotSchema>
@@ -382,7 +387,8 @@ export type Chat = z.infer<typeof ChatSchema>
 export type LearningState = z.infer<typeof LearningStateSchema>
 export type WorkerJob = z.infer<typeof WorkerJobSchema>
 export type DesktopBridge = {
-  copyText: (text: string) => Promise<void>
+  copyText: (text: string, materialIds?: string[]) => Promise<void>
+  reuseMaterials: (materialIds: string[], draftIds?: string[]) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   snapshot: () => Promise<Snapshot>
   subscribe: (listener: (snapshot: Snapshot) => void) => () => void
   subscribeRuntime: (listener: (update: z.infer<typeof RuntimeUpdateSchema>) => void) => () => void
@@ -401,18 +407,20 @@ export type DesktopBridge = {
   removeRunner: (id: string) => Promise<void>
   startRunner: (id: string) => Promise<void>
   stopRunner: (id: string, chatId?: string) => Promise<void>
-  createTopic: (input: z.input<typeof CreateTopicSchema>) => Promise<string>
+  createScratchpad: (input: z.input<typeof CreateTopicSchema>) => Promise<string>
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
-  archiveTopic: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
+  deleteStagedChat: (chatId: string) => Promise<void>
+  archiveScratchpad: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
   retry: (input: z.infer<typeof RetrySchema>) => Promise<void>
   selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   dropMaterials: (files: File[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   pasteMaterials: (images: z.infer<typeof PastedImageSchema>[], draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   discardMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
+  removeChatMaterial: (chatId: string, materialId: string) => Promise<void>
   importMaterials: (owner: z.infer<typeof MaterialOwnerSchema>, draftIds?: z.infer<typeof MaterialDraftIdsSchema>) => Promise<void>
-  exportNotes: (topicId: string) => Promise<void>
+  exportNotes: (scratchpadId: string) => Promise<void>
   openDiagnostics: (chatId: string) => Promise<void>
-  openWorkspace: (topicId: string) => Promise<void>
+  openWorkspace: (scratchpadId: string) => Promise<void>
   openMaterial: (materialId: string) => Promise<void>
 }

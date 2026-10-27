@@ -12,17 +12,17 @@ function Entries({
   materials,
   labelMaterials,
   onOpenMaterial,
-  topics,
-  onOpenTopic,
+  scratchpads,
+  onOpenScratchpad,
 }: {
   entries: z.infer<typeof TopicDirectoryEntrySchema>[]
   targets: Map<z.infer<typeof TopicDirectoryEntrySchema>, number>
   currentSection: string
-  materials: Snapshot["topics"][number]["materials"]
-  labelMaterials: Snapshot["topics"][number]["materials"]
+  materials: Snapshot["scratchpads"][number]["materials"]
+  labelMaterials: Snapshot["scratchpads"][number]["materials"]
   onOpenMaterial?: (id: string) => void
-  topics: Snapshot["topics"]
-  onOpenTopic?: (id: string) => void
+  scratchpads: Snapshot["scratchpads"]
+  onOpenScratchpad?: (id: string) => void
 }) {
   return (
     <ul className="space-y-1.5">
@@ -52,14 +52,14 @@ function Entries({
               </span>
             )}
             {entry.sources.map((source) => {
-              const topic = topics.find((topic) => source.href === `edu-topic://${topic.id}`)
-              if (topic && onOpenTopic) {
+              const scratchpad = scratchpads.find((scratchpad) => source.href === `edu-topic://${scratchpad.id}`)
+              if (scratchpad && onOpenScratchpad) {
                 return <a
                   key={`${source.label}-${source.href}`}
                   href={source.href}
                   className="rounded-md bg-learning-circle px-1.5 py-0.5 text-xs text-muted-foreground hover:underline"
-                  onClick={(event) => { event.preventDefault(); onOpenTopic(topic.id) }}
-                >@{topic.title}</a>
+                  onClick={(event) => { event.preventDefault(); onOpenScratchpad(scratchpad.id) }}
+                >@{scratchpad.title}</a>
               }
               if (/^https?:\/\//.test(source.href)) {
                 return <a
@@ -92,7 +92,7 @@ function Entries({
           </div>
           {entry.children.length > 0 && (
             <div className="mt-1.5 pl-5">
-              <Entries targets={targets} entries={entry.children} currentSection={currentSection} materials={materials} labelMaterials={labelMaterials} onOpenMaterial={onOpenMaterial} topics={topics} onOpenTopic={onOpenTopic} />
+              <Entries targets={targets} entries={entry.children} currentSection={currentSection} materials={materials} labelMaterials={labelMaterials} onOpenMaterial={onOpenMaterial} scratchpads={scratchpads} onOpenScratchpad={onOpenScratchpad} />
             </div>
           )}
         </li>
@@ -109,18 +109,18 @@ export function TopicDirectory({
   materials = [],
   labelMaterials = materials,
   onOpenMaterial,
-  topics = [],
-  onOpenTopic,
+  scratchpads = [],
+  onOpenScratchpad,
 }: {
   heading: string
   markdown?: string[]
   items: z.infer<typeof TopicDirectoryEntrySchema>[]
   currentSection: string
-  materials?: Snapshot["topics"][number]["materials"]
-  labelMaterials?: Snapshot["topics"][number]["materials"]
+  materials?: Snapshot["scratchpads"][number]["materials"]
+  labelMaterials?: Snapshot["scratchpads"][number]["materials"]
   onOpenMaterial?: (id: string) => void
-  topics?: Snapshot["topics"]
-  onOpenTopic?: (id: string) => void
+  scratchpads?: Snapshot["scratchpads"]
+  onOpenScratchpad?: (id: string) => void
 }) {
   const targets = useMemo(() => {
     const headings = markdownHeadings(markdown)
@@ -154,7 +154,7 @@ export function TopicDirectory({
       aria-label={heading}
     >
       <h2 className="mb-3 text-base font-semibold">{heading}</h2>
-      <Entries targets={targets} entries={items} currentSection={currentSection} materials={materials} labelMaterials={labelMaterials} onOpenMaterial={onOpenMaterial} topics={topics} onOpenTopic={onOpenTopic} />
+      <Entries targets={targets} entries={items} currentSection={currentSection} materials={materials} labelMaterials={labelMaterials} onOpenMaterial={onOpenMaterial} scratchpads={scratchpads} onOpenScratchpad={onOpenScratchpad} />
     </nav>
   )
 }

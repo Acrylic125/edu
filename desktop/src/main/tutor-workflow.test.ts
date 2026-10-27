@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test, type TestContext } from "node:test"
-import { newChat, newTopic, WorkspaceRepository } from "./workspace"
+import { newChat, newScratchpad, WorkspaceRepository } from "./workspace"
 import { dispatchWorkflowRequest, TutorWorkflowRepository } from "./tutor-workflow"
 import { WorkerJobSchema } from "../shared/contracts"
 import { spawn } from "node:child_process"
@@ -17,17 +17,79 @@ async function fixture(t: TestContext) {
   await workspace.load()
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content: "Help me learn fractions", createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content: "Help me learn fractions", createdAt: new Date().toISOString(), scratchpadIds: [] })
   await workspace.mutate((state) => state.chats.push(chat))
-  const job = WorkerJobSchema.parse({ chat, runner, topics: [], skillDirectory: "skills", assetDirectory: directory, apiKey: "must-not-persist" })
+  const job = WorkerJobSchema.parse({ chat, runner, scratchpads: [], skillDirectory: "skills", assetDirectory: directory, apiKey: "must-not-persist" })
   return { directory, workspace, job, workflows: new TutorWorkflowRepository(workspace) }
+}
+
+for (const type of ["topic", "test", "generic"] as const) {
+  test(`a ${type} creation request moves out of an owned thread into durable Staging`, async (t) => {
+    const { directory, workspace, job, workflows } = await fixture(t)
+    const owner = newScratchpad("Original", "topic")
+    const attachment = { id: randomUUID(), name: "request.txt", text: "Request source", pages: [], kind: "text" as const }
+    job.chat.materials.push(attachment)
+    job.chat.messages[0].materialIds = [attachment.id]
+    await mkdir(job.assetDirectory, { recursive: true })
+    await writeFile(join(job.assetDirectory, attachment.name), attachment.text)
+    job.chat.ownerScratchpadId = owner.id
+    job.chat.messages[0].scratchpadIds = [owner.id]
+    const history = { ...job.chat.messages[0], id: randomUUID(), content: "Earlier lesson" }
+    job.chat.messages.unshift(history)
+    await workspace.mutate((state) => {
+      state.scratchpads.push(owner)
+      state.chats[0] = structuredClone(job.chat)
+    })
+    const turn = await workflows.start(job)
+    const requests = [{ target: { mode: "create" as const, type }, task: "Create the requested scratchpad", requestedAccess: "write" as const,
+      context: { learnerMessageIds: [turn.learnerMessageId], materialIds: [], readDependencies: [], relevantContext: "" } }]
+    const moved = await workflows.redirectCreation(turn.chatId, turn.turnId, requests)
+    assert.ok(moved)
+    const original = workspace.chat(turn.chatId)
+    assert.deepEqual(original.messages, [history])
+    assert.equal(original.ownerScratchpadId, owner.id)
+    assert.equal(original.activeTurnId, undefined)
+    assert.equal(original.failedTurnId, undefined)
+    const staged = workspace.chat(moved.chatId)
+    assert.equal(staged.ownerScratchpadId, undefined)
+    assert.equal(staged.scratchpadRequested, true)
+    assert.deepEqual(staged.messages, [job.chat.messages[1]])
+    assert.equal(staged.providerSession, undefined)
+    assert.equal(moved.source.assetDirectory, join(directory, "chats", staged.id, "assets"))
+    assert.equal(moved.source.chat.id, staged.id)
+    assert.deepEqual(staged.materials, [attachment])
+    assert.equal(await readFile(join(moved.source.assetDirectory, attachment.name), "utf8"), attachment.text)
+    assert.deepEqual(await workflows.redirectCreation(turn.chatId, turn.turnId, requests), moved)
+    await assert.rejects(workflows.retry(turn.chatId, turn.turnId), /moved to Staging/)
+    const reopened = new WorkspaceRepository(directory)
+    await reopened.load()
+    const resumed = new TutorWorkflowRepository(reopened)
+    await resumed.retry(moved.chatId, moved.turnId)
+    assert.equal(await resumed.redirectCreation(moved.chatId, moved.turnId, requests), undefined)
+    const batch = await resumed.assumeRole(moved.chatId, moved.turnId, randomUUID(), requests)
+    const role = batch.jobs[0]
+    assert.equal(role.role, type)
+    const template = newScratchpad("Created in Staging", type).state!
+    if (template.type === "topic") {
+      await resumed.stage(moved.chatId, moved.turnId, role.jobId, "create", { type: "createTopic", scratchpadId: role.scratchpadId, scratchpad: template })
+    } else if (template.type === "test") {
+      await resumed.stage(moved.chatId, moved.turnId, role.jobId, "create", { type: "createTest", scratchpadId: role.scratchpadId, test: template })
+    } else {
+      await resumed.stage(moved.chatId, moved.turnId, role.jobId, "create", { type: "createGeneric", scratchpadId: role.scratchpadId, generic: template })
+    }
+    await resumed.ready(moved.chatId, moved.turnId, role.jobId, { summary: "Created the scratchpad", evidence: [] })
+    await resumed.commitBatch(moved.chatId, moved.turnId, batch.batchId)
+    assert.equal(reopened.chat(moved.chatId).ownerScratchpadId, role.scratchpadId)
+    assert.equal(reopened.chat(turn.chatId).ownerScratchpadId, owner.id)
+    assert.equal(reopened.chat(turn.chatId).messages.length, 1)
+  })
 }
 
 test("a turn retains its original conversation after reopening the workspace", async (t) => {
   const { directory, workspace, job, workflows } = await fixture(t)
   const turn = await workflows.start(job)
   await workspace.mutate((state) => {
-    state.chats[0].messages.push({ id: randomUUID(), role: "user", content: "A later request", createdAt: new Date().toISOString(), topicIds: [] })
+    state.chats[0].messages.push({ id: randomUUID(), role: "user", content: "A later request", createdAt: new Date().toISOString(), scratchpadIds: [] })
   })
   const reopened = new WorkspaceRepository(directory)
   await reopened.load()
@@ -38,24 +100,24 @@ test("a turn retains its original conversation after reopening the workspace", a
 
 test("a ready role batch commits all its staged writes once and retains its receipt after reopening", async (t) => {
   const { directory, workspace, job, workflows } = await fixture(t)
-  const scratchpad = newTopic("Fractions", "generic")
-  await workspace.mutate((state) => state.topics.push(scratchpad))
-  job.topics = [{ ...scratchpad, assetDirectory: directory }]
-  job.chat.topicHandles = [scratchpad.id]
+  const scratchpad = newScratchpad("Fractions", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
+  job.scratchpads = [{ ...scratchpad, assetDirectory: directory }]
+  job.chat.scratchpadHandles = [scratchpad.id]
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{
     target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Record the learner's notes",
     requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
   }])
   const role = batch.jobs[0]
-  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes-1", { type: "updateGeneric", topicId: scratchpad.id, summary: "# Fractions\n\nOne half is 1/2." })
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes-1", { type: "updateGeneric", scratchpadId: scratchpad.id, summary: "# Fractions\n\nOne half is 1/2." })
   await workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Recorded one half.", evidence: [] })
   const receipt = await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
   const reopened = new WorkspaceRepository(directory)
   await reopened.load()
   const replay = await new TutorWorkflowRepository(reopened).commitBatch(turn.chatId, turn.turnId, batch.batchId)
   assert.deepEqual(replay, receipt)
-  assert.equal(reopened.topic(scratchpad.id).learning.notes, "# Fractions\n\nOne half is 1/2.")
+  assert.equal(reopened.scratchpad(scratchpad.id).learning.notes, "# Fractions\n\nOne half is 1/2.")
 })
 
 test("a creation role cannot stage a different scratchpad type", async (t) => {
@@ -66,17 +128,17 @@ test("a creation role cannot stage a different scratchpad type", async (t) => {
     context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
   }])
   await assert.rejects(workflows.stage(turn.chatId, turn.turnId, batch.jobs[0].jobId, "wrong-type", {
-    type: "createGeneric", topicId: batch.jobs[0].scratchpadId,
+    type: "createGeneric", scratchpadId: batch.jobs[0].scratchpadId,
     generic: { type: "generic", version: "19-10-2026", name: "Fractions", references: [] },
   }), /role|type/i)
 })
 
 test("returning a request for coordination cannot commit writes or publish a role reply", async (t) => {
   const { workspace, job, workflows } = await fixture(t)
-  const topic = newTopic("Fractions", "generic")
-  await workspace.mutate((state) => state.topics.push(topic))
-  job.topics = [{ ...topic, assetDirectory: job.assetDirectory }]
-  job.chat.topicHandles = [topic.id]
+  const scratchpad = newScratchpad("Fractions", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
+  job.scratchpads = [{ ...scratchpad, assetDirectory: job.assetDirectory }]
+  job.chat.scratchpadHandles = [scratchpad.id]
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{
     target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Handle the latest request", requestedAccess: "write", replyToLearner: true,
@@ -84,17 +146,17 @@ test("returning a request for coordination cannot commit writes or publish a rol
   }])
   const role = batch.jobs[0]
   await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Needs another target", evidence: [], needsCoordination: true, response: { reply: "A provisional reply", learning: job.chat.learning } }), /not granted a direct learner reply/)
-  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", topicId: topic.id, summary: "Changed notes" })
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", scratchpadId: scratchpad.id, summary: "Changed notes" })
   await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Needs another target", evidence: [], needsCoordination: true }), /without staged writes/)
-  assert.deepEqual(workspace.topic(topic.id).state, topic.state)
+  assert.deepEqual(workspace.scratchpad(scratchpad.id).state, scratchpad.state)
 })
 
 test("direct role replies require an independent grant and committed writes without exposing their handoff in summaries", async (t) => {
   const { workspace, job, workflows } = await fixture(t)
-  const scratchpad = newTopic("Fractions", "generic")
-  await workspace.mutate((state) => state.topics.push(scratchpad))
-  job.topics = [{ ...scratchpad, assetDirectory: job.assetDirectory }]
-  job.chat.topicHandles = [scratchpad.id]
+  const scratchpad = newScratchpad("Fractions", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
+  job.scratchpads = [{ ...scratchpad, assetDirectory: job.assetDirectory }]
+  job.chat.scratchpadHandles = [scratchpad.id]
   const turn = await workflows.start(job)
   const request = { target: { mode: "existing" as const, scratchpadHandle: "scratchpad_1" }, task: "Write the fraction notes", requestedAccess: "write" as const, replyToLearner: true,
     context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
@@ -104,7 +166,7 @@ test("direct role replies require an independent grant and committed writes with
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [request])
   const role = batch.jobs[0]
   await assert.rejects(workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Done", evidence: [] }), /reply and handoff/)
-  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", topicId: scratchpad.id, summary: "# Fractions\n\nOne half is 1/2." })
+  await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", scratchpadId: scratchpad.id, summary: "# Fractions\n\nOne half is 1/2." })
   await workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Updated fraction notes", evidence: [], response: { reply: "Your fraction notes are ready.", learning: { ...job.chat.learning, privateAnswerKey: "PRIVATE_ROLE_KEY", workpad: "Saved fraction notes", nextAction: "Wait for the learner" } } })
   await assert.rejects(workflows.presentRoleReply(turn.chatId, turn.turnId, batch.batchId), /committed/)
   const receipt = await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
@@ -119,10 +181,10 @@ test("direct role replies require an independent grant and committed writes with
 
 test("a reply waits for required batches and publishes its handoff and message only once", async (t) => {
   const { workspace, job, workflows } = await fixture(t)
-  const scratchpad = newTopic("Fractions", "generic")
-  await workspace.mutate((state) => state.topics.push(scratchpad))
-  job.workspaceTopics = [{ ...scratchpad, notes: scratchpad.learning.notes }]
-  job.chat.topicHandles = [scratchpad.id]
+  const scratchpad = newScratchpad("Fractions", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
+  job.workspaceScratchpads = [{ ...scratchpad, notes: scratchpad.learning.notes }]
+  job.chat.scratchpadHandles = [scratchpad.id]
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{
     target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Read the notes", requestedAccess: "read",
@@ -166,23 +228,23 @@ test("a reply retains its host duration after completion, duplicate save, and wo
 
 test("a batch conflict leaves every scratchpad unchanged and no receipt", async (t) => {
   const { directory, workspace, job, workflows } = await fixture(t)
-  const first = newTopic("Fractions", "generic")
-  const second = newTopic("Decimals", "generic")
-  await workspace.mutate((state) => state.topics.push(first, second))
-  job.topics = [first, second].map((topic) => ({ ...topic, assetDirectory: directory }))
-  job.chat.topicHandles = [first.id, second.id]
+  const first = newScratchpad("Fractions", "generic")
+  const second = newScratchpad("Decimals", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(first, second))
+  job.scratchpads = [first, second].map((scratchpad) => ({ ...scratchpad, assetDirectory: directory }))
+  job.chat.scratchpadHandles = [first.id, second.id]
   const turn = await workflows.start(job)
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), ["scratchpad_1", "scratchpad_2"].map((scratchpadHandle) => ({
     target: { mode: "existing", scratchpadHandle }, task: "Add notes", requestedAccess: "write",
     context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
   })))
   for (const role of batch.jobs) {
-    await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", topicId: role.scratchpadId, summary: "# Changed\n\nStaged notes" })
+    await workflows.stage(turn.chatId, turn.turnId, role.jobId, "notes", { type: "updateGeneric", scratchpadId: role.scratchpadId, summary: "# Changed\n\nStaged notes" })
     await workflows.ready(turn.chatId, turn.turnId, role.jobId, { summary: "Added notes", evidence: [] })
   }
-  await workspace.mutate((state) => { state.topics.find((topic) => topic.id === second.id)!.learning.notes = "# Decimals\n\nEdited by the learner." })
+  await workspace.mutate((state) => { state.scratchpads.find((scratchpad) => scratchpad.id === second.id)!.learning.notes = "# Decimals\n\nEdited by the learner." })
   await assert.rejects(workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId), /changed|conflict/i)
-  assert.equal(workspace.topic(first.id).learning.notes, "# Fractions\n\n")
+  assert.equal(workspace.scratchpad(first.id).learning.notes, "# Fractions\n\n")
   assert.equal(workflows.get(turn.chatId, turn.turnId).batches[0].receipt, undefined)
 })
 
@@ -203,7 +265,7 @@ test("later batches can update a scratchpad created earlier in the same turn", a
   const context = { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" }
   const first = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ target: { mode: "create", type: "generic" }, task: "Create notes", requestedAccess: "write", context }])
   const created = first.jobs[0]
-  await workflows.stage(turn.chatId, turn.turnId, created.jobId, "create", { type: "createGeneric", topicId: created.scratchpadId, generic: { type: "generic", version: "19-10-2026", name: "Fractions", references: [] } })
+  await workflows.stage(turn.chatId, turn.turnId, created.jobId, "create", { type: "createGeneric", scratchpadId: created.scratchpadId, generic: { type: "generic", version: "19-10-2026", name: "Fractions", references: [] } })
   await workflows.ready(turn.chatId, turn.turnId, created.jobId, { summary: "Created notes", evidence: [] })
   await workflows.commitBatch(turn.chatId, turn.turnId, first.batchId)
   const next = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ target: { mode: "existing", scratchpadHandle: created.scratchpadHandle }, task: "Add an example", requestedAccess: "write", context }])
@@ -247,10 +309,10 @@ test("reopening an interrupted turn stops its recorded native attempt before Ret
 
 test("reading a tagged scratchpad does not revoke its write permission in a later batch", async (t) => {
   const { directory, workspace, job, workflows } = await fixture(t)
-  const scratchpad = newTopic("Fractions", "generic")
-  await workspace.mutate((state) => state.topics.push(scratchpad))
-  job.topics = [{ ...scratchpad, assetDirectory: directory }]
-  job.chat.topicHandles = [scratchpad.id]
+  const scratchpad = newScratchpad("Fractions", "generic")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
+  job.scratchpads = [{ ...scratchpad, assetDirectory: directory }]
+  job.chat.scratchpadHandles = [scratchpad.id]
   const turn = await workflows.start(job)
   const request = { target: { mode: "existing" as const, scratchpadHandle: "scratchpad_1" }, task: "Read notes", requestedAccess: "read" as const, context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } }
   const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [request])
@@ -272,14 +334,28 @@ test("prepared contexts retain their advertised tool schemas after reopening", a
 
 test("a batch rejects a role that depends on another job's pending write", async (t) => {
   const { directory, workspace, job, workflows } = await fixture(t)
-  const targets = [newTopic("Fractions", "generic"), newTopic("Decimals", "generic")]
-  await workspace.mutate((state) => state.topics.push(...targets))
-  job.topics = targets.map((topic) => ({ ...topic, assetDirectory: directory }))
-  job.chat.topicHandles = targets.map((topic) => topic.id)
+  const targets = [newScratchpad("Fractions", "generic"), newScratchpad("Decimals", "generic")]
+  await workspace.mutate((state) => state.scratchpads.push(...targets))
+  job.scratchpads = targets.map((scratchpad) => ({ ...scratchpad, assetDirectory: directory }))
+  job.chat.scratchpadHandles = targets.map((scratchpad) => scratchpad.id)
   const turn = await workflows.start(job)
   const context = { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" }
   await assert.rejects(workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [
     { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Update fractions", requestedAccess: "write", context },
     { target: { mode: "existing", scratchpadHandle: "scratchpad_2" }, task: "Compare with the updated fractions", requestedAccess: "read", context: { ...context, readDependencies: ["scratchpad_1"] } },
   ]), /dependent|later batch/i)
+})
+
+test("creation access is validated before a role batch is persisted", async (t) => {
+  const { workflows, job } = await fixture(t)
+  const turn = await workflows.start(job)
+  for (const type of ["topic", "test", "generic"] as const) {
+    for (const replyToLearner of [false, true]) {
+      await assert.rejects(workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{
+        target: { mode: "create", type }, task: "Create the requested scratchpad", requestedAccess: "read", replyToLearner,
+        context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" },
+      }]), /Creation requires write access/)
+      assert.equal(workflows.get(turn.chatId, turn.turnId).batches.length, 0)
+    }
+  }
 })

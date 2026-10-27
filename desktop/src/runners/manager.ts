@@ -1,3 +1,4 @@
+import { isStagedChat } from "../shared/thread-ownership"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { utilityProcess } from "electron"
@@ -13,7 +14,7 @@ import {
   RetrySchema,
 } from "../shared/contracts"
 import { parseTopicMentions, stripTopicMentions } from "../shared/topic-mentions"
-import { newTopic, WorkspaceRepository } from "../main/workspace"
+import { newScratchpad, WorkspaceRepository } from "../main/workspace"
 import { generateTopicTitle } from "./title"
 import { TurnTrace } from "./trace"
 import { TurnTelemetry } from "./telemetry"
@@ -27,7 +28,7 @@ export class RunnerManager {
   private runtime = new Map<string, z.infer<typeof RuntimeSchema>>()
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private locks = new Set<string>()
-  private topicLocks = new Set<string>()
+  private scratchpadLocks = new Set<string>()
   private committing = new Set<string>()
   private workflowRequests = new Map<string, Set<string>>()
   private failures = new Map<string, Promise<void>>()
@@ -122,9 +123,27 @@ export class RunnerManager {
     const locked = this.repository.stateSnapshot.chats.some((chat) =>
       chat.runnerId === runnerId && (!chatId || chat.id === chatId) && this.locks.has(chat.id),
     )
-    if (locked || (!chatId && this.topicLocks.has(runnerId)) || ids.some((id) => this.committing.has(id)))
+    if (locked || (!chatId && this.scratchpadLocks.has(runnerId)) || ids.some((id) => this.committing.has(id)))
       throw new Error("The runner is saving this turn. Try stopping again in a moment.")
     for (const id of ids) this.stopExecution(id)
+  }
+
+  async deleteStagedChat(chatId: string) {
+    const chat = this.repository.chat(chatId)
+    if (!isStagedChat(chat)) throw new Error("Only staged threads can be deleted.")
+    this.stop(chat.runnerId, chatId)
+    await this.failures.get(chatId)
+    await this.repository.mutate((workspace) => {
+      const current = workspace.chats.find((item) => item.id === chatId)
+      if (!current) return
+      if (!isStagedChat(current)) throw new Error("This thread is no longer in Staging.")
+      if (this.locks.has(chatId) || this.committing.has(chatId) || this.runtime.get(chatId)?.status === "running")
+        throw new Error("The thread is saving. Try deleting it again in a moment.")
+      workspace.chats = workspace.chats.filter((item) => item.id !== chatId)
+    })
+    this.runtime.delete(chatId)
+    this.failures.delete(chatId)
+    this.notify()
   }
 
   private stopExecution(id: string) {
@@ -154,25 +173,25 @@ export class RunnerManager {
     this.notify()
   }
 
-  async createTopic(raw: z.input<typeof CreateTopicSchema>) {
+  async createScratchpad(raw: z.input<typeof CreateTopicSchema>) {
     const input = CreateTopicSchema.parse(raw)
     const runners = this.repository.stateSnapshot.runners
     let runner = runners.find((item) => item.id === input.runnerId)
     if (!input.runnerId) runner = runners[0]
     if (!runner) throw new Error("Runner not found.")
-    if (this.topicLocks.has(runner.id))
+    if (this.scratchpadLocks.has(runner.id))
       throw new Error("This runner is already working. Wait for it to finish.")
-    this.topicLocks.add(runner.id)
+    this.scratchpadLocks.add(runner.id)
     try {
       const connection = await this.getConnection(runner)
       const title = await generateTopicTitle({ runner, ...connection }, input.title, () => {}, () => {})
-      const topic = newTopic(title)
-      topic.titleGenerated = true
-      await this.repository.mutate((workspace) => workspace.topics.unshift(topic))
+      const scratchpad = newScratchpad(title)
+      scratchpad.titleGenerated = true
+      await this.repository.mutate((workspace) => workspace.scratchpads.unshift(scratchpad))
       this.notify()
-      return topic.id
+      return scratchpad.id
     } finally {
-      this.topicLocks.delete(runner.id)
+      this.scratchpadLocks.delete(runner.id)
     }
   }
 
@@ -198,21 +217,21 @@ export class RunnerManager {
       )
       if (!runner) throw new Error("Runner not found.")
       const connection = await this.getConnection(runner)
-      const topicIds = [
+      const scratchpadIds = [
         ...new Set(parseTopicMentions(input.content).map((mention) => mention.id)),
       ]
-      if (input.openedTopicId && !topicIds.includes(input.openedTopicId))
-        topicIds.push(input.openedTopicId)
-      for (const topicId of topicIds) this.repository.topic(topicId)
-      if (input.confirmTopicId) {
-        const topic = this.repository.topic(input.confirmTopicId)
-        if (topic.planConfirmed || !topic.learning.outline.length)
+      if (input.openedScratchpadId && !scratchpadIds.includes(input.openedScratchpadId))
+        scratchpadIds.push(input.openedScratchpadId)
+      for (const scratchpadId of scratchpadIds) this.repository.scratchpad(scratchpadId)
+      if (input.confirmScratchpadId) {
+        const scratchpad = this.repository.scratchpad(input.confirmScratchpadId)
+        if (scratchpad.planConfirmed || !scratchpad.learning.outline.length)
           throw new Error("There is no draft plan to confirm.")
-        if (!topicIds.includes(topic.id)) topicIds.push(topic.id)
+        if (!scratchpadIds.includes(scratchpad.id)) scratchpadIds.push(scratchpad.id)
       }
       const attachmentMaterials = [
         ...chat.materials,
-        ...this.repository.stateSnapshot.topics.filter((topic) => topicIds.includes(topic.id)).flatMap((topic) => topic.materials),
+        ...this.repository.stateSnapshot.scratchpads.filter((scratchpad) => scratchpadIds.includes(scratchpad.id)).flatMap((scratchpad) => scratchpad.materials),
       ]
       if (input.materialIds?.some((id) => !attachmentMaterials.some((material) => material.id === id)))
         throw new Error("An attached file is not available in this chat.")
@@ -235,8 +254,8 @@ export class RunnerManager {
         provider: runner.provider,
         model: runner.model,
         effort: runner.reasoningEffort ?? null,
-        taggedTopics: topicIds.length,
-        confirmPlan: !!input.confirmTopicId,
+        taggedScratchpads: scratchpadIds.length,
+        confirmPlan: !!input.confirmScratchpadId,
       })
       if (!this.phoenixExporterInstalled)
         trace.record("telemetry.exporter_unavailable", { error: "Could not install the portable Phoenix exporter. Use the copy in the app's resources." })
@@ -245,30 +264,31 @@ export class RunnerManager {
       await this.repository.mutate((workspace) => {
         const current = workspace.chats.find((item) => item.id === chat.id)
         if (!current) throw new Error("Chat not found.")
-        current.topicHandles = [...new Set([...current.topicHandles, ...workspace.topics.map((topic) => topic.id)])]
+        current.scratchpadHandles = [...new Set([...current.scratchpadHandles, ...workspace.scratchpads.map((scratchpad) => scratchpad.id)])]
         // CLI providers skip title generation, so the first request names the chat until a title is generated.
         if (!current.titleGenerated && current.messages.length === 0)
           current.title = stripTopicMentions(input.content).slice(0, 80)
-        const confirmed = workspace.topics.find(
-          (item) => item.id === input.confirmTopicId,
+        const confirmed = workspace.scratchpads.find(
+          (item) => item.id === input.confirmScratchpadId,
         )
         if (confirmed) confirmed.planConfirmed = true
         if (current.providerSession) current.providerSession.status = "pending"
         const sentMaterialIds = new Set(current.messages.flatMap((message) => message.materialIds ?? []))
-        const materialIds = input.materialIds ?? attachmentMaterials
+        const materialIds = input.materialIds ?? current.materials
           .filter((material) => !sentMaterialIds.has(material.id))
           .map((material) => material.id)
         current.messages.push({
-          id: randomUUID(),
+          id: input.messageId ?? randomUUID(),
           role: "user",
           content: input.content,
           materialIds,
           createdAt: new Date().toISOString(),
-          topicIds,
+          scratchpadIds,
         })
         // Other chats can create topics before dispatch; their IDs must not shift this turn's handle mapping.
         turnWorkspace = structuredClone(workspace)
       })
+      this.notify()
       const child = this.processes.get(id)
       if (!child) throw new Error("Runner did not start. Try again.")
       this.runtime.set(id, {
@@ -291,20 +311,20 @@ export class RunnerManager {
       const job = WorkerJobSchema.parse({
         telemetry: { directory: telemetryDirectory, parent: telemetry.context },
         chat: { ...turnWorkspace.chats.find((item) => item.id === chat.id), providerSession: chat.providerSession },
-        topics: this.contextTopics(chat.id, turnWorkspace, input).map((topic) => ({
-          ...topic,
-          assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
+        scratchpads: this.contextScratchpads(chat.id, turnWorkspace, input).map((scratchpad) => ({
+          ...scratchpad,
+          assetDirectory: join(this.repository.directory, "scratchpads", scratchpad.id, "assets"),
         })),
         runner,
         ...connection,
         skillDirectory: this.skillDirectory,
         assetDirectory: join(this.repository.directory, "chats", chat.id, "assets"),
         sourceCacheDirectory: join(this.repository.directory, "source-cache"),
-        confirmTopicId: input.confirmTopicId,
-        openedTopicId: input.openedTopicId,
-        workspaceTopics: turnWorkspace.topics.map((topic) => ({
-          id: topic.id, title: topic.title, archived: topic.archived, notes: topic.learning.notes, state: topic.state, materials: topic.materials,
-          assetDirectory: join(this.repository.directory, "scratchpads", topic.id, "assets"),
+        confirmScratchpadId: input.confirmScratchpadId,
+        openedScratchpadId: input.openedScratchpadId,
+        workspaceScratchpads: turnWorkspace.scratchpads.map((scratchpad) => ({
+          id: scratchpad.id, title: scratchpad.title, archived: scratchpad.archived, notes: scratchpad.learning.notes, state: scratchpad.state, materials: scratchpad.materials,
+          assetDirectory: join(this.repository.directory, "scratchpads", scratchpad.id, "assets"),
         })),
       })
       const turn = await this.workflows.start(job)
@@ -363,11 +383,11 @@ export class RunnerManager {
     }
   }
 
-  private contextTopics(chatId: string, { chats, topics } = this.repository.stateSnapshot, input?: Pick<z.infer<typeof SendSchema>, "openedTopicId" | "confirmTopicId">) {
+  private contextScratchpads(chatId: string, { chats, scratchpads } = this.repository.stateSnapshot, input?: Pick<z.infer<typeof SendSchema>, "openedScratchpadId" | "confirmScratchpadId">) {
     const chat = chats.find((chat) => chat.id === chatId)
     if (!chat) return []
-    const ids = selectTutorTopicIds(chat, input?.openedTopicId, input?.confirmTopicId)
-    return topics.filter((topic) => ids.includes(topic.id))
+    const ids = selectTutorTopicIds(chat, input?.openedScratchpadId, input?.confirmScratchpadId)
+    return scratchpads.filter((scratchpad) => ids.includes(scratchpad.id))
   }
 
   private async handleEvent(
@@ -402,6 +422,25 @@ export class RunnerManager {
         if (request.chatId !== chatId || request.turnId !== runtime.turnId) throw new Error("The request does not belong to this active turn.")
         const turn = this.workflows.get(chatId, request.turnId)
         if (turn.attemptId !== event.attemptId) throw new Error("This workflow attempt has been superseded.")
+        if (request.operation === "assumeRole") {
+          const moved = await this.workflows.redirectCreation(chatId, request.turnId, request.requests)
+          if (moved) {
+            this.processes.delete(id)
+            this.clearTimer(id)
+            this.stopCodex(id)
+            child.kill()
+            this.runtime.set(id, { runnerId: runtime.runnerId, chatId, status: "ready", activity: "Ready to learn" })
+            await this.finishTelemetry(id, false)
+            this.notify()
+            try {
+              await this.retry({ chatId: moved.chatId, turnId: moved.turnId })
+            } catch (error) {
+              await this.workflows.fail(moved.chatId, moved.turnId, error instanceof Error ? error.message : "Could not start the staged request.")
+              this.notify()
+            }
+            return
+          }
+        }
         const diagnostic = this.traces.get(id)
         let durationMs: number | undefined
         if ((request.operation === "saveReply" || request.operation === "presentPlan" || request.operation === "presentRoleReply") && diagnostic) {
@@ -521,7 +560,7 @@ export class RunnerManager {
   }
 
   async shutdown() {
-    while (this.committing.size || this.locks.size || this.topicLocks.size)
+    while (this.committing.size || this.locks.size || this.scratchpadLocks.size)
       await new Promise((resolve) => setTimeout(resolve, 25))
     for (const id of this.processes.keys()) this.stopExecution(id)
     await Promise.all(

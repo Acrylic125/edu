@@ -20,7 +20,7 @@ async function fixture(t: TestContext, attached: boolean, content = "/new-topic 
   await workspace.load()
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
-  chat.messages.push({ id: randomUUID(), role: "user", content, createdAt: new Date().toISOString(), topicIds: [] })
+  chat.messages.push({ id: randomUUID(), role: "user", content, createdAt: new Date().toISOString(), scratchpadIds: [] })
   const assets = join(directory, "chats", chat.id, "assets")
   await mkdir(assets, { recursive: true })
   if (attached) {
@@ -34,7 +34,7 @@ async function fixture(t: TestContext, attached: boolean, content = "/new-topic 
     for (const material of chat.materials) await writeFile(join(assets, material.name), `${material.name}: source bytes`)
   }
   await workspace.mutate((state) => state.chats.push(chat))
-  const job = WorkerJobSchema.parse({ runner, chat, topics: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: assets, sourceCacheDirectory: join(directory, "source-cache") })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: assets, sourceCacheDirectory: join(directory, "source-cache") })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))
@@ -59,7 +59,7 @@ test("one planner creates a scoped topic with host-owned citations and confirmat
     assert.equal(selected.length, 3)
     assert.equal(indexed.some((section) => /tutorial/i.test(section.title)), false, "Practice attachments have no curriculum section IDs")
     const plan = { title: "Vector spaces", sections: selected.map((section) => ({ sectionId: section.id, goals: [] })) }
-    assert.equal((await session.execute("topic_createTopic", { topic: { name: "Arbitrary references" } })).success, false)
+    assert.equal((await session.execute("topic_createTopic", { scratchpad: { name: "Arbitrary references" } })).success, false)
     assert.equal((await session.execute("submit_topic_plan", { ...plan, references: [{ type: "pdf", path: "assets/tutorial.pdf", pages: [{ from: 1, to: 3 }] }] })).success, false)
     assert.equal((await session.execute("submit_topic_plan", plan)).success, false, "Unread sections must block creation")
     const read = await session.execute("select_topic_sections", { sectionIds: selected.map((section) => section.id) })
@@ -77,30 +77,30 @@ test("one planner creates a scoped topic with host-owned citations and confirmat
   assert.equal(invocations, 1)
   const role = workflows.get(turn.chatId, turn.turnId).batches[0].jobs[0]
   assert.deepEqual(role.readEvidence.map((entry) => entry.page).sort((a, b) => a - b), Array.from({ length: 12 }, (_, index) => index + 5))
-  const topic = workspace.topic(role.scratchpadId)
-  assert.equal(topic.materials.length, 2, "Unread practice attachments remain available for teaching")
-  assert.equal(topic.planConfirmed, false)
-  assert.equal(workspace.chat(turn.chatId).title, topic.title, "The committed topic names the chat without another model call")
-  const state = TopicStateSchema.parse(topic.state)
+  const scratchpad = workspace.scratchpad(role.scratchpadId)
+  assert.equal(scratchpad.materials.length, 2, "Unread practice attachments remain available for teaching")
+  assert.equal(scratchpad.planConfirmed, false)
+  assert.equal(workspace.chat(turn.chatId).title, scratchpad.title, "The committed topic names the chat without another model call")
+  const state = TopicStateSchema.parse(scratchpad.state)
   assert.deepEqual(state.document?.blocks, [])
   assert.equal(state.threadTutors.every((thread) => Object.values(thread.progress).every((part) => part.steps.length === 0)), true)
   const reopened = new WorkspaceRepository(directory)
   await reopened.load()
   assert.equal(reopened.chat(turn.chatId).learning.phase, "awaiting_plan_confirmation")
-  assert.equal(reopened.topic(role.scratchpadId).planConfirmed, false)
+  assert.equal(reopened.scratchpad(role.scratchpadId).planConfirmed, false)
 
-  await workspace.mutate((state) => { state.topics.find((topic) => topic.id === role.scratchpadId)!.planConfirmed = true })
-  const teachingJob = WorkerJobSchema.parse({ ...job, chat: { ...workspace.chat(turn.chatId), messages: [...workspace.chat(turn.chatId).messages, { id: randomUUID(), role: "user", content: "Confirmed. Start the first section.", createdAt: new Date().toISOString(), topicIds: [topic.id] }] }, topics: [{ ...workspace.topic(topic.id), assetDirectory: join(directory, "scratchpads", topic.id, "assets") }] })
+  await workspace.mutate((state) => { state.scratchpads.find((scratchpad) => scratchpad.id === role.scratchpadId)!.planConfirmed = true })
+  const teachingJob = WorkerJobSchema.parse({ ...job, chat: { ...workspace.chat(turn.chatId), messages: [...workspace.chat(turn.chatId).messages, { id: randomUUID(), role: "user", content: "Confirmed. Start the first section.", createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] }] }, scratchpads: [{ ...workspace.scratchpad(scratchpad.id), assetDirectory: join(directory, "scratchpads", scratchpad.id, "assets") }] })
   await workspace.mutate((state) => { state.chats.find((chat) => chat.id === turn.chatId)!.messages = teachingJob.chat.messages })
   const teaching = await workflows.start(teachingJob)
   await createTutorGraph(workflows, async (input, session) => {
     const hasTool = (name: string) => session.tools.some((tool) => tool.type === "function" && tool.function.name === name)
     if (hasTool("topic_recordQuestion")) {
       assert.equal((await session.execute("read_material", { id: job.chat.materials[0].id, firstPage: 5, lastPage: 10 })).success, true)
-      assert.equal((await session.execute("topic_activatePart", { topicId: "scratchpad_1", topicPartId: "tp-section-1" })).success, true)
-      const result = await session.execute("topic_recordQuestion", { topicId: "scratchpad_1", topicPartId: "tp-section-1", question: "Which closure condition does your example satisfy?" })
+      assert.equal((await session.execute("topic_activatePart", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-section-1" })).success, true)
+      const result = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-section-1", question: "Which closure condition does your example satisfy?" })
       assert.equal(result.success, true, result.text)
-      const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "Check closure under addition.", pendingCheck: { topicId: "scratchpad_1", topicPartId: "tp-section-1", stepIndex: 0 }, nextAction: "Wait for the learner", workpad: "Asked the first check after confirmation" })
+      const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "Check closure under addition.", pendingCheck: { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-section-1", stepIndex: 0 }, nextAction: "Wait for the learner", workpad: "Asked the first check after confirmation" })
       assert.equal(saved.success, true, saved.text)
       return session.finish("Consider closure under addition.")
     }
@@ -108,11 +108,11 @@ test("one planner creates a scoped topic with host-owned citations and confirmat
       await session.execute("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Guide the learner through 6.1 and ask the next check", requestedAccess: "write", replyToLearner: true, context: { learnerMessageIds: [], materialIds: [job.chat.materials[0].id], readDependencies: [], relevantContext: "Learner confirmed" } }] })
       return session.finish("")
     }
-    const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "Check that adding two members stays inside the set.", pendingCheck: { topicId: "scratchpad_1", topicPartId: "tp-section-1", stepIndex: 0 }, nextAction: "Wait for the answer", workpad: "First dynamic check asked after confirmation" })
+    const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "Check that adding two members stays inside the set.", pendingCheck: { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-section-1", stepIndex: 0 }, nextAction: "Wait for the answer", workpad: "First dynamic check asked after confirmation" })
     assert.equal(saved.success, true, saved.text)
     return session.finish("Consider closure under addition.")
   }, saver, {}).invoke({ chatId: teaching.chatId, turnId: teaching.turnId }, { configurable: { thread_id: teaching.turnId }, durability: "sync" })
-  assert.equal(TopicStateSchema.parse(workspace.topic(topic.id).state).threadTutors[0].progress["tp-section-1"].steps.length, 1)
+  assert.equal(TopicStateSchema.parse(workspace.scratchpad(scratchpad.id).state).threadTutors[0].progress["tp-section-1"].steps.length, 1)
 })
 
 for (const coverage of ["available", "missing", "binary"] as const) {
@@ -139,9 +139,9 @@ for (const coverage of ["available", "missing", "binary"] as const) {
       return session.finish("")
     }, saver, {}).invoke({ chatId: turn.chatId, turnId: turn.turnId }, { configurable: { thread_id: turn.turnId }, durability: "sync" })
     assert.equal(invocations, 1)
-    assert.equal(workspace.stateSnapshot.topics.length, coverage === "available" ? 1 : 0)
+    assert.equal(workspace.stateSnapshot.scratchpads.length, coverage === "available" ? 1 : 0)
     const message = workflows.complete(turn.chatId, turn.turnId).message
-    assert.equal(message.topicIds.length, coverage === "available" ? 1 : 0)
+    assert.equal(message.scratchpadIds.length, coverage === "available" ? 1 : 0)
     assert.equal(workspace.chat(job.chat.id).learning.phase, coverage === "available" ? "awaiting_plan_confirmation" : "awaiting_clarification")
     if (coverage === "available") assert.match(message.content, /https:\/\/example.edu\/linear-algebra/)
   })
@@ -161,13 +161,13 @@ test("recovery publishes an already staged plan without another planner invocati
   }, saver, {})
   const config = { configurable: { thread_id: turn.turnId }, durability: "sync" as const }
   await assert.rejects(graph.invoke({ chatId: turn.chatId, turnId: turn.turnId }, config), /disconnected after staging/)
-  assert.equal(workspace.stateSnapshot.topics.length, 0)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 0)
   await graph.invoke(null, config)
   assert.equal(invocations, 1)
   const saved = workflows.complete(turn.chatId, turn.turnId)
   const replay = await workflows.presentPlan(turn.chatId, turn.turnId, workflows.get(turn.chatId, turn.turnId).batches[0].batchId)
   assert.equal(replay.message.id, saved.message.id)
-  assert.equal(workspace.stateSnapshot.topics.length, 1)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 1)
   assert.equal(workspace.chat(turn.chatId).messages.filter((message) => message.role === "assistant").length, 1)
 })
 
@@ -180,5 +180,5 @@ test("an empty creation command asks for intent before allocating a topic", asyn
     return session.finish("What subject and scope would you like to study?")
   }, saver, {}).invoke({ chatId: turn.chatId, turnId: turn.turnId }, { configurable: { thread_id: turn.turnId }, durability: "sync" })
   assert.equal(workflows.get(turn.chatId, turn.turnId).batches.length, 0)
-  assert.equal(workspace.stateSnapshot.topics.length, 0)
+  assert.equal(workspace.stateSnapshot.scratchpads.length, 0)
 })

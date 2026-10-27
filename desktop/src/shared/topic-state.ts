@@ -70,14 +70,14 @@ export const TopicStateSchema = z.object({
 })
 
 export const TopicMutationSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("activatePart"), topicId: z.uuid(), topicPartId: TopicPartIdSchema }),
-  z.object({ type: z.literal("complete"), topicId: z.uuid(), topicPartId: TopicPartIdSchema }),
-  z.object({ type: z.literal("documentMistake"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
-  z.object({ type: z.literal("recordQuestion"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, question: PartProgressSchema.shape.steps.element.shape.question }),
-  z.object({ type: z.literal("recordAnswer"), topicId: z.uuid(), topicPartId: TopicPartIdSchema, answerFromUser: z.string().max(30_000), stepIndex: z.number().int().nonnegative() }),
-  z.object({ type: z.literal("updateTopic"), topicId: z.uuid(), name: TopicStateSchema.shape.name.optional(), content: TopicStateSchema.shape.content.optional(), materialIds: z.array(z.uuid()).optional(), expectedContent: TopicStateSchema.shape.content.optional() }).strict(),
-  z.object({ type: z.literal("editTopicContent"), topicId: z.uuid(), changes: ContentChangesSchema, present: z.array(ContentBlockIdSchema).min(1).max(100).optional().describe("Ordered stored block IDs to render in this chat reply. The app uses their saved content as the explanation."), expectedRevision: z.number().int().nonnegative().optional() }),
-  z.object({ type: z.literal("createTopic"), topicId: z.uuid(), topic: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true, revision: true, document: true }), materialIds: z.array(z.uuid()).optional() }),
+  z.object({ type: z.literal("activatePart"), scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema }),
+  z.object({ type: z.literal("complete"), scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema }),
+  z.object({ type: z.literal("documentMistake"), scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema, context: TopicPartSchema.shape.mistakes.element.shape.context, issue: TopicPartSchema.shape.mistakes.element.shape.issue }),
+  z.object({ type: z.literal("recordQuestion"), scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema, question: PartProgressSchema.shape.steps.element.shape.question }),
+  z.object({ type: z.literal("recordAnswer"), scratchpadId: z.uuid(), scratchpadPartId: TopicPartIdSchema, answerFromUser: z.string().max(30_000), stepIndex: z.number().int().nonnegative() }),
+  z.object({ type: z.literal("updateTopic"), scratchpadId: z.uuid(), name: TopicStateSchema.shape.name.optional(), content: TopicStateSchema.shape.content.optional(), materialIds: z.array(z.uuid()).optional(), expectedContent: TopicStateSchema.shape.content.optional() }).strict(),
+  z.object({ type: z.literal("editTopicContent"), scratchpadId: z.uuid(), changes: ContentChangesSchema, present: z.array(ContentBlockIdSchema).min(1).max(100).optional().describe("Ordered stored block IDs to render in this chat reply. The app uses their saved content as the explanation."), expectedRevision: z.number().int().nonnegative().optional() }),
+  z.object({ type: z.literal("createTopic"), createdAt: z.iso.datetime().optional(), scratchpadId: z.uuid(), scratchpad: z.object(TopicStateSchema.shape).omit({ createdAt: true, threadTutors: true, revision: true, document: true }), materialIds: z.array(z.uuid()).optional() }),
 ])
 
 export function freshTopicState(name: string, createdAt: string) {

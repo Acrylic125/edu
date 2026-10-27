@@ -38,7 +38,7 @@ export function renderContentBlock(block: z.infer<typeof ContentBlockSchema>, ma
   if (!material) throw new Error(`Content source not found: ${block.materialId}`)
   if (block.page > (material.pages.length || 1)) throw new Error(`Content source page is outside ${material.name}.`)
   const label = `${material.name.replace(/[\[\]\\]/g, "\\$&")}, p. ${block.page}`
-  if (block.presentation === "image") return `![${label}](prune-source://${material.id}/${block.page})`
+  if (block.presentation === "image") return `![${label}](edu-source://${material.id}/${block.page})`
   return `[${label}](edu-material://${material.id}/${block.page})`
 }
 

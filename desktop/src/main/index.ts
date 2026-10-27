@@ -1,3 +1,4 @@
+import { CopiedMessageSchema, messageClipboardHtml } from "../shared/message-clipboard"
 import { randomUUID } from "node:crypto"
 import { access, constants, mkdir, stat } from "node:fs/promises"
 import { isAbsolute, join } from "node:path"
@@ -5,6 +6,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  ClipboardItem,
   dialog,
   ipcMain,
   Menu,
@@ -22,7 +24,6 @@ import {
   ImportMaterialsSchema,
   MaterialDraftIdsSchema,
   PastedMaterialsSchema,
-  MessageSchema,
   ProviderIdSchema,
   ProviderSettingsSchema,
   RunnerInputSchema,
@@ -32,7 +33,6 @@ import {
 } from "../shared/contracts"
 import { resolveCliExecutable } from "../providers/cli"
 import { ProviderRegistry } from "../providers/registry"
-import { resolveCodexExecutable } from "../providers/codex-installation"
 import { importMaterials, MaterialDrafts } from "./materials"
 import { readSourceImages } from "./source-images"
 import { newChat, WorkspaceRepository } from "./workspace"
@@ -44,21 +44,18 @@ import { createBatchedUpdate } from "../shared/batched-update"
 const environment = z
   .object({
     ELECTRON_RENDERER_URL: z.string().url().optional(),
-    PRUNE_DATA_DIR: z.string().refine(isAbsolute).optional(),
+    EDU_DATA_DIR: z.string().refine(isAbsolute).optional(),
   })
   .parse(process.env)
 app.setName("EdU")
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: "prune-source",
+    scheme: "edu-source",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
 ])
-if (environment.PRUNE_DATA_DIR)
-  app.setPath("userData", environment.PRUNE_DATA_DIR)
-else
-  // Preserve existing workspaces and keychain accounts through the EdU rename.
-  app.setPath("userData", join(app.getPath("appData"), "prune-desktop"))
+if (environment.EDU_DATA_DIR) app.setPath("userData", environment.EDU_DATA_DIR)
+else app.setPath("userData", join(app.getPath("appData"), "edu"))
 let window: BrowserWindow | undefined
 let manager: RunnerManager | undefined
 let providers: ProviderRegistry | undefined
@@ -84,14 +81,14 @@ else {
         : join(app.getAppPath(), "..", "phoenix")
       const phoenixExporterInstalled = await installPhoenixExporter(phoenixResources, directory)
       const materialDrafts = new MaterialDrafts()
-      protocol.handle("prune-source", async (request) => {
+      protocol.handle("edu-source", async (request) => {
         const url = new URL(request.url)
         const id = IdSchema.safeParse(url.hostname)
         const page = z.coerce.number().int().min(1).max(1000).safeParse(/^\/(\d+)$/.exec(url.pathname)?.[1])
         if (!id.success || !page.success)
           return new Response("Source not found", { status: 404 })
-        const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+        const { scratchpads, chats } = repository.stateSnapshot
+        for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id.data))
           const material = owner?.materials.find((item) => item.id === id.data)
           if (!owner || !material) continue
@@ -113,13 +110,10 @@ else {
       const runtimeUpdates = createBatchedUpdate(() => {
         if (window && !window.isDestroyed()) window.webContents.send(Channel.runtimeUpdate, { runtime: runnerManager.statuses })
       })
-      const bundledCodex = join(resources, "codex", "bin", process.platform === "win32" ? "codex.exe" : "codex")
       const registry = new ProviderRegistry(
         directory,
-        await resolveCodexExecutable(bundledCodex),
         notify,
         repository.stateSnapshot.providerSettings,
-        bundledCodex,
       )
       providers = registry
       const skillDirectory = app.isPackaged
@@ -139,7 +133,7 @@ else {
       function snapshot() {
         return SnapshotSchema.parse({
           runners: repository.publicRunners,
-          topics: repository.publicTopics,
+          scratchpads: repository.publicTopics,
           chats: repository.publicChats,
           runtime: runnerManager.statuses,
           connected: registry.statuses.some((provider) => provider.connected),
@@ -162,7 +156,8 @@ else {
       }
       ipcMain.handle(Channel.copyText, async (event, raw) => {
         trusted(event)
-        await clipboard.writeText(MessageSchema.shape.content.parse(raw))
+        const { text, materialIds } = CopiedMessageSchema.parse(raw)
+        await clipboard.write([new ClipboardItem({ "text/plain": text, "text/html": messageClipboardHtml(text, materialIds) })])
       })
       ipcMain.handle(Channel.snapshot, async (event) => {
         trusted(event)
@@ -320,30 +315,37 @@ else {
         trusted(event)
         runnerManager.stop(IdSchema.parse(raw), IdSchema.optional().parse(rawChatId))
       })
-      ipcMain.handle(Channel.createTopic, async (event, raw) => {
+      ipcMain.handle(Channel.createScratchpad, async (event, raw) => {
         trusted(event)
-        return runnerManager.createTopic(CreateTopicSchema.parse(raw))
+        return runnerManager.createScratchpad(CreateTopicSchema.parse(raw))
       })
       ipcMain.handle(Channel.createChat, async (event, raw) => {
         trusted(event)
         const input = CreateChatSchema.parse(raw)
         const chat = newChat(input.runnerId)
         chat.scratchpadRequested = input.scratchpadRequested ?? false
+        chat.ownerScratchpadId = input.ownerScratchpadId
         await repository.mutate((workspace) => {
           if (!workspace.runners.some((runner) => runner.id === chat.runnerId))
             throw new Error("Runner not found.")
+          if (chat.ownerScratchpadId && !workspace.scratchpads.some((item) => item.id === chat.ownerScratchpadId))
+            throw new Error("Scratchpad not found.")
           workspace.chats.unshift(chat)
         })
         notify()
         return chat.id
       })
-      ipcMain.handle(Channel.archiveTopic, async (event, raw) => {
+      ipcMain.handle(Channel.deleteStagedChat, async (event, raw) => {
         trusted(event)
-        const { topicId, archived } = ArchiveTopicSchema.parse(raw)
+        await runnerManager.deleteStagedChat(IdSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.archiveScratchpad, async (event, raw) => {
+        trusted(event)
+        const { scratchpadId, archived } = ArchiveTopicSchema.parse(raw)
         await repository.mutate((workspace) => {
-          const topic = workspace.topics.find((item) => item.id === topicId)
-          if (!topic) throw new Error("This topic no longer exists.")
-          topic.archived = archived
+          const scratchpad = workspace.scratchpads.find((item) => item.id === scratchpadId)
+          if (!scratchpad) throw new Error("This topic no longer exists.")
+          scratchpad.archived = archived
         })
         notify()
       })
@@ -366,6 +368,20 @@ else {
           throw new Error("Drop files from your computer to attach them.")
         return materialDrafts.add(draftIds, paths)
       })
+      ipcMain.handle(Channel.reuseMaterials, async (event, raw) => {
+        trusted(event)
+        const { materialIds, draftIds } = z.object({ materialIds: MaterialDraftIdsSchema, draftIds: MaterialDraftIdsSchema }).parse(raw)
+        const { scratchpads, chats } = repository.stateSnapshot
+        const paths = materialIds.map((id) => {
+          for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
+            const owner = owners.find((item) => item.materials.some((material) => material.id === id))
+            const material = owner?.materials.find((item) => item.id === id)
+            if (owner && material) return join(directory, collection, owner.id, "assets", material.name)
+          }
+          throw new Error("A copied attachment is no longer available in this workspace.")
+        })
+        return materialDrafts.add(draftIds, paths)
+      })
       ipcMain.handle(Channel.pasteMaterials, async (event, raw) => {
         trusted(event)
         const { images, draftIds } = PastedMaterialsSchema.parse(raw)
@@ -374,6 +390,20 @@ else {
       ipcMain.handle(Channel.discardMaterials, (event, raw) => {
         trusted(event)
         materialDrafts.discard(MaterialDraftIdsSchema.parse(raw))
+      })
+      ipcMain.handle(Channel.removeChatMaterial, async (event, raw) => {
+        trusted(event)
+        const { chatId, materialId } = z.object({ chatId: IdSchema, materialId: IdSchema }).parse(raw)
+        if (runnerManager.statuses.some((runtime) => runtime.chatId === chatId && runtime.status === "running"))
+          throw new Error("Wait for the current lesson before removing sources.")
+        await repository.mutate((workspace) => {
+          const chat = workspace.chats.find((item) => item.id === chatId)
+          if (!chat) throw new Error("Chat not found.")
+          if (chat.messages.some((message) => message.materialIds?.includes(materialId)))
+            throw new Error("This attachment has already been sent.")
+          chat.materials = chat.materials.filter((material) => material.id !== materialId)
+        })
+        notify()
       })
       ipcMain.handle(Channel.importMaterials, async (event, raw) => {
         trusted(event)
@@ -385,7 +415,7 @@ else {
           return chats.some(
             (chat) =>
               chat.id === runtime.chatId &&
-              chat.messages.some((message) => message.topicIds.includes(owner.id)),
+              chat.messages.some((message) => message.scratchpadIds.includes(owner.id)),
           )
         })
         if (busy)
@@ -396,13 +426,13 @@ else {
       })
       ipcMain.handle(Channel.exportNotes, async (event, raw) => {
         trusted(event)
-        const topic = repository.topic(IdSchema.parse(raw))
+        const scratchpad = repository.scratchpad(IdSchema.parse(raw))
         const result = await dialog.showOpenDialog({
           title: "Export study notes",
           properties: ["openDirectory", "createDirectory"],
         })
         if (!result.canceled && result.filePaths[0])
-          await repository.exportStudyFiles(topic, result.filePaths[0])
+          await repository.exportStudyFiles(scratchpad, result.filePaths[0])
       })
       ipcMain.handle(Channel.openDiagnostics, async (event, raw) => {
         trusted(event)
@@ -414,8 +444,8 @@ else {
       })
       ipcMain.handle(Channel.openWorkspace, async (event, raw) => {
         trusted(event)
-        const topic = repository.topic(IdSchema.parse(raw))
-        const path = join(directory, "scratchpads", topic.id)
+        const scratchpad = repository.scratchpad(IdSchema.parse(raw))
+        const path = join(directory, "scratchpads", scratchpad.id)
         await mkdir(path, { recursive: true, mode: 0o700 })
         const error = await shell.openPath(path)
         if (error) throw new Error(error)
@@ -423,8 +453,8 @@ else {
       ipcMain.handle(Channel.openMaterial, async (event, raw) => {
         trusted(event)
         const id = IdSchema.parse(raw)
-        const { topics, chats } = repository.stateSnapshot
-        for (const [collection, owners] of [["scratchpads", topics], ["chats", chats]] as const) {
+        const { scratchpads, chats } = repository.stateSnapshot
+        for (const [collection, owners] of [["scratchpads", scratchpads], ["chats", chats]] as const) {
           const owner = owners.find((item) => item.materials.some((material) => material.id === id))
           const material = owner?.materials.find((item) => item.id === id)
           if (!owner || !material) continue

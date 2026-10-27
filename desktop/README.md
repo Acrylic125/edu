@@ -13,8 +13,8 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Installation downloads Electron and the bundled Codex runtime. Once the app
-opens, connect a provider.
+Installation downloads Electron. Once the app opens, install a provider's CLI
+and connect your account.
 
 ## Connect a provider
 
@@ -24,8 +24,9 @@ account with model access.
 
 1. Open **Settings → Providers → Add provider**.
 2. Choose a provider and complete its connection:
-   - **Codex:** click **Connect** and finish browser sign-in with an account that
-     has Codex access and available model credits.
+   - **Codex:** install [Codex CLI](https://developers.openai.com/codex/cli)
+     version 0.162.1 or later, then recheck setup. Click **Connect** and finish
+     browser sign-in with an account that has Codex access and available model credits.
    - **Claude:** install Claude Code if needed, then click **Connect**. EdU finds
      the CLI and starts sign-in if needed.
    - **Antigravity:** install its CLI if needed, then click **Connect**. The
@@ -36,7 +37,8 @@ account with model access.
 If EdU cannot find a CLI, use the installation refresh button. For a custom
 installation, open **Advanced settings**, set **Binary path** to the executable's
 absolute path, and click **Save changes**. Reconnect after changing a CLI binary.
-Leave the Codex binary path empty to use its bundled runtime.
+Leave the Codex binary path empty to detect a compatible installed CLI.
+EdU does not bundle or download Codex.
 
 For visual sources, choose Codex with a vision-capable model. Claude Code and
 Antigravity support text and extracted PDF text.
@@ -74,7 +76,7 @@ To create a local app bundle without macOS signing, run `pnpm package:dir`.
 Set an absolute user-data path when starting the app:
 
 ```sh
-PRUNE_DATA_DIR='/absolute/path/to/edu-dev' pnpm dev
+EDU_DATA_DIR='/absolute/path/to/edu-dev' pnpm dev
 ```
 
 ## Preview the renderer

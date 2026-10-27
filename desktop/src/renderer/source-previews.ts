@@ -4,17 +4,22 @@ import { materialDisplayName, resolveMaterialLink } from "../shared/material-lin
 
 export function sourcePreviews({ enabled, materials }: {
   enabled: boolean
-  materials: Snapshot["topics"][number]["materials"]
+  materials: Snapshot["scratchpads"][number]["materials"]
 }) {
   return (tree: Root) => {
     if (!enabled) return
     const displayed = new Set<string>()
     const cited = new Map<string, ReturnType<typeof resolveMaterialLink>>()
     function visit(node: Nodes) {
-      if (node.type === "image") displayed.add(node.url)
+      if (node.type === "image") {
+        const source = resolveMaterialLink(node.url, materials)
+        let url = node.url
+        if (source) url = `edu-source://${source.id}/${source.page}`
+        displayed.add(url)
+      }
       if (node.type === "link") {
         const source = resolveMaterialLink(node.url, materials)
-        if (source) cited.set(`prune-source://${source.id}/${source.page}`, source)
+        if (source) cited.set(`edu-source://${source.id}/${source.page}`, source)
       }
       if ("children" in node) node.children.forEach(visit)
     }

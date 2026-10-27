@@ -6,14 +6,19 @@ const SavedTabsSchema = z.object({
   history: z.array(z.string().min(1)),
 })
 
-const storageKey = "edu:chat-tabs"
+const storageKey = "edu:scratchpad-chat-tabs"
 
 export function createChatTabs(storage?: Pick<Storage, "getItem" | "setItem">) {
-  let knownIds: Set<string> | undefined
+  const knownIdsByScope = new Map<string, Set<string>>()
+  let scope = "new"
+  let scopes: Record<string, z.infer<typeof SavedTabsSchema>> = {}
   let saved = SavedTabsSchema.parse({ openIds: null, history: [] })
   try {
     const raw = storage?.getItem(storageKey)
-    if (raw) saved = SavedTabsSchema.parse(JSON.parse(raw))
+    if (raw) {
+      scopes = z.record(z.string(), SavedTabsSchema).parse(JSON.parse(raw))
+      saved = scopes[scope] ?? saved
+    }
   } catch {
     // Invalid or unavailable browser storage must not prevent opening the workspace.
   }
@@ -22,7 +27,7 @@ export function createChatTabs(storage?: Pick<Storage, "getItem" | "setItem">) {
     z.infer<typeof SavedTabsSchema> & {
       activeId: string
       cycleIds: string[] | null
-      reconcile: (ids: string[]) => void
+      reconcile: (ids: string[], scratchpadId?: string) => void
       select: (id: string) => void
       close: (id: string) => void
       cycle: (reverse: boolean) => void
@@ -32,13 +37,21 @@ export function createChatTabs(storage?: Pick<Storage, "getItem" | "setItem">) {
     ...saved,
     activeId: saved.history[0] ?? "new",
     cycleIds: null,
-    reconcile: (ids) => {
+    reconcile: (ids, scratchpadId = "new") => {
+      if (scope !== scratchpadId) {
+        const previous = get()
+        scopes[scope] = { openIds: previous.openIds, history: previous.history }
+        scope = scratchpadId
+        const saved = scopes[scope] ?? { openIds: null, history: [] }
+        set({ ...saved, activeId: saved.history[0] ?? "new", cycleIds: null })
+      }
       const current = get()
+      const knownIds = knownIdsByScope.get(scope)
       const available = new Set([...ids, "new"])
       let openIds = current.openIds ?? ids
       if (knownIds)
         openIds = [...openIds, ...ids.filter((id) => !knownIds?.has(id))]
-      knownIds = new Set(ids)
+      knownIdsByScope.set(scope, new Set(ids))
       openIds = [...new Set(openIds)].filter((id) => available.has(id))
       const open = new Set(openIds)
       const history = [...new Set(current.history)].filter((id) => open.has(id))
@@ -101,10 +114,8 @@ export function createChatTabs(storage?: Pick<Storage, "getItem" | "setItem">) {
     )
       return
     try {
-      storage?.setItem(
-        storageKey,
-        JSON.stringify({ openIds: state.openIds, history: state.history }),
-      )
+      scopes[scope] = { openIds: state.openIds, history: state.history }
+      storage?.setItem(storageKey, JSON.stringify(scopes))
     } catch {
       // Tab navigation remains usable when storage is full or disabled.
     }

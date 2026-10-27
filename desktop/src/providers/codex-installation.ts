@@ -11,7 +11,7 @@ const environment = z.object({
   APPDATA: z.string().optional(),
 }).parse(process.env)
 
-export async function resolveCodexExecutable(bundled: string, directories = [
+export async function resolveCodexExecutable(binaryPath?: string, directories = [
   ...environment.PATH.split(delimiter).filter(isAbsolute),
   // Finder-launched apps do not inherit the user's shell PATH.
   join(homedir(), ".local", "bin"),
@@ -20,8 +20,9 @@ export async function resolveCodexExecutable(bundled: string, directories = [
   ...(environment.APPDATA ? [join(environment.APPDATA, "npm")] : []),
 ]) {
   const name = process.platform === "win32" ? "codex.exe" : "codex"
-  for (const directory of new Set(directories)) {
-    const executable = join(directory, name)
+  let candidates = [...new Set(directories)].map((directory) => join(directory, name))
+  if (binaryPath) candidates = [binaryPath]
+  for (const executable of candidates) {
     try {
       if (!(await stat(executable)).isFile()) continue
       await access(executable, constants.X_OK)
@@ -45,7 +46,7 @@ export async function resolveCodexExecutable(bundled: string, directories = [
       const { stdout: version } = await execute(executable, ["--version"], options)
       const match = /^codex-cli (\d+)\.(\d+)\.(\d+)\s*$/.exec(version)
       if (!match) continue
-      // Older releases lack the runtime and protocol features used by EdU's bundled 0.162.1.
+      // Older releases lack the runtime and protocol features required by EdU.
       const [major, minor, patch] = match.slice(1).map(Number)
       if (major === 0 && (minor < 162 || (minor === 162 && patch < 1))) continue
       const { stdout: features } = await execute(executable, ["features", "list"], options)
@@ -54,8 +55,8 @@ export async function resolveCodexExecutable(bundled: string, directories = [
       // Keep the launcher path intact because version-manager shims dispatch by invoked name.
       return executable
     } catch {
-      // Missing, unsupported, or broken local installations fall back to the bundled runtime.
+      // Missing, unsupported, or broken candidates must not prevent checking other installations.
     }
   }
-  return bundled
+  throw new Error("Install or update Codex CLI (0.162.1 or later), then recheck setup in Settings → Providers. For a custom installation, set its binary path in Advanced settings.")
 }

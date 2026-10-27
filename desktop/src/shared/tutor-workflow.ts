@@ -11,13 +11,22 @@ export const RoleRequestSchema = z.object({
     z.object({ mode: z.literal("create"), type: ScratchpadTypeSchema }).strict(),
   ]),
   task: z.string().trim().min(1).max(20_000),
-  requestedAccess: z.enum(["read", "write"]),
+  requestedAccess: z.enum(["read", "write"]).describe("Use write for creation or changes to the target. readDependencies grant separate read access to source scratchpads."),
   replyToLearner: z.boolean().optional().describe("Complete this learner turn in the role and return its final reply and private handoff. Use only for one independent write job with no remaining coordination."),
   context: z.object({
     learnerMessageIds: z.array(IdSchema), materialIds: z.array(IdSchema),
     readDependencies: z.array(HandleSchema), relevantContext: z.string().max(20_000),
   }).strict(),
 }).strict()
+// Keep stored requests readable so older invalid checkpoints can return to Tutor for correction.
+export const RoleRequestsSchema = z.array(RoleRequestSchema).min(1).max(12).superRefine((requests, ctx) => {
+  for (const [index, request] of requests.entries()) {
+    if (request.target.mode === "create" && request.requestedAccess !== "write")
+      ctx.addIssue({ code: "custom", path: [index, "requestedAccess"], message: "Creation requires write access. Set requestedAccess=write for the new target; use readDependencies for its sources." })
+    if (request.replyToLearner && (requests.length !== 1 || request.requestedAccess !== "write"))
+      ctx.addIssue({ code: "custom", path: [index, "replyToLearner"], message: "A direct learner reply requires one independent write role. Use replyToLearner=false for read tasks or multiple jobs." })
+  }
+})
 export const RoleSummarySchema = z.object({
   summary: z.string().trim().min(1).max(20_000), evidence: z.array(TopicReferenceSchema).max(1000),
   needsClarification: z.boolean().optional().describe("True when missing scope or reliable sources prevent creation. Return the specific gap to Tutor without creating a topic."),
@@ -74,6 +83,7 @@ export const WorkflowRecordSchema = z.object({
   status: z.enum(["running", "failed", "completed"]),
   attemptId: IdSchema,
   error: z.string().optional(),
+  redirectedTurnId: IdSchema.optional(),
   source: WorkflowSourceSchema,
   batches: z.array(RoleBatchSchema).default([]),
   handoffs: z.array(HandoffRecordSchema).default([]),
