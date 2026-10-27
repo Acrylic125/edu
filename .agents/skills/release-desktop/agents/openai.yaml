@@ -1,4 +1,4 @@
 interface:
   display_name: "Release EdU Desktop"
   short_description: "Bundle, sign, and notarize EdU desktop releases"
-  default_prompt: "Use $release-desktop to prepare an unsigned EdU release package and report its size."
+  default_prompt: "Use $release-desktop to rebuild, sign, notarize, and verify EdU release installers."
