@@ -57,6 +57,8 @@ export function ChatSessions({
   const panelId = useId()
   const scroll = useRef<HTMLDivElement>(null)
   const pendingFocus = useRef<string | null>(null)
+  const revealedValue = useRef<string | undefined>(undefined)
+  const closing = useRef(false)
   const sessionById = new Map(sessions.map((session) => [session.id, session]))
   const tabs = openIds.flatMap((id) => {
     if (id === "new") return []
@@ -84,8 +86,11 @@ export function ChatSessions({
   })
 
   useLayoutEffect(() => {
-    if (activeIndex >= 0)
+    // Removing earlier tabs changes the active index without requesting navigation.
+    if (activeIndex >= 0 && revealedValue.current !== value && !closing.current)
       virtualizer.scrollToIndex(activeIndex, { align: "auto" })
+    revealedValue.current = value
+    closing.current = false
     if (pendingFocus.current === value || pendingFocus.current === "closed") {
       const button = scroll.current?.querySelector<HTMLButtonElement>(
         '[role="tab"][aria-selected="true"]',
@@ -95,7 +100,7 @@ export function ChatSessions({
         pendingFocus.current = null
       }
     }
-  }, [activeIndex, value, virtualizer])
+  }, [activeIndex, value, openIds, virtualizer])
 
   function select(id: string) {
     if (id === "new") onNew()
@@ -121,6 +126,7 @@ export function ChatSessions({
   }
 
   function close(id: string) {
+    closing.current = true
     // Keep keyboard focus in the tab strip when its focused control is removed.
     if (scroll.current?.contains(document.activeElement))
       pendingFocus.current = "closed"
