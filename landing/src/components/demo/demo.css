@@ -13,7 +13,7 @@ learning-demo {
 }
 
 learning-demo:not(:defined) {
-  height: 100svh;
+  height: 100dvh;
 }
 
 .demo-caption:not(:first-child) {
