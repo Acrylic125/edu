@@ -59,6 +59,7 @@ import { stagingId, useTopicViews } from "./topic-views"
 import { WorkspaceLoading, WorkspaceLoadingSidebar } from "./workspace-loading"
 import { StudyMarkdown } from "./markdown"
 import { ScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
+import { ScratchpadFileError } from "./scratchpad-file-error"
 import { TestScratchpad } from "./test-scratchpad"
 import { MediaPreview } from "./media-preview"
 import { TopicDirectory } from "./topic-directory"
@@ -1183,9 +1184,13 @@ export function App() {
           <LearningDocumentLayout
             title={scratchpad.title}
             badge={
-              <Badge variant={scratchpad.state?.type ?? "topic"} className="px-3 py-1 text-sm">
-                {{ topic: "Topic", test: "Test", generic: "Generic" }[scratchpad.state?.type ?? "topic"]}
-              </Badge>
+              scratchpad.fileError ? (
+                <Badge variant="outline" className="border-destructive/20 bg-destructive/10 px-3 py-1 text-sm text-destructive">Error</Badge>
+              ) : (
+                <Badge variant={scratchpad.state?.type ?? "topic"} className="px-3 py-1 text-sm">
+                  {{ topic: "Topic", test: "Test", generic: "Generic" }[scratchpad.state?.type ?? "topic"]}
+                </Badge>
+              )
             }
             materials={
               scratchpad.materials.length > 0
@@ -1206,7 +1211,7 @@ export function App() {
                 : null
             }
             actions={
-              scratchpad.state?.type === "topic" && !scratchpad.planConfirmed &&
+              !scratchpad.fileError && scratchpad.state?.type === "topic" && !scratchpad.planConfirmed &&
               scratchpad.learning.outline.length > 0 && (
                 <div className="mt-9" role="group" aria-label="Topic plan confirmation">
                   <p className="mb-3 text-sm text-muted-foreground">
@@ -1220,7 +1225,18 @@ export function App() {
               )
             }
           >
-            {scratchpad.state?.type === "test" ? (
+            {scratchpad.fileError && (
+              <ScratchpadFileError
+                error={scratchpad.fileError}
+                busy={busy || chatRunnerBusy}
+                onRegenerate={() => { void perform(() => desktop().reconcileScratchpad({ scratchpadId: scratchpad.id, action: "regenerate" })) }}
+                onConvert={() => { void perform(() => desktop().reconcileScratchpad({ scratchpadId: scratchpad.id, action: "convert-to-generic" })) }}
+              />
+            )}
+            {scratchpad.fileError === "missing-state" && (
+              <StudyMarkdown text={scratchpad.learning.notes.replace(/^# .+\n+/, "")} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
+            )}
+            {!scratchpad.fileError && (scratchpad.state?.type === "test" ? (
               <TestScratchpad state={scratchpad.state} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />
             ) : (
               <>
@@ -1240,7 +1256,7 @@ export function App() {
                 )}
                 {notes.after.trim() && <StudyMarkdown text={notes.after} terminology={terminology} scratchpads={snapshot.scratchpads} onOpenScratchpad={openTopic} materials={documentMaterials} labelMaterials={labelMaterials} onOpenMaterial={(id) => { void perform(() => desktop().openMaterial(id)) }} />}
               </>
-            )}
+            ))}
           </LearningDocumentLayout>
         }
         chat={chatPane}
@@ -1410,6 +1426,7 @@ export function DesktopSidebar({
             <TopicNavigationItem
               title={item.title}
               scratchpadType={item.state?.type ?? "topic"}
+              status={item.fileError ? "error" : undefined}
               selected={view === "learn" && item.id === scratchpadId}
               busy={runningTopicIds.has(item.id)}
               onClick={() => openTopic(item.id)}
@@ -1480,9 +1497,9 @@ export function DesktopSidebar({
           <ContextMenu key={item.id}>
             <ContextMenuTrigger render={
               <TopicNavigationItem title={item.title || "Untitled thread"}
+                status="staging"
                 selected={view === "learn" && scratchpadId === stagingId && activeChatId === item.id}
                 busy={runningChats.some((chat) => chat.id === item.id)}
-                className="bg-yellow-300/20 text-sidebar-foreground hover:bg-yellow-300/30 dark:bg-yellow-700/20 dark:hover:bg-yellow-700/30"
                 onClick={() => { closeNavigation(); onOpenChat(item.id) }} />
             } />
             <ContextMenuContent>

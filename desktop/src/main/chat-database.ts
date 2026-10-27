@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import { ChatSchema, MessageSchema, WorkspaceSchema, type Workspace } from "../shared/contracts"
-import { StoredJsonSchema, StoredWorkspaceSchema } from "./workspace-migrations"
+import { StoredJsonSchema, StoredTopicSchema, StoredWorkspaceSchema } from "./workspace-migrations"
 import { ConversationSummarySchema, WorkflowRecordSchema } from "../shared/tutor-workflow"
 
 const ChatStateSchema = ChatSchema.omit({ messages: true })
@@ -86,6 +86,25 @@ export class ChatDatabase {
         filesPending: pending.payload === "true",
         removedFiles: RemovedFilesSchema.parse(JSON.parse(JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'removed_files'").get()).payload)),
       }
+    } finally {
+      database.close()
+    }
+  }
+
+  scratchpadFromHistory(id: string) {
+    const database = this.open()
+    try {
+      const row = database.prepare(`
+        SELECT scratchpad.value AS payload
+        FROM events AS history, json_each(history.payload) AS scratchpad
+        WHERE history.type IN ('scratchpads.updated', 'topics.updated')
+          AND instr(history.payload, ?) > 0
+          AND json_extract(scratchpad.value, '$.id') = ?
+        ORDER BY history.sequence DESC
+        LIMIT 1
+      `).get(id, id)
+      if (!row) return
+      return StoredTopicSchema.parse(StoredJsonSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload)))
     } finally {
       database.close()
     }

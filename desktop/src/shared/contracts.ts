@@ -137,6 +137,7 @@ export const LearningStateSchema = z
   })
 export const TopicSchema = z.object({
   state: ScratchpadStateSchema.optional(),
+  fileError: z.enum(["missing-markdown", "missing-state", "missing-both"]).optional(),
   id: IdSchema,
   archived: z.boolean().default(false),
   title: z.string().max(150),
@@ -155,7 +156,7 @@ export const ProviderSessionSchema = z.object({
   toolSignature: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   status: z.enum(["ready", "pending"]),
 })
-export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true }).extend({
+export const ChatSchema = TopicSchema.omit({ planConfirmed: true, archived: true, state: true, fileError: true }).extend({
   runnerId: IdSchema,
   scratchpadRequested: z.boolean().default(false),
   ownerScratchpadId: IdSchema.optional(),
@@ -257,6 +258,10 @@ export const CreateTopicSchema = z.object({
   runnerId: IdSchema.optional(),
 })
 export const CreateChatSchema = z.object({ runnerId: IdSchema, ownerScratchpadId: IdSchema.optional(), scratchpadRequested: z.boolean().optional() })
+export const ReconcileScratchpadSchema = z.object({
+  scratchpadId: IdSchema,
+  action: z.enum(["regenerate", "convert-to-generic"]),
+})
 export const ArchiveTopicSchema = z.object({ scratchpadId: IdSchema, archived: z.boolean() })
 export const SendSchema = z.object({
   chatId: IdSchema,
@@ -372,6 +377,7 @@ export const Channel = {
   createChat: "edu:create-chat",
   deleteStagedChat: "edu:delete-staged-chat",
   archiveScratchpad: "edu:archive-topic",
+  reconcileScratchpad: "edu:reconcile-scratchpad",
   send: "edu:send",
   retry: "edu:retry",
   importMaterials: "edu:import-materials",
@@ -417,6 +423,7 @@ export type DesktopBridge = {
   createChat: (input: z.infer<typeof CreateChatSchema>) => Promise<string>
   deleteStagedChat: (chatId: string) => Promise<void>
   archiveScratchpad: (input: z.infer<typeof ArchiveTopicSchema>) => Promise<void>
+  reconcileScratchpad: (input: z.infer<typeof ReconcileScratchpadSchema>) => Promise<void>
   send: (input: z.infer<typeof SendSchema>) => Promise<void>
   retry: (input: z.infer<typeof RetrySchema>) => Promise<void>
   selectMaterials: (draftIds: z.infer<typeof MaterialDraftIdsSchema>) => Promise<z.infer<typeof MaterialDraftSchema>[]>

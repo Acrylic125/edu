@@ -9,6 +9,8 @@ import { importStructuredContent } from "./structured-content-migration"
 import { CreateGenericInputSchema, CreateTestInputSchema, GenericStateSchema, ScratchpadMutationSchema, ScratchpadStateSchema, ScratchpadTypeSchema, CreateTestQuestionInputSchema, TestStateSchema, scratchpadReferences, testScratchpadMarkdown } from "../shared/scratchpad-state"
 
 export function applyTopicMutation(workspace: Pick<Workspace, "scratchpads" | "chats">, threadId: string, input: z.infer<typeof TopicMutationSchema>) {
+  if (workspace.scratchpads.some((scratchpad) => scratchpad.id === input.scratchpadId && scratchpad.fileError))
+    throw new Error("Reconcile the scratchpad's missing files before updating it.")
   const { scratchpads } = workspace
   const mutation = TopicMutationSchema.parse(input)
   if (mutation.type === "createTopic") {
@@ -304,6 +306,8 @@ export function existingScratchpadForCreation(workspace: Pick<Workspace, "scratc
 }
 
 export function applyScratchpadMutation(workspace: Pick<Workspace, "scratchpads" | "chats">, threadId: string, input: z.infer<typeof ScratchpadMutationSchema>) {
+  if (workspace.scratchpads.some((scratchpad) => scratchpad.id === input.scratchpadId && scratchpad.fileError))
+    throw new Error("Reconcile the scratchpad's missing files before updating it.")
   const mutation = ScratchpadMutationSchema.parse(input)
   if (workspace.scratchpads.some((item) => item.id === mutation.scratchpadId && item.archived))
     throw new Error("Archived scratchpads are read-only.")

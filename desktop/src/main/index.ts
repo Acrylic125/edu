@@ -29,6 +29,7 @@ import {
   RunnerInputSchema,
   SendSchema,
   RetrySchema,
+  ReconcileScratchpadSchema,
   SnapshotSchema,
 } from "../shared/contracts"
 import { resolveCliExecutable } from "../providers/cli"
@@ -349,6 +350,11 @@ else {
         })
         notify()
       })
+      ipcMain.handle(Channel.reconcileScratchpad, async (event, raw) => {
+        trusted(event)
+        await repository.reconcileScratchpad(ReconcileScratchpadSchema.parse(raw))
+        notify()
+      })
       ipcMain.handle(Channel.send, async (event, raw) => {
         trusted(event)
         await runnerManager.send(SendSchema.parse(raw))
@@ -493,6 +499,12 @@ else {
         window.webContents.session.setPermissionRequestHandler(
           (_contents, _permission, callback) => callback(false),
         )
+        window.on("focus", () => {
+          if (shuttingDown) return
+          void repository.refreshTopics().then(notify).catch((error) => {
+            console.error("Could not recheck scratchpad files on focus.", error)
+          })
+        })
         if (!app.isPackaged && environment.ELECTRON_RENDERER_URL)
           void window.loadURL(environment.ELECTRON_RENDERER_URL)
         else void window.loadFile(join(__dirname, "../renderer/index.html"))
