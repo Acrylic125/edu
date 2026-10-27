@@ -15,13 +15,15 @@ class DownloadSection extends HTMLElement {
     let height = 1;
     let orbitRadiusX = 1;
     let orbitRadiusY = 1;
+    let orbitCenterY = 1;
+    let startAngle = -Math.PI / 2;
     // Icons and trail tips share coordinates so they stay aligned when the orbit changes shape.
     const spiralPoint = (progress: number, index: number) => {
       const radiusScale = 4 - 3 * progress;
-      const angle = -Math.PI / 2 + index * Math.PI * 2 / 3 + (progress - 1) * Math.PI * 4 / 3;
+      const angle = startAngle + index * Math.PI * 2 / 3 + (progress - 1) * Math.PI * 4 / 3;
       return {
         x: width / 2 + Math.cos(angle) * orbitRadiusX * radiusScale,
-        y: height / 2 + Math.sin(angle) * orbitRadiusY * radiusScale,
+        y: orbitCenterY + Math.sin(angle) * orbitRadiusY * radiusScale,
       };
     };
 
@@ -70,8 +72,13 @@ class DownloadSection extends HTMLElement {
       height = stage.clientHeight;
       orbitRadiusX = Math.min(width * 0.44, height * 0.44) * 0.76;
       orbitRadiusY = orbitRadiusX;
+      orbitCenterY = height / 2;
+      startAngle = -Math.PI / 2;
       if (height >= width) {
-        orbitRadiusY = height * 0.44;
+        orbitRadiusX = width * 0.15;
+        orbitRadiusY = height * 0.08;
+        orbitCenterY = height * 0.22;
+        startAngle = -Math.PI;
       } else if (height <= 650) {
         orbitRadiusX = width * 0.4;
         orbitRadiusY = height * 0.42;

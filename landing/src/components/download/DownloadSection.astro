@@ -1,8 +1,9 @@
 ---
 import { Image } from "astro:assets";
-import codex from "../../../../desktop/src/renderer/assets/providers/codex.svg";
-import antigravity from "../../../../desktop/src/renderer/assets/providers/antigravity.png";
-import claude from "../../../../desktop/src/renderer/assets/providers/claude.svg";
+import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
+import codex from "./assets/openai.svg";
+import antigravity from "./assets/antigravity.svg";
+import claude from "./assets/claude.svg";
 import DownloadAction from "./DownloadAction.astro";
 import "./download.css";
 
@@ -15,6 +16,7 @@ const integrations = [
 
 <download-section id="download" aria-labelledby="download-heading">
   <section class="download-stage">
+    <p class="download-compatibility">Works with</p>
     <div class="download-halo" aria-hidden="true"></div>
     <svg class="download-orbits" data-download-orbits fill="none" aria-hidden="true">
       <defs>
@@ -35,9 +37,10 @@ const integrations = [
     </svg>
 
     <div class="download-copy">
-      <h2 id="download-heading">Use your existing<br />subscriptions<span class="sr-only"> for free.</span></h2>
+      <div class="download-brand"><Image src={appIcon} width={64} height={64} alt="" /><span>EdU</span></div>
+      <h2 id="download-heading">Use your existing<br />subscriptions</h2>
       <div class="download-reveal">
-        <p class="download-free" aria-hidden="true">for free.</p>
+        <p class="download-free">No extra fees.</p>
         <DownloadAction class="download-button" />
       </div>
     </div>
@@ -45,11 +48,12 @@ const integrations = [
     {integrations.map((integration, index) => (
       <div class="download-integration" data-download-icon data-integration={index} style={`--icon-index: ${index}`}>
         <div class="download-icon-face">
-          <Image src={integration.icon} width={64} height={64} alt="" class:list={{ "download-codex": index === 0 }} />
+          <Image src={integration.icon} width={64} height={64} alt="" />
         </div>
         <span>{integration.name}</span>
       </div>
     ))}
+    <p class="download-attribution">OpenAI, Claude, and Antigravity logos belong to OpenAI, Anthropic, and Google respectively. EdU is not affiliated with or endorsed by these companies.</p>
   </section>
 </download-section>
 
