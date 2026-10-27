@@ -10,6 +10,7 @@ import {
   ArchiveRestore,
   AtSign,
   BookOpen,
+  ClipboardCheck,
   Check,
   ChevronRight,
   Clock3,
@@ -58,7 +59,6 @@ import { useChatScroll } from "./chat-scroll"
 import { stagingId, useTopicViews } from "./topic-views"
 import { WorkspaceLoading, WorkspaceLoadingSidebar } from "./workspace-loading"
 import { StudyMarkdown } from "./markdown"
-import { ScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
 import { ScratchpadFileError } from "./scratchpad-file-error"
 import { TestScratchpad } from "./test-scratchpad"
 import { MediaPreview } from "./media-preview"
@@ -891,6 +891,7 @@ export function App() {
     chatSuggestions = [
       { label: "Continue learning", prompt: "Continue from where we last left off", icon: BookOpen },
       { label: "Practice", prompt: "Create a practice of what we have covered", icon: PencilLine },
+      { label: "Test me", prompt: `/new-test ${topicMention(scratchpad.id, scratchpad.title)}`, icon: ClipboardCheck },
     ]
   } else if (scratchpad?.state?.type === "test") {
     chatSuggestions = [
@@ -900,14 +901,6 @@ export function App() {
     ]
   }
   const chatContent = (
-      <div className="flex h-full min-h-0 flex-col">
-        <ScratchpadMismatchBanner
-          messages={chat?.messages ?? []}
-          scratchpads={snapshot.scratchpads.filter((item) => taggedTopicIds.has(item.id))}
-          currentId={scratchpadId}
-          onSwitch={openTopic}
-        />
-        <div className="min-h-0 flex-1">
       <ChatPanel composer={composer("chat")} alerts={staging && chat && (
         <div role="note" aria-label="Pending scratchpad creation" className="mb-3 flex items-center gap-3 rounded-2xl border border-yellow-700/15 bg-yellow-300/10 px-4 py-2.5 text-sm dark:border-yellow-300/10 dark:bg-yellow-700/15">
           <Clock3 aria-hidden="true" className="size-4 shrink-0 text-yellow-700 dark:text-yellow-300/80" />
@@ -1127,8 +1120,6 @@ export function App() {
           </ChatConversation>
         )}
       </ChatPanel>
-        </div>
-      </div>
   )
   const chatPane = <ChatSessions {...sessionProps}>{chatContent}</ChatSessions>
 

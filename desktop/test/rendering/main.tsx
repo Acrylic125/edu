@@ -19,7 +19,6 @@ import { testMessageClipboard, testPastedTopicMentions } from "./message-clipboa
 import { testChatAttachments } from "./chat-attachments"
 import { testChatSubmission } from "./chat-submission"
 import { testModelPicker } from "./model-picker"
-import { testScratchpadMismatchBanner } from "./scratchpad-mismatch-banner"
 import { testChatTabs } from "./chat-tabs"
 import { testThreadContextMenu } from "./thread-context-menu"
 import { testChatScroll } from "./chat-scroll"
@@ -49,7 +48,6 @@ async function runRenderingTests() {
   await testMessageClipboard(root, host)
   await testChatAttachments(root, host)
   testTestScratchpad(root, host)
-  await testScratchpadMismatchBanner(root, host)
   await testChatTabs(root, host)
   await testThreadContextMenu(root, host)
   await testStaging(root, host)
