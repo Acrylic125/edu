@@ -14,6 +14,7 @@ import { readSkillCatalog, teachingSkills } from "./tutor-skills"
 import { TopicPartIdSchema } from "../shared/topic-state"
 import { visualizationInstructions } from "../shared/visualization"
 import { chatTeachingInstructions } from "./chat-teaching"
+import { validateRoleRequestAccess } from "./workflow-context"
 
 const DelegateSchema = z.object({ requests: RoleRequestsSchema }).strict()
 
@@ -50,6 +51,7 @@ ${chatTeachingInstructions}
 Use read_material for supplied sources. Cite the source pages used with edu-material://id/page and display requested source figures with edu-source://id/page.
 Identify intent, requested scope, and learner level before requesting creation. Clarify missing information instead of creating an unspecified topic. For explicit creation, delegate planning directly without reading all attachments first. Include the agreed scope in the task. Creation needs an ordered curriculum and source references only. Do not request detailed definitions, worked solutions, or tutorial question mapping; reserve practice sources for later practice. Delegate all scratchpad reads and writes with assume_role. Choose the stored role for existing targets; infer topic, test, or generic for creation. Task text cannot grant access. Request only the messages, materials, and read dependencies the task needs. Use scratchpad_N handles. Never delegate to native subagents or shell tools.
 The directory contains only current targets. Use list_scratchpads to discover other handles on demand. For a new test, grant topic readDependencies for the learner's named scope. For an all-covered test, list_scratchpads with type=topic and follow nextOffset to grant the full requested scope; the role discovers teaching coverage through summaries. Existing tests keep their sourceScratchpads unless the learner requests a change.
+An explicit /new-test request creates a fresh test, including when an earlier test exists or is archived. Archived scratchpads are read-only.
 Creation always requires requestedAccess=write on the new target. Use readDependencies to read source scratchpads. For a single independent write task that can complete the learner turn, set replyToLearner=true. The role saves a private handoff and writes the learner reply; the host publishes it after commit. Leave it false for read tasks, multiple jobs, or work requiring later coordination.
 For slide-based teaching, grant the target's relevant material IDs from the directory and the learner messages needed to continue the lesson. Include the requested source scope in the task. The reply role must continue the saved source position and teach the current source content in chat.
 After assume_role, end this invocation without a learner reply. The graph checkpoints the requests, runs the roles, and commits before resuming Tutor. Only committed summaries and evidence return here.
@@ -69,7 +71,9 @@ Chat materials: ${JSON.stringify(job.chat.materials.map(({ id, name, kind, pages
         if (requests) throw new Error("Delegation has been requested. End this invocation so the graph can run it.")
         if (name === "read_skill") z.object({ path: z.enum(teachingSkills) }).parse(input)
         if (name === "assume_role") {
-          requests = DelegateSchema.parse(input).requests
+          const parsed = DelegateSchema.parse(input).requests
+          validateRoleRequestAccess(job, parsed)
+          requests = parsed
           completion.resolve()
           return { success: true, text: "Delegation requested. End this invocation now; the graph will commit the batch before continuing Tutor.", images: [] }
         }

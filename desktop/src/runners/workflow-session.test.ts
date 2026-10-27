@@ -395,10 +395,38 @@ test("invalid delegation stays in Tutor until corrected without yielding or savi
   assert.deepEqual(tutor.requests, [write])
 })
 
+test("archived test writes are rejected before yielding and Tutor can request a fresh test", async () => {
+  const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
+  const chat = newChat(runner.id)
+  const topic = newScratchpad("Source topic")
+  const archived = newScratchpad("Previous test", "test")
+  archived.archived = true
+  chat.scratchpadHandles = [topic.id, archived.id]
+  chat.messages.push({ id: randomUUID(), role: "user", content: "/new-test Source topic", createdAt: new Date().toISOString(), scratchpadIds: [topic.id] })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...topic, assetDirectory: "/tmp" }], workspaceScratchpads: [topic, archived].map((target) => ({ ...target, notes: target.learning.notes })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const tutor = await createWorkflowTutorSession(job, [], "", () => {})
+  let yielded = false
+  void tutor.session.completion.then(() => { yielded = true })
+  const context = { learnerMessageIds: [chat.messages[0].id], materialIds: [], readDependencies: ["scratchpad_1"], relevantContext: "" }
+  const denied = await tutor.session.execute("assume_role", { requests: [{ target: { mode: "existing", scratchpadHandle: "scratchpad_2" }, task: "Reuse previous test", requestedAccess: "write", replyToLearner: true, context }] })
+  assert.equal(denied.success, false)
+  assert.match(denied.text, /Allowed write targets: scratchpad_1/)
+  await Promise.resolve()
+  assert.equal(yielded, false)
+  assert.equal(tutor.requests, undefined)
+  assert.equal(tutor.session.saved, false)
+  const accepted = await tutor.session.execute("assume_role", { requests: [{ target: { mode: "create", type: "test" }, task: "Create a fresh test", requestedAccess: "write", replyToLearner: true, context }] })
+  assert.equal(accepted.success, true, accepted.text)
+  await tutor.session.completion
+  assert.equal(yielded, true)
+})
+
 test("delegation still accepts read tasks, independent batches, and writes for every scratchpad type", async () => {
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
-  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
+  const targets = [newScratchpad("First source"), newScratchpad("Second source")]
+  chat.scratchpadHandles = targets.map((target) => target.id)
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: targets.map((target) => ({ ...target, assetDirectory: "/tmp" })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: "/tmp" })
   const context = { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" }
   const read = { target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Read source coverage", requestedAccess: "read", replyToLearner: false, context }
   const batches = z.array(z.array(RoleRequestSchema)).parse([[read], [read, { ...read, target: { mode: "existing", scratchpadHandle: "scratchpad_2" } }]])

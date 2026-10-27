@@ -7,7 +7,7 @@ import { MessageSchema, ProviderSessionSchema, WorkerResultSchema, type WorkerJo
 import { CompleteOutputSchema, RoleRequestsSchema, RoleSummarySchema, TutorDecisionSchema } from "../shared/tutor-workflow"
 import { createWorkflowRoleSession, createWorkflowTutorSession } from "./workflow-session"
 import type { createTutorSession } from "./tutor"
-import { committedSource } from "./workflow-context"
+import { committedSource, validateRoleRequestAccess } from "./workflow-context"
 import { createTopicHandles } from "./topic-handles"
 import { parseScratchpadCommand } from "../shared/scratchpad-commands"
 import { scratchpadOperationId } from "../shared/scratchpad-operation"
@@ -80,7 +80,7 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       const contextBytes = Buffer.byteLength(JSON.stringify({ messages: source.chat.messages, learning: source.chat.learning, summary }))
       // Leave room for the role's management instructions, current target, and tool schemas.
       if (summary.length > 20_000 || contextBytes > (budget.maxInputTokens - budget.reserveTokens) / 2) return { directPlan: false }
-      const handles = createTopicHandles({ ...source, apiKey: "" })
+      const handles = createTopicHandles(source)
       const batch = await repository.assumeRole(chatId, turnId, turnId, [{
         target: { mode: "existing", scratchpadHandle: handles.handle(scratchpad.id) },
         task: "Handle the latest learner request for this topic. Use the saved handoff and recorded evidence to assess any pending answer and honor the latest navigation choice. If the learner selects practice, source practice on the completed part; if unavailable, explain the limitation and wait for a new choice. Begin the next part only after the learner chooses to proceed. Honor explicit changes of section or scope. Ask one check when teaching, then save the handoff and reply. If the request needs work outside this target or ungranted dependencies, return it to Tutor with finish_role and needsCoordination before making any writes.",
@@ -177,6 +177,11 @@ export function createTutorGraph(repository: WorkflowHost, native: WorkflowNativ
       // Older builds checkpointed requests before checking access; retry must let Tutor repair them.
       if (!requests.success) return { delegationError: requests.error.message }
       const turn = await repository.get(chatId, turnId)
+      try {
+        validateRoleRequestAccess(committedSource(turn), requests.data)
+      } catch (error) {
+        return { delegationError: error instanceof Error ? error.message : "Invalid delegation access." }
+      }
       const context = turn.contexts.find((context) => context.contextVersion === contextVersion)!
       const batch = await repository.assumeRole(chatId, turnId, context?.tutorStepId ?? turn.learnerMessageId, requests.data)
       return { batchId: batch.batchId }

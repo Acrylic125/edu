@@ -5,7 +5,7 @@ import type { WorkerJob } from "../shared/contracts"
 export const TopicHandleSchema = z.string().regex(/^scratchpad_[1-9][0-9]*$/)
   .describe("Use the scratchpad_N handle from the scratchpad directory. UUIDs are internal and are not accepted.")
 
-export function createTopicHandles(job: WorkerJob) {
+export function createTopicHandles(job: Pick<WorkerJob, "chat" | "scratchpads" | "workspaceScratchpads">) {
   const ids = [...new Set([...job.chat.scratchpadHandles, ...job.scratchpads.map((scratchpad) => scratchpad.id), ...job.workspaceScratchpads.map((scratchpad) => scratchpad.id)])]
   const readable = new Set([...job.scratchpads, ...job.workspaceScratchpads].map((scratchpad) => scratchpad.id))
   const writable = new Set(job.scratchpads.filter((scratchpad) => !scratchpad.archived).map((scratchpad) => scratchpad.id))
