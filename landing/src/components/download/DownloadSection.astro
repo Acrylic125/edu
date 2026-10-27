@@ -1,6 +1,5 @@
 ---
 import { Image } from "astro:assets";
-import appIcon from "../../../../desktop/src/renderer/assets/app-icon.png";
 import codex from "./assets/openai.svg";
 import antigravity from "./assets/antigravity.svg";
 import claude from "./assets/claude.svg";
@@ -37,7 +36,6 @@ const integrations = [
     </svg>
 
     <div class="download-copy">
-      <div class="download-brand"><Image src={appIcon} width={64} height={64} alt="" /><span>EdU</span></div>
       <h2 id="download-heading">Use your existing<br />subscriptions</h2>
       <div class="download-reveal">
         <p class="download-free">No extra fees.</p>
@@ -53,7 +51,6 @@ const integrations = [
         <span>{integration.name}</span>
       </div>
     ))}
-    <p class="download-attribution">OpenAI, Claude, and Antigravity logos belong to OpenAI, Anthropic, and Google respectively. EdU is not affiliated with or endorsed by these companies.</p>
   </section>
 </download-section>
 

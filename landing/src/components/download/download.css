@@ -48,6 +48,7 @@ download-section {
 
 .download-copy {
   position: absolute;
+  z-index: 1;
   inset: 0;
   display: flex;
   flex-direction: column;
@@ -66,18 +67,6 @@ download-section {
   transform: scale(var(--download-scale));
 }
 
-.download-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: -0.06em;
-}
-
-.download-brand img { width: 56px; height: 56px; object-fit: contain; }
-
 .download-compatibility {
   position: absolute;
   top: 2.5svh;
@@ -85,18 +74,6 @@ download-section {
   width: 100%;
   color: var(--muted-foreground);
   font-size: 12px;
-  text-align: center;
-}
-
-.download-attribution {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  width: min(640px, calc(100% - 48px));
-  transform: translateX(-50%);
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.5;
   text-align: center;
 }
 
@@ -133,7 +110,7 @@ download-section:not(:defined) .download-reveal {
   position: absolute;
   left: 54%;
   top: 24%;
-  width: clamp(64px, 7vw, 88px);
+  width: clamp(64px, 7vw, 112px);
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
 }
@@ -145,7 +122,7 @@ download-section:not(:defined) .download-reveal {
   aspect-ratio: 1;
   border: 1px solid var(--border);
   border-radius: 26%;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 12px 32px -16px #b9954126;
 }
 
@@ -155,13 +132,17 @@ download-section:not(:defined) .download-reveal {
   object-fit: contain;
 }
 
+.dark .download-integration[data-integration="0"] img {
+  filter: brightness(0) invert(1);
+}
+
 .download-integration > span {
   position: absolute;
   top: calc(100% + 12px);
   left: 50%;
   transform: translateX(-50%);
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: clamp(12px, 1vw, 15px);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -222,8 +203,6 @@ download-section:not(:defined) .download-integration:last-child {
 
 @media (orientation: portrait) {
   .download-copy { top: 37svh; justify-content: flex-start; padding-block: 0; }
-  .download-brand { margin-bottom: 16px; font-size: 1.75rem; }
-  .download-brand img { width: 48px; height: 48px; }
   .download-copy h2 { font-size: clamp(1.6rem, 6.84vw, 3.4rem); }
   .download-reveal { gap: 3svh; margin-top: 2.5svh; margin-bottom: 0; }
   .download-free { font-size: clamp(1.25rem, 5.2vw, 2.25rem); }
@@ -234,9 +213,6 @@ download-section:not(:defined) .download-integration:last-child {
 }
 
 @media (max-height: 650px) {
-  .download-brand { margin-bottom: 10px; font-size: 1.5rem; }
-  .download-brand img { width: 40px; height: 40px; }
-  .download-attribution { bottom: 12px; font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
