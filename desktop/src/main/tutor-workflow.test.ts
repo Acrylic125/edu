@@ -47,6 +47,7 @@ for (const type of ["topic", "test", "generic"] as const) {
     assert.ok(moved)
     const original = workspace.chat(turn.chatId)
     assert.deepEqual(original.messages, [history])
+    assert.deepEqual(original.movedRequests, [{ messageId: turn.learnerMessageId, messageIndex: 1, chatId: moved.chatId }])
     assert.equal(original.ownerScratchpadId, owner.id)
     assert.equal(original.activeTurnId, undefined)
     assert.equal(original.failedTurnId, undefined)
@@ -63,6 +64,7 @@ for (const type of ["topic", "test", "generic"] as const) {
     await assert.rejects(workflows.retry(turn.chatId, turn.turnId), /moved to Staging/)
     const reopened = new WorkspaceRepository(directory)
     await reopened.load()
+    assert.deepEqual(reopened.chat(turn.chatId).movedRequests, original.movedRequests)
     const resumed = new TutorWorkflowRepository(reopened)
     await resumed.retry(moved.chatId, moved.turnId)
     assert.equal(await resumed.redirectCreation(moved.chatId, moved.turnId, requests), undefined)
@@ -82,6 +84,14 @@ for (const type of ["topic", "test", "generic"] as const) {
     assert.equal(reopened.chat(moved.chatId).ownerScratchpadId, role.scratchpadId)
     assert.equal(reopened.chat(turn.chatId).ownerScratchpadId, owner.id)
     assert.equal(reopened.chat(turn.chatId).messages.length, 1)
+    assert.deepEqual(reopened.chat(turn.chatId).movedRequests, [{
+      messageId: turn.learnerMessageId, messageIndex: 1, chatId: moved.chatId, scratchpadId: role.scratchpadId,
+    }])
+    await resumed.commitBatch(moved.chatId, moved.turnId, batch.batchId)
+    assert.equal(reopened.chat(turn.chatId).movedRequests.length, 1)
+    const saved = new WorkspaceRepository(directory)
+    await saved.load()
+    assert.equal(saved.publicChats.find((chat) => chat.id === turn.chatId)?.movedRequests[0].scratchpadId, role.scratchpadId)
   })
 }
 
