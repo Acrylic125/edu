@@ -68,6 +68,7 @@ const structuredData = {
     <title>{title}</title>
     <script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
     <script is:inline>
+      document.documentElement.classList.add("js");
       const appearance = window.matchMedia("(prefers-color-scheme: dark)");
       function updateAppearance() {
         document.documentElement.classList.toggle("dark", appearance.matches);

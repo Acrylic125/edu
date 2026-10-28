@@ -1,3 +1,5 @@
+import { createScrollAnimation } from "../scroll-animation";
+
 function interpolate(progress: number, start: number, end: number) {
   const value = Math.min(1, Math.max(0, (progress - start) / (end - start)));
   return value * value * (3 - 2 * value);
@@ -18,13 +20,11 @@ class TransformationHero extends HTMLElement {
     const canvas = this.querySelector<HTMLElement>(".transformation-canvas");
     const backdrop = this.querySelector<HTMLImageElement>(".hero-lecture-backdrop");
     const copy = this.querySelector<HTMLElement>(".transformation-copy");
-    let frame = 0;
     let sectionTop = 0;
     let scrollDistance = 1;
 
-    const render = () => {
-      frame = 0;
-      let progress = (window.scrollY - sectionTop) / scrollDistance;
+    const render = (scrollProgress: number) => {
+      let progress = scrollProgress;
       if (motion.matches) progress = 1;
       this.style.setProperty("--hero-progress", String(interpolate(progress, 0.15, 0.8)));
       this.style.setProperty("--hero-copy-progress", String(interpolate(progress, 0.35, 0.75)));
@@ -41,11 +41,15 @@ class TransformationHero extends HTMLElement {
       if (explanation) explanation.inert = !understood;
       this.querySelector(".hero-description .hero-before")?.setAttribute("aria-hidden", String(understood));
       this.querySelector(".hero-description .hero-after")?.setAttribute("aria-hidden", String(!understood));
+      this.setAttribute("data-ready", "");
     };
 
-    const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(render);
-    };
+    const animation = createScrollAnimation(
+      () => Math.min(1, Math.max(0, (window.scrollY - sectionTop) / scrollDistance)),
+      render,
+      motion,
+    );
+    const { schedule } = animation;
 
     const measure = () => {
       if (!viewport || !stage || !headline || !canvas || !copy) return;
@@ -111,7 +115,7 @@ class TransformationHero extends HTMLElement {
     this.cleanup = () => {
       controller.abort();
       observer.disconnect();
-      window.cancelAnimationFrame(frame);
+      animation.cancel();
     };
   }
 
