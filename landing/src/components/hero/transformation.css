@@ -8,6 +8,21 @@ transformation-hero {
   --hero-art-natural-height: 480px;
 }
 
+.js transformation-hero:not([data-social-preview]) {
+  --hero-progress: 0;
+  --hero-copy-progress: 0;
+  --hero-paper-progress: 0;
+  --hero-backdrop-progress: 0;
+  --hero-word-0: 0;
+  --hero-word-1: 0;
+  --hero-word-2: 0;
+}
+
+/* Word positions and artwork scale must be measured before their first paint. */
+.js transformation-hero:not([data-social-preview]):not([data-ready]) :is(.transformation-stage, .hero-backdrop-frame) {
+  visibility: hidden;
+}
+
 .hero-viewport { position: sticky; top: 0; display: flex; height: 100dvh; flex-direction: column; isolation: isolate; }
 .hero-backdrop-frame {
   position: absolute;
@@ -63,8 +78,12 @@ transformation-hero {
 }
 .hero-word {
   position: absolute;
-  left: calc(var(--word-start-left) * (1 - var(--word-progress)) + var(--word-end-left) * var(--word-progress));
-  top: calc(0.35em * (1 - var(--word-progress)) + var(--word-end-top) * var(--word-progress));
+  left: 0;
+  top: 0;
+  transform: translate(
+    calc(var(--word-start-left) * (1 - var(--word-progress)) + var(--word-end-left) * var(--word-progress)),
+    calc(0.35em * (1 - var(--word-progress)) + var(--word-end-top) * var(--word-progress))
+  );
   display: grid;
   width: max-content;
 }
@@ -142,10 +161,10 @@ transformation-hero {
   transformation-hero { --hero-art-natural-height: 500px; }
 }
 
-transformation-hero:not(:defined) { height: 100dvh; }
-transformation-hero:not(:defined) .hero-word-before,
-transformation-hero:not(:defined) .hero-question,
-transformation-hero:not(:defined) .hero-before { display: none; }
+html:not(.js) transformation-hero:not(:defined) { height: 100dvh; }
+html:not(.js) transformation-hero:not(:defined) .hero-word-before,
+html:not(.js) transformation-hero:not(:defined) .hero-question,
+html:not(.js) transformation-hero:not(:defined) .hero-before { display: none; }
 
 @media (orientation: landscape) and (max-height: 650px) {
   transformation-hero { --hero-art-natural-width: 520px; --hero-art-natural-height: 400px; }

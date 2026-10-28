@@ -1,3 +1,5 @@
+import { createScrollAnimation } from "../scroll-animation";
+
 const stepStarts = [0, 1.15, 2.05, 2.95, 4.25];
 const timelineEnd = 5.25;
 
@@ -20,16 +22,13 @@ class LearningDemo extends HTMLElement {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const landscape = window.matchMedia("(orientation: landscape)");
     const controller = new AbortController();
-    let frame = 0;
     let currentStep = -1;
     let sectionTop = 0;
     let scrollDistance = 1;
     let explanationTop = 0;
     let checkScroll = 0;
 
-    const render = () => {
-      frame = 0;
-      const progress = Math.min(timelineEnd, Math.max(0, (window.scrollY - sectionTop) / scrollDistance * timelineEnd));
+    const render = (progress: number) => {
       let step = 0;
       for (let index = 1; index < stepStarts.length; index += 1) {
         if (progress >= stepStarts[index]) step = index;
@@ -82,9 +81,12 @@ class LearningDemo extends HTMLElement {
       }
     };
 
-    const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(render);
-    };
+    const animation = createScrollAnimation(
+      () => Math.min(timelineEnd, Math.max(0, (window.scrollY - sectionTop) / scrollDistance * timelineEnd)),
+      render,
+      motion,
+    );
+    const { schedule } = animation;
 
     const measure = () => {
       const sticky = this.querySelector<HTMLElement>("section");
@@ -125,7 +127,7 @@ class LearningDemo extends HTMLElement {
     this.cleanup = () => {
       controller.abort();
       observer.disconnect();
-      window.cancelAnimationFrame(frame);
+      animation.cancel();
     };
   }
 
