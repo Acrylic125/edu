@@ -4,6 +4,7 @@ import { ScratchpadStateSchema } from "./scratchpad-state"
 import { materialCitationNames } from "./material-links"
 import type { TopicDirectoryEntrySchema } from "./topic-directory"
 import { ContentBlockSchema } from "./content-document"
+import { normalizeMermaidMarkdown } from "./mermaid-markdown"
 
 function separateMarkdownTables(markdown: string) {
   const lines = markdown.split("\n")
@@ -32,7 +33,7 @@ function separateMarkdownTables(markdown: string) {
 }
 
 export function renderContentBlock(block: z.infer<typeof ContentBlockSchema>, materials: Topic["materials"]) {
-  if (block.type === "markdown") return separateMarkdownTables(block.content.join("\n"))
+  if (block.type === "markdown") return separateMarkdownTables(normalizeMermaidMarkdown(block.content.join("\n")))
   if (block.type === "term") return `**${block.term}:** ${block.meaning}`
   const material = materials.find((material) => material.id === block.materialId)
   if (!material) throw new Error(`Content source not found: ${block.materialId}`)

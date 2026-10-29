@@ -74,6 +74,7 @@ Show structure, flow, layout and quantitative relationships visually in chat and
 - **Tables and data:** Use to display the relevant rows/columns with their headers and units.
 - **Image / Screenshots** Use source images when quoting or examining the source itself. Create your own diagrams and plots to illustrate concepts in chat and scratchpads.
 - **Mermaid Diagrams** Use mermaid diagrams to show flow, class diagrams, pie charts, tree view, sequence, use case diagrams, and/or xy chart.
+  Use actual line breaks between the opening fence, diagram lines, and closing fence. Literal `\n` text does not create a fenced diagram.
 - **Plots** Use to visualize functions, plots, and 2d/3d charts, heatmap, and animations. Use 
 ```xml
 <visualization settings='{
