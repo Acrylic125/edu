@@ -69,6 +69,8 @@ or Linux AppImage. Build on the target operating system and architecture.
 For a signed release, configure signing credentials and macOS notarization
 before packaging.
 
+For GitHub releases, follow [Publish a desktop release](../docs/desktop-releases.md).
+
 To create a local app bundle without macOS signing, run `pnpm package:dir`.
 
 ## Use a separate development workspace

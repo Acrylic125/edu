@@ -1,0 +1,19 @@
+name: Set up desktop dependencies
+description: Install the pinned package manager and desktop dependencies.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.26.0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: |
+          packages/ui/pnpm-lock.yaml
+          desktop/pnpm-lock.yaml
+    - run: pnpm --dir packages/ui install --frozen-lockfile
+      shell: bash
+    - run: pnpm --dir desktop install --frozen-lockfile
+      shell: bash
