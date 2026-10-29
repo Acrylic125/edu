@@ -23,7 +23,7 @@ test("completing a part then recording a question publishes without a separate a
       const scratchpad = newScratchpad("MIPS arithmetic")
       scratchpad.planConfirmed = true
       scratchpad.state = TopicStateSchema.parse({ ...scratchpad.state,
-        content: ["addition", "subtraction"].map((name) => ({ id: `tp-${name}`, name, references: [], goals: [], mistakes: [] })),
+        content: ["addition", "subtraction"].map((name) => ({ id: `tp-${name}`, name, references: [], goals: [{ objective: "Read arithmetic instruction operands", understoodWhen: ["Identifies the instruction source operands"] }], mistakes: [] })),
         threadTutors: [{ id: chat.id, progress: { "tp-addition": { status: "active", steps: [{ question: "Which registers are added?" }] } } }],
       })
       chat.scratchpadHandles = [scratchpad.id]
@@ -40,13 +40,17 @@ test("completing a part then recording a question publishes without a separate a
       let invocations = 0
       await createTutorGraph(workflows, async (input, session) => {
         invocations++
-        const recorded = await session.execute("topic_recordAnswer", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-addition", stepIndex: 0, answerFromUser: answer })
+        const recorded = await session.execute("topic_recordAnswer", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-addition", stepIndex: 0, answerFromUser: answer, assessment: {
+          goalIndex: 0, criterionIndex: 0, status: "demonstrated", evidence: [{ stepIndex: 0, quote: answer }], interpretation: "Identifies both input registers", remainingGap: "",
+        } })
         assert.equal(recorded.success, true, recorded.text)
         const completed = await session.execute("topic_complete", { scratchpadId: "scratchpad_1", scratchpadPartId: "tp-addition" })
         assert.equal(completed.success, true, completed.text)
         assert.equal((await session.execute("topic_whereAmI", { scratchpadId: "scratchpad_1" })).success, true)
         assert.equal((await session.execute("topic_whatIsNext", { scratchpadId: "scratchpad_1" })).success, true)
-        const recordedQuestion = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: nextPart, question })
+        const recordedQuestion = await session.execute("topic_recordQuestion", { scratchpadId: "scratchpad_1", scratchpadPartId: nextPart, question, check: {
+          goalIndex: 0, criterionIndex: 0, reasoningTask: "Distinguish subtraction source order", missingEvidence: "Source operand order", expectedEvidence: "$s2 minus $s1",
+        } })
         assert.equal(recordedQuestion.success, true, recordedQuestion.text)
         const stepIndex = nextPart === "tp-addition" ? 1 : 0
         const saved = await session.execute("save_learning_state", { ...input.chat.learning, phase: "awaiting_answer", privateAnswerKey: "$s2 - $s1", pendingCheck: { scratchpadId: "scratchpad_1", scratchpadPartId: nextPart, stepIndex }, nextAction: "Wait for the subtraction answer", workpad: "Addition answer preserved; subtraction question recorded." })

@@ -201,6 +201,17 @@ async function runRenderingTests() {
     assert(host.querySelector(`[aria-label="${name} runtime"]`)?.textContent?.includes("Not detected") === true, `${name} settings must explain when no executable is found`)
   }
 
+  const escapedDiagrams = [
+    "Bound processing and locate the exact passage.",
+    "```mermaid\\nflowchart LR\\n  R[1,200-page report] -->|bounded job| A[Pages 80–95: relevant appendix]\\n  R -->|separate bounded job| B[Another page range]\\n  A -. independent work may overlap .-> B\\n```",
+    "Keep the document and page locators with the passage.",
+    "```mermaid\\nflowchart LR\\n  Doc[Report title and URI] --> P[Page 88]\\n  P --> C1[Chunk ID: c-17]\\n  P --> C2[Chunk ID: c-18]\\n  C2 --> Claim[Exact passage supporting a claim]\\n```",
+  ].join("\n\n")
+  flushSync(() => root.render(<StudyMarkdown text={escapedDiagrams} scratchpads={[]} materials={[]} onOpenScratchpad={() => {}} onOpenMaterial={() => {}} />))
+  await waitFor(() => host.querySelectorAll('[aria-label="Mermaid diagram"] svg').length === 2)
+  assert(!host.textContent?.includes("\\nflowchart"), "Escaped saved diagrams must render as SVG instead of inline Mermaid code")
+  assert(host.textContent?.includes("Keep the document and page locators with the passage.") === true, "Diagram repair must preserve the surrounding explanation")
+
   for (const failure of failures) console.error(`FAIL: ${failure}`)
   root.unmount()
   if (failures.length) throw new Error(`${failures.length} rendering regressions`)

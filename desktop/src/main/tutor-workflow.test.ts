@@ -9,6 +9,7 @@ import { dispatchWorkflowRequest, TutorWorkflowRepository } from "./tutor-workfl
 import { WorkerJobSchema } from "../shared/contracts"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
+import { TopicStateSchema } from "../shared/topic-state"
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "edu-workflow-"))
@@ -22,6 +23,41 @@ async function fixture(t: TestContext) {
   const job = WorkerJobSchema.parse({ chat, runner, scratchpads: [], skillDirectory: "skills", assetDirectory: directory, apiKey: "must-not-persist" })
   return { directory, workspace, job, workflows: new TutorWorkflowRepository(workspace) }
 }
+
+test("retrying a saved topic role tolerates a changed Markdown projection but still rejects authoritative edits", async (t) => {
+  for (const changedContent of [false, true]) {
+    await t.test(`authoritative content changed: ${changedContent}`, async (t) => {
+      const { workspace, job, workflows } = await fixture(t)
+      const topic = newScratchpad("Structured topic")
+      topic.planConfirmed = true
+      topic.state = TopicStateSchema.parse({ ...topic.state, content: [{ id: "tp-example", name: "Example", goals: [], references: [], mistakes: [] }], document: { version: 1, blocks: [{ type: "markdown", id: "diagram", sectionId: "tp-example", content: ["```mermaid\\nflowchart LR\\n  A --> B\\n```"] }] } })
+      await workspace.mutate((state) => state.scratchpads.push(topic))
+      job.scratchpads = [{ ...workspace.scratchpad(topic.id), assetDirectory: job.assetDirectory }]
+      job.chat.scratchpadHandles = [topic.id]
+      const turn = await workflows.start(job)
+      const batch = await workflows.assumeRole(turn.chatId, turn.turnId, randomUUID(), [{ target: { mode: "existing", scratchpadHandle: "scratchpad_1" }, task: "Finish the saved topic work", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [], readDependencies: [], relevantContext: "" } }])
+      await workspace.updateWorkflow(turn.turnId, (saved) => {
+        const role = saved.batches[0].jobs[0]
+        assert(role.snapshot)
+        role.snapshot.learning.notes = "# Structured topic\n\n```mermaid\\nflowchart LR\\n  A --> B\\n```"
+        role.baseVersion = "saved-before-the-markdown-renderer-changed"
+      })
+      await workflows.stage(turn.chatId, turn.turnId, batch.jobs[0].jobId, "finish-example", { type: "activatePart", scratchpadId: topic.id, scratchpadPartId: "tp-example" })
+      await workflows.ready(turn.chatId, turn.turnId, batch.jobs[0].jobId, { summary: "Finished the topic work", evidence: [] })
+      if (changedContent) {
+        await workspace.mutate((state) => {
+          const current = state.scratchpads.find((scratchpad) => scratchpad.id === topic.id)!
+          current.state = TopicStateSchema.parse({ ...current.state, document: { version: 1, blocks: [{ type: "markdown", id: "diagram", sectionId: "tp-example", content: ["A genuine new explanation"] }] } })
+        })
+        await assert.rejects(workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId), /changed|conflict/i)
+        return
+      }
+      const receipt = await workflows.commitBatch(turn.chatId, turn.turnId, batch.batchId)
+      assert.ok(receipt.receiptId)
+      assert.equal(TopicStateSchema.parse(workspace.scratchpad(topic.id).state).threadTutors[0].progress["tp-example"].status, "active")
+    })
+  }
+})
 
 for (const type of ["topic", "test", "generic"] as const) {
   test(`a ${type} creation request moves out of an owned thread into durable Staging`, async (t) => {

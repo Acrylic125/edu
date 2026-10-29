@@ -38,8 +38,12 @@ export function parseVisualizationSettings(source: string) {
   }
 }
 
-export const visualizationInstructions = `Interactive visualizations:
-Create original Plotly.js illustrations for graphs, functions, matrices, transformations, trends, and 2D/3D spatial relationships in chat and scratchpads. Choose illustrations that explain the concept; source screenshots are for quoting or examining source figures.
+export const visualizationInstructions = `Visual teaching:
+Include a visual when it makes the objects, structure, relationships or changes easier to understand. Prioritize relevant figures, diagrams and tables from the learner's attachments. Inspect and show the source visual with attribution when it supports the current explanation. If no suitable source visual is available, create an original illustration using clearly labelled illustrative data. Source availability is not a prerequisite for an original visual. Add an original illustration when the source visual needs clarification; distinguish it from the source. Omit a visual when it adds no explanatory value, such as a brief acknowledgement or a simple fact.
+Choose the simplest useful format: a Markdown table or document excerpt for rows and heading context, Mermaid for hierarchy and flow, and Plotly.js for quantitative or spatial relationships. Render the visual inline beside the explanation; describing an unseen figure is insufficient. Keep the concrete setup visible before a check, while leaving the learner's required inference and the answer private.
+
+Interactive visualizations:
+Create original Plotly.js illustrations for graphs, functions, matrices, transformations, trends, and 2D/3D spatial relationships in chat and scratchpads.
 Write a standalone element surrounded by blank lines: <visualization settings='STRICT_JSON' />. settings is strict JSON, not JSX or executable code. Encode apostrophes inside JSON strings as \\u0027. Required fields: type: "Plotly.js", data: a nonempty array of Plotly traces with explicit trace types. Optional: layout and config. Supply literal sampled coordinates for functions and computed coordinates for matrix transformations. Never provide expressions to execute.
 2D example:
 <visualization settings='{"type":"Plotly.js","data":[{"type":"scatter","mode":"lines","x":[-2,-1,0,1,2],"y":[4,1,0,1,4]}],"layout":{"title":{"text":"y = x²"},"xaxis":{"title":{"text":"x"}},"yaxis":{"title":{"text":"y"}}}}' />

@@ -19,6 +19,7 @@ import { understandingChecks } from "./understanding-checks"
 import { topicTerminology, type TopicTerm } from "./topic-terminology"
 import { Check } from "lucide-react"
 import type { Snapshot } from "../shared/contracts"
+import { normalizeMermaidMarkdown } from "../shared/mermaid-markdown"
 
 const VisualizationBlocks = createContext<ReturnType<typeof prepareVisualizationMarkdown>["blocks"]>([])
 const UnderstandingCheckLabel = createContext("Check your understanding")
@@ -224,7 +225,7 @@ export function StudyMarkdown({
 const MarkdownContent = memo(function MarkdownContent({ text, materials, showSourcePreviews, terminology }: Required<Pick<
   ComponentProps<typeof StudyMarkdown>, "text" | "materials" | "showSourcePreviews" | "terminology"
 >>) {
-  const prepared = prepareVisualizationMarkdown(text)
+  const prepared = prepareVisualizationMarkdown(normalizeMermaidMarkdown(text))
   return (
     <VisualizationBlocks.Provider value={prepared.blocks}>
       <Markdown

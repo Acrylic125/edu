@@ -41,9 +41,11 @@ export function scratchpadContext(scratchpad: Pick<WorkerJob["scratchpads"][numb
       pendingQuestion,
     }
   }
-  const progress = state.threadTutors.find((thread) => thread.id === chat.id)?.progress ?? {}
+  const thread = state.threadTutors.find((thread) => thread.id === chat.id)
+  const progress = thread?.progress ?? {}
   const focused = new Set<string>()
   if (chat.learning.pendingCheck?.scratchpadId === scratchpad.id) focused.add(chat.learning.pendingCheck.scratchpadPartId)
+  if (!focused.size && thread?.currentPartId) focused.add(thread.currentPartId)
   if (!focused.size) {
     const active = state.content.findLast((part) => progress[part.id]?.status === "active")
     if (active) focused.add(active.id)
@@ -61,8 +63,13 @@ export function scratchpadContext(scratchpad: Pick<WorkerJob["scratchpads"][numb
       let stepIndex = steps.length - 1
       const pending = chat.learning.pendingCheck
       if (pending?.scratchpadId === scratchpad.id && pending.scratchpadPartId === part.id) stepIndex = pending.stepIndex
+      const assessments = new Map<string, NonNullable<typeof steps[number]["assessment"]>>()
+      for (const { step } of steps.map((step, index) => ({ step, order: step.assessmentOrder ?? index })).sort((left, right) => left.order - right.order)) {
+        if (step.assessment) assessments.set(`${step.assessment.goalIndex}:${step.assessment.criterionIndex}`, step.assessment)
+      }
       return {
         ...part, stepIndex, latestStep: steps[stepIndex],
+        assessments: [...assessments.values()],
         blocks: state.document?.blocks.filter((block) => block.type !== "term" && block.sectionId === part.id).map(({ id, type }) => ({ id, type })) ?? [],
       }
     }),

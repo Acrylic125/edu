@@ -1149,7 +1149,8 @@ export function App() {
     const topicState = scratchpad.state?.type === "topic" ? scratchpad.state : undefined
     const terminology = topicState?.document?.blocks.filter((block) => block.type === "term") ?? []
     const thread = topicState?.threadTutors.find((thread) => thread.id === chat?.id)
-    const currentPart = topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
+    const currentPart = topicState?.content.find((part) => part.id === thread?.currentPartId)
+      ?? topicState?.content.find((part) => thread?.progress[part.id]?.status === "active")
     const notes = parseTopicDirectory(
       scratchpad.learning.notes.replace(/^# .+\n+/, ""),
     )

@@ -20,6 +20,7 @@ test("a confirmed topic continuation reaches its isolated role in one model invo
   const runner = workspace.stateSnapshot.runners[0]
   const chat = newChat(runner.id)
   const scratchpad = newScratchpad("Vector spaces")
+  await workspace.mutate((state) => state.scratchpads.push(scratchpad))
   const material = { id: randomUUID(), name: "lecture.pdf", kind: "pdf" as const, text: "Vector spaces and subspaces", pages: ["Vector addition", "Subspace test"] }
   scratchpad.planConfirmed = true
   scratchpad.materials = [material]
@@ -37,8 +38,13 @@ test("a confirmed topic continuation reaches its isolated role in one model invo
   const assets = join(directory, "scratchpads", scratchpad.id, "assets")
   await mkdir(assets, { recursive: true })
   await writeFile(join(assets, material.name), material.text)
-  await workspace.mutate((state) => { state.chats.push(chat); state.scratchpads.push(scratchpad) })
-  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: directory }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
+  await workspace.mutate((state) => {
+    state.chats.push(chat)
+    const saved = state.scratchpads.find((entry) => entry.id === scratchpad.id)
+    assert.ok(saved)
+    Object.assign(saved, scratchpad)
+  })
+  const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [{ ...scratchpad, assetDirectory: assets }], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const workflows = new TutorWorkflowRepository(workspace)
   const turn = await workflows.start(job)
   const saver = new SqliteCheckpointSaver(join(directory, "checkpoints.sqlite"))
@@ -145,7 +151,11 @@ test("drafts, archived targets, commands, multiple targets, and large contexts r
       let content = "Continue"
       if (scenario === "command") content = "/new-test Practice fractions"
       if (scenario === "multiple") content = `${topicMention(scratchpad.id, scratchpad.title)} ${topicMention(other.id, other.title)} Compare these topics`
-      if (scenario === "large") content = "Earlier discussion. ".repeat(4000)
+      if (scenario === "large") {
+        // Keep the large history compactable; an oversized latest message cannot reach a summarizer.
+        for (let index = 0; index < 10; index++)
+          chat.messages.push({ id: randomUUID(), role: "user", content: "Earlier discussion. ".repeat(400), createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] })
+      }
       chat.messages.push({ id: randomUUID(), role: "user", content, createdAt: new Date().toISOString(), scratchpadIds: [scratchpad.id] })
       await workspace.mutate((state) => { state.chats.push(chat); state.scratchpads.push(scratchpad, other) })
       const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [scratchpad, other].map((scratchpad) => ({ ...scratchpad, assetDirectory: directory })), skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
