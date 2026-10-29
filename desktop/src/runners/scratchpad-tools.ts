@@ -22,9 +22,9 @@ const descriptions = {
   activatePart: "Mark a visited topic part active for the current thread.",
   complete: "Complete a topic part only when ALL goals have been satisfied. Active and completed can transition back and forth.",
   documentMistake: "Record a confirmed incorrect answer and its rationale on a topic part.",
-  recordQuestion: "Record the exact question and activate its topic part atomically for the current thread, preserving earlier answers. No separate activation call is needed. Plan confirmation and the learner's proceed-or-practice choice still apply.",
-  recordAnswer: "Record the learner's actual answer at the current thread's stepIndex. Read the recorded questions first; the question must already exist. Preserve previous attempts.",
-  updateTopic: "Update topic name, curriculum, goals or references, preserving recorded mistakes and content block section IDs. Use topic_editContent for explanations and terminology. The app renders Markdown and navigation.",
+  recordQuestion: "Record a new question with check: goalIndex, criterionIndex, reasoningTask, missingEvidence and expectedEvidence. To continue another thread's latest check, supply its exact question and resumeFrom {threadId, stepIndex}; the host copies its criterion without changing source history. The returned pendingCheck is owned by the current thread: use that reference for saving and answering, never the source index. Resume retries are safe. Credit previous assessments first. Duplicate reasoning tasks, demonstrated criteria and repeated follow-ups are blocked. On a blocked check, explain directly and continue with remaining material or a review/practice choice.",
+  recordAnswer: "Record the learner's actual answer at stepIndex. For a structured check, include assessment against its goalIndex and criterionIndex: status demonstrated, uncertain or contradicted; evidence with answered stepIndex and verbatim complete quote; interpretation; remainingGap (empty when demonstrated). Include the current answer and relevant recorded answers. Treat unsupported interpretations as uncertain. Clarification requests are not assessment answers. A genuine later reply to the same check is appended when it matches a learner message verbatim; the earlier answer stays unchanged. Earlier replies in this conversation may be backfilled too. To reconsider an assessment, submit a recorded answer with revised cumulative evidence. Retries are safe; previous assessments are preserved. Reassessment does not require another question.",
+  updateTopic: "Patch topic metadata and curriculum with explicit changes: update patches supplied fields of an existing part by ID; add inserts a complete new part after afterId (null means first); remove archives a part and preserves its learning history; move reorders an existing part. Omitted fields and parts are preserved. Arrays in an update patch replace that field. Remove or reparent children explicitly when removing a parent. All changes apply atomically. Use topic_editContent for explanations and terminology.",
   createTopic: "Create a topic only when explicitly requested or when a prerequisite topic is necessary. Returns its scratchpad handle.",
   createTest: "Create a test only when explicitly requested. Questions may be empty; source further questions one at a time with test_addQuestion.",
   addTestQuestion: "Source the next question, one at a time. Append it to the test state and scratchpad.md. Each title must be unique.",
@@ -58,9 +58,13 @@ export const scratchpadToolDefinitions = [
     }
     delete parameters.properties?.createdAt
     delete parameters.properties?.expectedSummary
+    if (operation === "updateTopic") delete parameters.properties?.content
     delete parameters.properties?.expectedContent
     delete parameters.properties?.expectedState
-    delete parameters.properties?.expectedRevision
+    if (operation !== "updateTopic") delete parameters.properties?.expectedRevision
+    delete parameters.properties?.assessmentOrder
+    delete parameters.properties?.evidenceKey
+    delete parameters.properties?.answerMessageId
     return { name: `${role}_${mutationNames[operation]}`, role, operation, target, writer: true, creation, description: descriptions[operation], parameters }
   }),
   ...(["topic", "test"] as const).flatMap((role) => {
@@ -75,7 +79,7 @@ export const scratchpadToolDefinitions = [
     return [
       { name: `${role}_getMistakesForTopic`, role, operation: "getMistakesForTopic", target, writer: false, creation: false, description: "Read mistakes from topic scratchpads only when creating evaluation questions or explicitly asked. null selects all topic scratchpads.", parameters: z.toJSONSchema(z.object({ scratchpads: z.array(TopicHandleSchema).nullable() })) },
       { name: `${role}_whereAmI`, role, operation: "whereAmI", target, writer: false, creation: false, description: "Read the current thread's position. For tests, prefer its unanswered question, then the first unanswered question.", parameters: z.toJSONSchema(z.object({ [target]: TopicHandleSchema, threadId: z.string().optional() })) },
-      { name: `${role}_getQuestions`, role, operation: "getQuestions", target, writer: false, creation: false, description: "Read questions only when explicitly asked or deduplicating the next question.", parameters: questionsParameters },
+      { name: `${role}_getQuestions`, role, operation: "getQuestions", target, writer: false, creation: false, description: "Read recorded questions for resuming, deduplication or an explicit request. For topics, omit threadId to read all threads with their owner IDs; supply the current threadId to read only this thread. Every stepIndex belongs to its returned threadId. Use resumeFrom before answering a question owned by another thread.", parameters: questionsParameters },
     ]
   }),
   { name: "topic_whatIsNext", role: "topic", operation: "whatIsNext", target: "scratchpadId", writer: false, creation: false, description: "Read active continuations across threads and the very next untouched part. Only on a fresh thread, explicit request, or completion of a part/step.", parameters: z.toJSONSchema(z.object({ scratchpadId: TopicHandleSchema })) },

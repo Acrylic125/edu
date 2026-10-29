@@ -21,7 +21,7 @@ import {
   type Diagnostic,
   WorkspaceSchema,
 } from "../shared/contracts"
-import { TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
+import { applyTopicChanges, TopicStateSchema, TopicPartIdSchema, freshTopicState } from "../shared/topic-state"
 import { existingScratchpadForCreation, StateService } from "../main/state-service"
 import { runTutorLoop } from "./tutor-loop"
 import { ScratchpadMutationSchema, ScratchpadTypeSchema, TestStateSchema, scratchpadReferences } from "../shared/scratchpad-state"
@@ -37,6 +37,8 @@ import { scratchpadOperationId } from "../shared/scratchpad-operation"
 import type { RoleJobSchema } from "../shared/tutor-workflow"
 import { scratchpadContext, selectTutorTopicIds, topicPartCoverage } from "./tutor-evidence"
 import { readSkillCatalog, skillFiles } from "./tutor-skills"
+import { topicCompletionEvidence } from "../shared/topic-completion"
+import { rejectsRepeatedChecks, TopicCheckBlockedError } from "../shared/topic-feedback"
 export { skillFiles } from "./tutor-skills"
 
 // Persisted chats may have an empty handoff; tool submissions must be ready to publish.
@@ -47,11 +49,11 @@ const SaveLearningStateSchema = LearningStateSchema.safeExtend({
 const SaveLearningStateInputSchema = z.object({
   ...SaveLearningStateSchema.shape,
   pendingQuestion: z.string().max(20_000).default(""),
-  question: z.string().max(20_000).optional().describe("Question for a standalone conversation without an active topic. Topic checks come from the recorded step. For a navigation choice, including proceed or quick practice within a topic, use phase awaiting_choice and supply its prompt here and its options in responseOptions."),
+  question: z.string().max(20_000).optional().describe("Question for a standalone conversation without an active topic. Topic checks come from the recorded step. To clarify the current topic check, use phase awaiting_clarification, keep pendingCheck on the same latest step, and supply the clearer prompt here. For a navigation choice, use phase awaiting_choice with its prompt here and responseOptions."),
   responseOptions: LearningStateSchema.shape.responseQuestion.unwrap().shape.options.optional(),
   pendingCheck: LearningStateSchema.shape.pendingCheck.unwrap().extend({
     scratchpadId: TopicHandleSchema,
-  }).optional().describe("Reference an unanswered recorded topic question. May be omitted when exactly one unanswered question exists."),
+  }).optional().describe("Reference the latest check in its topic part. awaiting_answer requires an unanswered check; awaiting_clarification may clarify the latest answered check too. May be omitted when exactly one eligible latest check exists."),
 })
 
 const ReadMaterialSchema = z.object({
@@ -150,6 +152,7 @@ export async function createTutorSession(
   activity: (message: string) => void,
   telemetry?: TurnTelemetry,
   stage?: {
+    topicWorkflow?: boolean
     skillPaths?: readonly string[]
     creationId?: string
     operations?: z.infer<typeof ScratchpadMutationSchema>[]
@@ -204,7 +207,7 @@ ${chatTeachingInstructions}
 - numberedSections is inferred navigation metadata. Verify it against the source; it may miss or misclassify headings. Pages with the same section number belong together. Topic part IDs use only letters, digits and hyphens after tp- (for example tp-section-10-2); dots or underscores are invalid. If a plan write fails, correct its invalid fields without dropping any of its sections.
 - numberedSections is a navigation aid, not an exhaustive content list. Include unnumbered worked-example, code, question and continuation pages within their surrounding source section. Do not trim a section's page range to only the pages that have numbered headings.
 - During planning, keep the scratchpad directory and plan without prewriting the lesson. During topic teaching, use the learner-answer workflow in MANAGE_TOPIC.md and the topic template. Establish one overarching example, then develop its walkthrough from assessed learner explanations while preserving the required source content; keep answers to pending checks private.
-- During teaching, call topic_editContent with add/edit/delete changes to stable content blocks. Follow MANAGE_TOPIC.md for the scratchpad format and omit present by default. Write a separate, self-contained chat explanation; use present only when the learner explicitly asks to show saved blocks in chat. Use topic_updateTopic only for curriculum or metadata changes. Preserve the full curriculum.
+- During teaching, call topic_editContent with add/edit/delete changes to stable content blocks. Follow MANAGE_TOPIC.md for the scratchpad format and omit present by default. Write a separate, self-contained chat explanation; use present only when the learner explicitly asks to show saved blocks in chat. Use topic_updateTopic with explicit add, update, remove or move changes for curriculum revisions. Update patches only supplied fields; omitted parts remain. Use null afterId to insert or move to the beginning. Removed parts retain historical evidence.
 
 ## Scratchpad roles and tools
 
@@ -344,9 +347,13 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     return staged.scratchpads.flatMap((scratchpad) => {
       if (!writable.has(scratchpad.id) || scratchpad.archived || !scratchpad.planConfirmed || scratchpad.state?.type !== "topic") return []
       const progress = scratchpad.state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress ?? {}
-      return Object.entries(progress).filter(([, part]) => part.status === "active")
+      return Object.entries(progress).filter(([id, part]) => part.status === "active" && scratchpad.state?.type === "topic" && scratchpad.state.content.some((entry) => entry.id === id))
         .map(([partId, part]) => ({ scratchpadId: scratchpad.id, partId, ...part }))
     })
+  }
+  function hasFocusedTopic() {
+    return staged.scratchpads.some((scratchpad) => focusedIds.has(scratchpad.id) && writable.has(scratchpad.id)
+      && scratchpad.planConfirmed && scratchpad.state?.type === "topic" && scratchpad.state.content.length > 0)
   }
   function lessonBody(fallback: string) {
     const mutation = scratchpadMutations.findLast((mutation) =>
@@ -378,7 +385,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     for (const edit of edits.reverse()) reply = reply.slice(0, edit.start) + reply.slice(edit.end)
     reply = reply.trim()
     if (saved.pendingQuestion && !saved.responseQuestion) {
-      if (saved.phase === "awaiting_clarification") {
+      if (saved.phase === "awaiting_clarification" && !saved.pendingCheck) {
         reply += `\n\n${saved.pendingQuestion}`
       } else {
         reply += `\n\n> [!CHECK]\n${saved.pendingQuestion.split("\n").map((line) => `> ${line}`).join("\n")}`
@@ -388,15 +395,26 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
   }
   function learningStateError(state: LearningState) {
     const active = activeTopicParts()
-    if (pendingPhases.includes(state.phase) && active.length && !active.some((part) => {
+    const requiresCheck = active.length > 0 || (hasFocusedTopic() && (state.phase !== "awaiting_clarification" || state.pendingCheck !== undefined))
+    if (pendingPhases.includes(state.phase) && requiresCheck && !active.some((part) => {
       if (state.pendingCheck?.scratchpadId !== part.scratchpadId || state.pendingCheck.scratchpadPartId !== part.partId) return false
       const step = part.steps[state.pendingCheck.stepIndex]
-      return step !== undefined && step.answerFromUser === undefined
+      return state.pendingCheck.stepIndex >= (part.steps.at(-1)?.reviewStartIndex ?? 0) && state.pendingCheck.stepIndex === part.steps.length - 1 && step !== undefined && (step.answerFromUser === undefined || state.phase === "awaiting_clarification")
     })) {
-      return "Select an unanswered recorded check with pendingCheck (scratchpadId, scratchpadPartId, stepIndex)."
+      return "A Topic check must be registered in the current thread before display. Use topic_recordQuestion with resumeFrom for another thread's latest check, then use its returned pendingCheck. Clarify the same check with awaiting_clarification; do not select an older unrelated check."
     }
   }
   const completion = Promise.withResolvers<void>()
+  function targetForCompletion(scratchpadId: string, partId: string) {
+    const state = staged.scratchpads.find((scratchpad) => scratchpad.id === scratchpadId)?.state
+    if (state?.type !== "topic") return
+    const part = state.content.find((part) => part.id === partId)
+    const progress = state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress[partId]
+    if (!part || !progress) return
+    const evidence = topicCompletionEvidence(part, progress)
+    if (evidence.complete) return evidence.key
+  }
+
   const session = {
     completion: completion.promise,
     resumeProviderSession: false,
@@ -606,22 +624,64 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             const mistakes = await stateService.getMistakesForTopic(MistakesSchema.parse(input).scratchpads)
             result = JSON.stringify(mistakes.map((mistake) => ({ ...mistake, scratchpadId: scratchpadHandles.handle(mistake.scratchpadId) })))
           } else if (!roleTool.writer) {
-            const { scratchpadId } = TopicReadSchema.parse(input)
+            const { scratchpadId, threadId } = TopicReadSchema.parse(input)
             if (operation === "whereAmI" && roleTool.role === "topic") result = JSON.stringify(await stateService.whereAmI(scratchpadId))
             else if (operation === "whereAmI") result = JSON.stringify(await stateService.whereAmIForTest(scratchpadId))
             else if (operation === "getTopicProgress") result = JSON.stringify(await stateService.getTopicProgress(scratchpadId))
             else if (operation === "whatIsNext") result = JSON.stringify(await stateService.whatIsNext(scratchpadId))
-            else if (operation === "getQuestions" && roleTool.role === "topic") result = JSON.stringify(await stateService.getQuestions(scratchpadId, QuestionsSchema.parse(input).scratchpadPartId))
+            else if (operation === "getQuestions" && roleTool.role === "topic") {
+              const questions = await stateService.getQuestions(scratchpadId, QuestionsSchema.parse(input).scratchpadPartId)
+              result = JSON.stringify(questions.filter((question) => threadId === undefined || question.threadId === threadId))
+            }
             else if (operation === "getQuestions") result = JSON.stringify(await stateService.getTestQuestions(scratchpadId))
             else if (operation === "getTestMistakes") result = JSON.stringify(await stateService.getTestMistakes(scratchpadId))
             else if (operation === "getGenericReferences") result = JSON.stringify(await stateService.getGenericReferences(scratchpadId))
             else throw new Error("This role tool is not available.")
           } else {
             const mutation = ScratchpadMutationSchema.parse({ ...argumentsObject, type: operation, ...(roleTool.creation ? { scratchpadId: stage?.creationId ?? randomUUID(), createdAt: new Date().toISOString() } : {}) })
+            if (mutation.type === "complete" && stage?.topicWorkflow) {
+              const evidenceKey = targetForCompletion(mutation.scratchpadId, mutation.scratchpadPartId)
+              if (evidenceKey === undefined)
+                throw new TopicCheckBlockedError("All required criteria need current valid demonstrated evidence before completing this part. Continue with remaining material or defer this part with its gaps preserved.")
+              mutation.evidenceKey = evidenceKey
+            }
+            if (mutation.type === "recordAnswer") {
+              const learner = job.chat.messages.findLast((message) => message.role === "user" && message.content === mutation.answerFromUser)
+              mutation.answerMessageId = learner?.id
+              if (stage?.topicWorkflow && mutation.assessment) {
+                const state = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.state
+                if (state?.type === "topic") {
+                  const steps = state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress[mutation.scratchpadPartId]?.steps ?? []
+                  const step = steps[mutation.stepIndex]
+                  if (JSON.stringify(step?.assessment) === JSON.stringify(mutation.assessment)) mutation.assessmentOrder = step?.assessmentOrder
+                  else mutation.assessmentOrder = Math.max(steps.length, ...steps.map((entry) => entry.assessmentOrder ?? 0)) + 1
+                }
+              }
+            }
+            if (mutation.type === "recordQuestion" && rejectsRepeatedChecks(request?.content ?? ""))
+              throw new TopicCheckBlockedError("The learner objected to repeated checks. Acknowledge the feedback, explain directly, and continue without a check in this reply. Retain genuine uncertainty for later review.")
             const target = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)
+            if (mutation.type === "recordQuestion" && !mutation.check && !mutation.resumeFrom && target?.state?.type === "topic"
+              && target.state.content.find((part) => part.id === mutation.scratchpadPartId)?.goals.length)
+              throw new Error("Supply check with an existing goalIndex, criterionIndex, reasoningTask, missingEvidence and expectedEvidence before recording a question.")
+            const replayed = (stage?.persist || (mutation.type === "updateTopic" && mutation.changes)) && scratchpadMutations.some((previous) => scratchpadOperationId("", previous) === scratchpadOperationId("", mutation))
+            let changedContent: z.infer<typeof TopicStateSchema>["content"] = []
+            let revisedTopic
+            if (mutation.type === "updateTopic") {
+              if (mutation.content !== undefined) throw new Error("Use explicit changes with add, update, remove or move. Omitted parts are preserved; content replacement is unavailable.")
+              const current = TopicStateSchema.parse(target?.state)
+              if (mutation.changes && !replayed) {
+                revisedTopic = applyTopicChanges(current, mutation.changes)
+                changedContent = revisedTopic.content.filter((part) => {
+                  const previous = current.content.find((entry) => entry.id === part.id)
+                  return !previous || JSON.stringify(previous.goals) !== JSON.stringify(part.goals) || JSON.stringify(previous.references) !== JSON.stringify(part.references)
+                })
+              }
+              mutation.expectedRevision ??= current.revision
+            }
             let draftContent
             if (mutation.type === "createTopic") draftContent = mutation.scratchpad.content
-            if (mutation.type === "updateTopic" && !target?.planConfirmed) draftContent = mutation.content
+            if (mutation.type === "updateTopic" && !target?.planConfirmed) draftContent = revisedTopic?.content
             if (draftContent?.some((part) => !part.references.length))
               throw new Error("Every draft curriculum part needs source references from an existing walkthrough. Research sources before proposing a plan.")
             const materials = [...new Map([...job.chat.materials, ...(target?.materials ?? [])].map((material) => [material.id, material])).values()]
@@ -638,9 +698,8 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
                 ...planningMaterials.map((material) => material.id),
               ])]
             }
-            if (mutation.type === "updateTopic" && mutation.content) {
-              const referencedIds = requireMaterialGrounding(mutation.content, materials, mutation.materialIds)
-              mutation.materialIds = referencedIds
+            if (mutation.type === "updateTopic" && changedContent.length) {
+              requireMaterialGrounding(changedContent, materials, mutation.materialIds)
             }
             if (mutation.type === "editTopicContent" || mutation.type === "editTestContent") {
               for (const change of mutation.changes) {
@@ -653,15 +712,11 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
               if (!writable.has(mutation.scratchpadId)) throw new Error("Only tagged or newly created scratchpads can be written.")
               if (roleTool.role === "topic" && !target?.planConfirmed && mutation.type !== "updateTopic")
                 throw new WritePrerequisiteError("Wait for the learner to confirm the proposed plan. Present the plan and save phase awaiting_plan_confirmation; do not retry teaching before approval.", "confirmation", mutation.scratchpadId)
-              if (mutation.type === "updateTopic" && target) {
-                if (mutation.content !== undefined) mutation.expectedContent = TopicStateSchema.parse(target.state).content
-              }
               if ((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && target?.state && target.state.type !== "generic") mutation.expectedRevision = target.state.revision
               if (mutation.type === "updateGeneric" && target) mutation.expectedSummary = target.learning.notes
               if (mutation.type === "updateTest" && target) mutation.expectedState = TestStateSchema.parse(target.state)
             }
             const existing = existingScratchpadForCreation(staged, job.chat.id, mutation)
-            const replayed = stage?.persist && scratchpadMutations.some((previous) => scratchpadOperationId("", previous) === scratchpadOperationId("", mutation))
             if (replayed) {
               result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), type: roleTool.role, staged: true, reused: true })
             } else if (existing) {
@@ -670,7 +725,7 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
               const before = structuredClone(staged)
               try {
                 await stateService.write(mutation)
-                if ("materialIds" in mutation) mutation.materialIds = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.materials.map((material) => material.id)
+                if ("materialIds" in mutation && mutation.type !== "updateTopic") mutation.materialIds = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.materials.map((material) => material.id)
                 await stage?.persist?.(mutation)
               } catch (error) {
                 staged = before
@@ -681,32 +736,49 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
                 writable.add(mutation.scratchpadId)
                 scratchpadHandles.register(mutation.scratchpadId)
               }
+              if (mutation.type === "updateTopic") saved = undefined
               activity("Staging scratchpad state")
               let nextAction = "Maintain this scratchpad with its matching role tools."
               if (mutation.type === "createTopic") nextAction = "Present the proposed plan and save phase awaiting_plan_confirmation. Wait for learner approval before activating parts or recording questions."
               if (mutation.type === "createTopic" && stage?.persist) nextAction = "The planning role is complete. The host will validate and commit before Tutor presents the plan for learner confirmation."
-              result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), type: roleTool.role, staged: true, nextAction, ...((mutation.type === "editTopicContent" || mutation.type === "editTestContent") && { state: staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.state }) })
+              result = JSON.stringify({ scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), type: roleTool.role, staged: true, nextAction, ...((mutation.type === "updateTopic" || mutation.type === "editTopicContent" || mutation.type === "editTestContent") && { state: staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.state }) })
+            }
+            if (mutation.type === "recordQuestion") {
+              const state = staged.scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)?.state
+              if (state?.type !== "topic") throw new Error("A recorded check requires a topic.")
+              const steps = state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress[mutation.scratchpadPartId]?.steps ?? []
+              let stepIndex = steps.length - 1
+              if (mutation.resumeFrom) stepIndex = steps.findIndex((step) => step.resumeFrom?.threadId === mutation.resumeFrom?.threadId && step.resumeFrom?.stepIndex === mutation.resumeFrom?.stepIndex)
+              result = JSON.stringify({ ...z.record(z.string(), z.json()).parse(JSON.parse(result)), pendingCheck: {
+                scratchpadId: scratchpadHandles.handle(mutation.scratchpadId), scratchpadPartId: mutation.scratchpadPartId, stepIndex,
+              } })
             }
           }
         } else if (name === "save_learning_state") {
           saved = undefined
           const handoff = SaveLearningStateInputSchema.parse(input)
+          if (pendingPhases.includes(handoff.phase) && rejectsRepeatedChecks(request?.content ?? ""))
+            throw new TopicCheckBlockedError("The learner objected to repeated checks. Save ready_to_continue with no question, retain genuine uncertainty, and respond directly.")
           const active = activeTopicParts()
-          const unanswered = active.flatMap((part) => part.steps.flatMap((step, stepIndex) => {
-            if (step.answerFromUser !== undefined) return []
+          const unanswered = active.flatMap((part) => {
+            const stepIndex = part.steps.length - 1
+            const step = part.steps[stepIndex]
+            if (!step || stepIndex < (step.reviewStartIndex ?? 0) || (step.answerFromUser !== undefined && handoff.phase !== "awaiting_clarification")) return []
             return [{ scratchpadId: part.scratchpadId, scratchpadPartId: part.partId, stepIndex, question: step.question }]
-          }))
+          })
           let pendingQuestion = handoff.question ?? handoff.pendingQuestion
           let pendingCheck: LearningState["pendingCheck"]
-          if (pendingPhases.includes(handoff.phase) && active.length) {
+          const requiresCheck = active.length > 0 || (hasFocusedTopic() && (handoff.phase !== "awaiting_clarification" || handoff.pendingCheck !== undefined))
+          if (pendingPhases.includes(handoff.phase) && requiresCheck) {
             let selected
             if (handoff.pendingCheck) {
               const scratchpadId = scratchpadHandles.resolve(handoff.pendingCheck.scratchpadId, false)
               selected = unanswered.find((step) => step.scratchpadId === scratchpadId && step.scratchpadPartId === handoff.pendingCheck?.scratchpadPartId && step.stepIndex === handoff.pendingCheck.stepIndex)
             } else if (unanswered.length === 1) selected = unanswered[0]
-            if (!selected) throw new Error("Select an unanswered recorded check with pendingCheck (scratchpadId, scratchpadPartId, stepIndex). Use topic_recordQuestion first if none exists.")
+            if (!selected) throw new Error("A Topic check must be registered in the current thread before display. Use topic_recordQuestion with resumeFrom for another thread's latest check, then use its returned pendingCheck. Clarify the same check with awaiting_clarification and question; do not revive an older check or create a new assessment just to clarify the current one.")
             pendingCheck = { scratchpadId: selected.scratchpadId, scratchpadPartId: selected.scratchpadPartId, stepIndex: selected.stepIndex }
             pendingQuestion = selected.question
+            if (handoff.phase === "awaiting_clarification" && handoff.question?.trim()) pendingQuestion = handoff.question
           }
           if (!pendingPhases.includes(handoff.phase)) pendingQuestion = ""
           const candidate = SaveLearningStateSchema.parse({ ...handoff, pendingQuestion, pendingCheck })
@@ -756,7 +828,8 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
         success = false
         result = `Tool error: ${error instanceof Error ? error.message : "Invalid tool arguments."}`
         if (saveKey) {
-          saveErrors.set(saveKey, result)
+          if (error instanceof TopicCheckBlockedError) saveErrors.delete(saveKey)
+          else saveErrors.set(saveKey, result)
           writePrerequisites.delete(saveKey)
           if (error instanceof WritePrerequisiteError) writePrerequisites.set(saveKey, error)
         }
@@ -790,6 +863,21 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
     previewReply(reply: string) {
       if (saveErrors.size || (saved && learningStateError(saved))) return ""
       return scratchpadHandles.storageText(prepareReply(reply))
+    },
+    async reconcileTopicProgress() {
+      const completed: string[] = []
+      if (!stage?.topicWorkflow) return completed
+      for (const scratchpad of staged.scratchpads) {
+        if (!writable.has(scratchpad.id) || !scratchpad.planConfirmed || scratchpad.state?.type !== "topic") continue
+        const progress = scratchpad.state.threadTutors.find((thread) => thread.id === job.chat.id)?.progress ?? {}
+        for (const part of scratchpad.state.content) {
+          if (progress[part.id]?.status !== "active" || !targetForCompletion(scratchpad.id, part.id)) continue
+          const result = await session.execute("topic_complete", { scratchpadId: scratchpadHandles.handle(scratchpad.id), scratchpadPartId: part.id })
+          if (!result.success) throw new Error(result.text)
+          completed.push(part.id)
+        }
+      }
+      return completed
     },
     finish(reply: string) {
       reply = scratchpadHandles.storageText(prepareReply(reply))

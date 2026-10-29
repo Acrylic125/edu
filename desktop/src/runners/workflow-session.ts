@@ -6,6 +6,7 @@ import type { WorkerJob } from "../shared/contracts"
 import { BatchReceiptSchema, RoleJobSchema, RoleRequestSchema, RoleRequestsSchema, RoleSummarySchema } from "../shared/tutor-workflow"
 import { ScratchpadMutationSchema, scratchpadReferences } from "../shared/scratchpad-state"
 import { createTutorSession } from "./tutor"
+import { createTopicToolWorkflow } from "./topic-workflow"
 import { createTopicHandles, mapTopicReferenceIds, TopicHandleSchema } from "./topic-handles"
 import { scratchpadToolDefinitions } from "./scratchpad-tools"
 import { createTopicPlannerSession } from "./topic-planner"
@@ -150,12 +151,15 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
   if (role.role === "topic" && role.access === "write" && (role.mode === "create" || !role.snapshot?.planConfirmed))
     return createTopicPlannerSession(scoped, role, { creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist, readEvidence: role.readEvidence, recordRead }, activity)
   const skillPaths = [`skills/MANAGE_${role.role.toUpperCase()}.md`, ...teachingSkills,
-    `scratchpad_templates/${role.role}/schema.md`, `scratchpad_templates/${role.role}/tools.md`, `scratchpad_templates/${role.role}/scratchpad_${role.role}.md`]
+    `scratchpad_templates/${role.role}/schema.md`, `scratchpad_templates/${role.role}/scratchpad_${role.role}.md`]
+  if (role.role !== "topic") skillPaths.push(`scratchpad_templates/${role.role}/tools.md`)
   let hasWrites = role.operations.length > 0
-  const base = await createTutorSession(scoped, activity, undefined, { creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist: async (mutation) => {
+  const base = await createTutorSession(scoped, activity, undefined, { topicWorkflow: role.role === "topic" && role.access === "write", creationId: role.scratchpadId, operations: role.operations.map((operation) => operation.mutation), persist: async (mutation) => {
     await persist(mutation)
     hasWrites = true
   }, readEvidence: role.readEvidence, recordRead, skillPaths })
+  let executeTopicTool: ReturnType<typeof createTopicToolWorkflow> | undefined
+  if (role.role === "topic" && role.access === "write") executeTopicTool = createTopicToolWorkflow(base)
   const management = await readFile(join(source.skillDirectory, skillPaths[0]), "utf8")
   const catalog = await readSkillCatalog(source.skillDirectory, teachingSkills)
   const roleTools = scratchpadToolDefinitions.filter((tool) => {
@@ -247,8 +251,8 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
           completion.resolve()
           return { success: true, text: "Role ready for host validation and commit. End the invocation.", images: [] }
         }
-        const result = await base.execute(name, input)
-        return result
+        if (executeTopicTool && (roleTools.some((tool) => tool.writer && tool.name === name) || name === "save_learning_state")) return await executeTopicTool(name, input)
+        return await base.execute(name, input)
       } catch (error) {
         return { success: false, text: error instanceof Error ? error.message : "Invalid tool arguments.", images: [] }
       }
@@ -257,8 +261,11 @@ export async function createWorkflowRoleSession(source: WorkerJob, role: z.infer
     get saveError() { if (!output?.needsClarification) return base.saveError ?? creationError() },
     hasReply(reply: string) { return output !== undefined || (role.request.replyToLearner === true && base.hasReply(reply)) },
     previewReply(reply: string) { if (role.request.replyToLearner) return base.previewReply(reply); return "" },
-    recoveryMessage() {
-      return [base.saveError ?? creationError() ?? "", phaseInstructions, recoveryInstructions, "Complete the assigned task and call finish_role with its summary and evidence. Repair rejected writes only with tools allowed in the current phase."].filter((text) => text.length > 0).join("\n")
+    recoveryMessage(reply = "") {
+      let completionInstruction = "Complete the assigned task and call finish_role with its summary and evidence. Repair rejected writes only with tools allowed in the current phase."
+      if (role.request.replyToLearner)
+        completionInstruction = "After repairs, save the handoff and write a normal learner-facing reply to the original request. Continue the lesson or state its completion and next options. Keep the repair work private; finish_role is not a substitute for the learner's reply."
+      return [base.recoveryMessage(reply), creationError() ?? "", phaseInstructions, recoveryInstructions, completionInstruction].filter((text) => text.length > 0).join("\n")
     },
     finish(reply = "") {
       if (!output && role.request.replyToLearner) {

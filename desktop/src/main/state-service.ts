@@ -1,9 +1,11 @@
+import { topicCompletionEvidence } from "../shared/topic-completion"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { type Topic, type Workspace } from "../shared/contracts"
-import { TopicMutationSchema, TopicStateSchema, TopicReferenceSchema, freshTopicState } from "../shared/topic-state"
+import { applyTopicChanges, TopicMutationSchema, TopicStateSchema, TopicReferenceSchema, freshTopicState } from "../shared/topic-state"
 import { newScratchpad, type WorkspaceRepository } from "./workspace"
 import { applyContentChanges } from "../shared/content-document"
+import { TopicCheckBlockedError, validateCriterion, validateTopicCheck } from "../shared/topic-feedback"
 import { scratchpadMarkdown } from "../shared/scratchpad-markdown"
 import { importStructuredContent } from "./structured-content-migration"
 import { CreateGenericInputSchema, CreateTestInputSchema, GenericStateSchema, ScratchpadMutationSchema, ScratchpadStateSchema, ScratchpadTypeSchema, CreateTestQuestionInputSchema, TestStateSchema, scratchpadReferences, testScratchpadMarkdown } from "../shared/scratchpad-state"
@@ -31,13 +33,17 @@ export function applyTopicMutation(workspace: Pick<Workspace, "scratchpads" | "c
   }
   const scratchpad = scratchpads.find((scratchpad) => scratchpad.id === mutation.scratchpadId)
   if (!scratchpad) throw new Error("Topic not found.")
-  const state = TopicStateSchema.parse(importStructuredContent(scratchpad.state ?? { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }, scratchpad.learning.notes))
+  let state = TopicStateSchema.parse(importStructuredContent(scratchpad.state ?? { ...freshTopicState(scratchpad.title, scratchpad.createdAt), document: undefined }, scratchpad.learning.notes))
   let thread = state.threadTutors.find((thread) => thread.id === threadId)
   if (!thread) {
     thread = { id: threadId, progress: {} }
     state.threadTutors.push(thread)
   }
   if (mutation.type === "updateTopic") {
+    if (mutation.expectedRevision !== undefined && mutation.expectedRevision !== state.revision)
+      throw new Error("Topic changed during this turn. Read the latest state before editing.")
+    if (mutation.changes && mutation.content) throw new Error("Supply changes, not a curriculum replacement.")
+    if (mutation.changes) state = applyTopicChanges(state, mutation.changes)
     if (mutation.expectedContent !== undefined && JSON.stringify(mutation.expectedContent) !== JSON.stringify(state.content))
       throw new Error("Topic curriculum changed during this turn. Retry to preserve the latest goals and evidence.")
     if (mutation.name !== undefined) state.name = mutation.name
@@ -71,20 +77,83 @@ export function applyTopicMutation(workspace: Pick<Workspace, "scratchpads" | "c
     if (!part) throw new Error("Topic part not found.")
     const progress = thread.progress[part.id]
     if (mutation.type === "activatePart") {
+      thread.currentPartId = part.id
       thread.progress[part.id] = { status: "active", steps: progress?.steps ?? [] }
     } else if (mutation.type === "complete") {
       if (!progress) throw new Error("Visit and activate the part before completing it.")
+      if (mutation.evidenceKey) {
+        const evidence = topicCompletionEvidence(part, progress)
+        if (!evidence.complete || evidence.key !== mutation.evidenceKey)
+          throw new Error("All required criteria must have current valid demonstrated evidence before completing this part.")
+      }
       progress.status = "completed"
     } else if (mutation.type === "documentMistake") {
       part.mistakes.push({ context: mutation.context, issue: mutation.issue })
     } else if (mutation.type === "recordQuestion") {
+      thread.currentPartId = part.id
+      let check = mutation.check
+      const resumeFrom = mutation.resumeFrom
+      if (resumeFrom) {
+        if (resumeFrom.threadId === threadId) throw new Error("This check is already in the current thread. Use its pendingCheck directly.")
+        const source = state.threadTutors.find((thread) => thread.id === resumeFrom.threadId)?.progress[part.id]
+        const sourceStep = source?.steps[resumeFrom.stepIndex]
+        if (!sourceStep || resumeFrom.stepIndex !== source.steps.length - 1 || sourceStep.question !== mutation.question)
+          throw new Error("resumeFrom must identify the exact latest question in its source thread and part. Read the recorded questions before resuming.")
+        if (progress?.steps.some((step) => step.resumeFrom?.threadId === resumeFrom.threadId && step.resumeFrom.stepIndex === resumeFrom.stepIndex)) return
+        if (sourceStep.assessment?.status === "demonstrated" || state.threadTutors.some((thread) => thread.progress[part.id]?.steps.some((step) => {
+          if (step.assessment?.status !== "demonstrated") return false
+          if (step.resumeFrom?.threadId === resumeFrom.threadId && step.resumeFrom.stepIndex === resumeFrom.stepIndex) return true
+          return sourceStep.check !== undefined && step.assessment.goalIndex === sourceStep.check.goalIndex && step.assessment.criterionIndex === sourceStep.check.criterionIndex
+        })))
+          throw new TopicCheckBlockedError("This check has already been demonstrated in another thread. Use its recorded evidence and continue instead of asking it again.")
+        check = sourceStep.check
+      }
+      validateTopicCheck(part, progress, mutation.question, check)
+      let reviewStartIndex = progress?.steps.at(-1)?.reviewStartIndex ?? 0
+      if (progress?.status === "completed") reviewStartIndex = progress.steps.length
       // Asking visits the part; keeping both changes atomic avoids an ordering dependency on the model.
-      thread.progress[part.id] = { status: "active", steps: [...(progress?.steps ?? []), { question: mutation.question }] }
+      thread.progress[part.id] = { status: "active", steps: [...(progress?.steps ?? []), { question: mutation.question, check, reviewStartIndex, resumeFrom }] }
     } else if (mutation.type === "recordAnswer") {
       const step = progress?.steps[mutation.stepIndex]
-      if (!step) throw new Error("Question not found in this thread.")
-      if (step.answerFromUser !== undefined) throw new Error("This answer is already recorded. Preserve it and ask a follow-up for another attempt.")
-      step.answerFromUser = mutation.answerFromUser
+      if (!step) throw new Error(`Question not found in this thread. This thread owns ${progress?.steps.length ?? 0} questions. Use the current thread's pendingCheck returned by topic_recordQuestion; resume another thread's check with resumeFrom before answering it.`)
+      let additionalAnswer = step.additionalAnswers?.find((answer) => answer.answerFromUser === mutation.answerFromUser)
+      if (step.answerFromUser !== undefined && step.answerFromUser !== mutation.answerFromUser && !additionalAnswer) {
+        const messages = workspace.chats.find((chat) => chat.id === threadId)?.messages ?? []
+        // Pin the source so committing a staged answer still works after another learner message arrives.
+        const learner = messages.findLast((message) => message.role === "user" && message.content === mutation.answerFromUser && (!mutation.answerMessageId || message.id === mutation.answerMessageId))
+        if (!learner || learner.content !== mutation.answerFromUser)
+          throw new Error("Preserve the recorded answer unchanged. A further answer must match a genuine learner message verbatim. To reassess existing evidence, submit one of its recorded answers unchanged.")
+        additionalAnswer = { messageId: learner.id, answerFromUser: learner.content }
+      }
+      const assessment = mutation.assessment
+      if (step.check && !assessment && !step.assessment) throw new Error("Assess this answer against its recorded criterion with verbatim evidence before continuing.")
+      if (assessment) {
+        validateCriterion(part, assessment)
+        const criterion = step.check ?? step.assessment
+        if (criterion && (assessment.goalIndex !== criterion.goalIndex || assessment.criterionIndex !== criterion.criterionIndex))
+          throw new Error("Assess the criterion selected by the recorded check. An incidental example cannot introduce a new requirement.")
+        if (!assessment.evidence.some((evidence) => evidence.stepIndex === mutation.stepIndex && evidence.quote === mutation.answerFromUser))
+          throw new Error("Assessment evidence must include the current actual answer verbatim.")
+        for (const evidence of assessment.evidence) {
+          const source = progress?.steps[evidence.stepIndex]
+          const currentAnswer = evidence.stepIndex === mutation.stepIndex && evidence.quote === mutation.answerFromUser
+          if (!currentAnswer && source?.answerFromUser !== evidence.quote && !source?.additionalAnswers?.some((answer) => answer.answerFromUser === evidence.quote))
+            throw new Error("Cite the verbatim complete actual answer from an answered step in this part and thread. Keep inferred reasoning in interpretation.")
+        }
+        if (step.assessment && JSON.stringify(step.assessment) !== JSON.stringify(assessment))
+          step.assessmentHistory = [...(step.assessmentHistory ?? []), step.assessment]
+        if (JSON.stringify(step.assessment) !== JSON.stringify(assessment)) {
+          const order = Math.max(progress.steps.length, ...progress.steps.map((entry) => entry.assessmentOrder ?? 0)) + 1
+          if (mutation.assessmentOrder !== undefined && mutation.assessmentOrder !== order)
+            throw new Error("Criterion evidence changed during this turn. Retry from the current assessments.")
+          step.assessmentOrder = order
+        }
+        step.assessment = assessment
+        if (assessment.status !== "demonstrated") progress.status = "active"
+      }
+      if (step.answerFromUser === undefined) step.answerFromUser = mutation.answerFromUser
+      else if (additionalAnswer && !step.additionalAnswers?.some((answer) => answer.messageId === additionalAnswer.messageId))
+        step.additionalAnswers = [...(step.additionalAnswers ?? []), additionalAnswer]
     }
   }
   validateDocumentSources(scratchpad, state, workspace)
@@ -189,7 +258,7 @@ export class StateService {
 
   async getQuestions(scratchpadId: string, scratchpadPartId: string) {
     const { state } = this.scratchpad(scratchpadId)
-    if (!state.content.some((part) => part.id === scratchpadPartId)) throw new Error("Topic part not found.")
+    if (![...state.content, ...(state.removedParts ?? [])].some((part) => part.id === scratchpadPartId)) throw new Error("Topic part not found.")
     return state.threadTutors.flatMap((thread) => (thread.progress[scratchpadPartId]?.steps ?? []).map((step, stepIndex) => ({ threadId: thread.id, stepIndex, ...step })))
   }
 

@@ -125,7 +125,7 @@ export class WorkspaceRepository {
         this.database.filesSynced()
       }
       this.state = { ...this.state, scratchpads: await this.readTopics() }
-      if (saved.needsMigration) await this.commit(this.state)
+      if (saved.needsMigration || saved.needsMessageMigration) await this.commit(this.state)
       await this.removeObsoleteFiles()
       return this.state
     }

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import { load } from "cheerio"
@@ -6,7 +6,7 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import { z } from "zod"
 import type { WorkerJob } from "../shared/contracts"
 import { DocumentSectionSchema } from "../shared/document-index"
-import { ScratchpadNameSchema, TopicPartSchema, TopicReferenceSchema } from "../shared/topic-state"
+import { ScratchpadNameSchema, TopicChangeSchema, TopicStateSchema, TopicPartSchema, TopicReferenceSchema } from "../shared/topic-state"
 import { RoleJobSchema, RoleSummarySchema } from "../shared/tutor-workflow"
 import { extractMaterial, indexDocument, materialDigest } from "../main/material-extraction"
 import { createTutorSession } from "./tutor"
@@ -60,7 +60,7 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
   for (const scratchpad of indexedJob.scratchpads) scratchpad.materials = scratchpad.materials.map(replaceMaterial)
   for (const scratchpad of indexedJob.workspaceScratchpads) scratchpad.materials = scratchpad.materials?.map(replaceMaterial)
   const skillPaths = ["skills/MANAGE_TOPIC.md", ...teachingSkills,
-    "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/tools.md", "scratchpad_templates/topic/scratchpad_topic.md"]
+    "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/scratchpad_topic.md"]
   const base = await createTutorSession(indexedJob, activity, undefined, { ...persist, skillPaths })
   const management = await readFile(join(job.skillDirectory, "skills/MANAGE_TOPIC.md"), "utf8")
   const catalog = await readSkillCatalog(job.skillDirectory, teachingSkills)
@@ -181,14 +181,34 @@ Submit a concise plan with submit_topic_plan: title, selected section IDs, and o
         if (name !== "submit_topic_plan") throw new Error("Use indexed section selection and submit_topic_plan. Raw topic writes and page references are unavailable during planning.")
         const plan = SubmitPlanSchema.parse(input)
         if (new Set(plan.sections.map((section) => section.sectionId)).size !== plan.sections.length) throw new Error("Each indexed section can appear only once in the plan.")
+        const claimedIds = new Set<string>()
         const content = plan.sections.map((part, index) => {
           const source = sections.get(part.sectionId)
           if (!source || !reviewed.has(part.sectionId)) throw new Error("Read the selected section before including it in the plan.")
-          return { id: `tp-section-${index + 1}`, name: part.name ?? source.section.title, references: [source.reference], goals: part.goals, mistakes: [] }
+          let id = `tp-section-${index + 1}`
+          if (role.mode !== "create") {
+            const current = TopicStateSchema.parse(role.snapshot?.state)
+            const existing = current.content.find((entry) => !claimedIds.has(entry.id) && JSON.stringify(entry.references) === JSON.stringify([source.reference]))
+            id = existing?.id ?? `tp-${randomUUID()}`
+          }
+          claimedIds.add(id)
+          return { id, name: part.name ?? source.section.title, references: [source.reference], goals: part.goals, mistakes: [] }
         })
         let result
         if (role.mode === "create") result = await base.execute("topic_createTopic", { scratchpad: { type: "topic", version: "11-10-2026", name: plan.title, content } })
-        else result = await base.execute("topic_updateTopic", { scratchpadId: role.scratchpadHandle, name: plan.title, content })
+        else {
+          const current = TopicStateSchema.parse(role.snapshot?.state)
+          const changes: z.infer<typeof TopicChangeSchema>[] = current.content.filter((part) => !content.some((entry) => entry.id === part.id))
+            .map((part) => ({ action: "remove", id: part.id }))
+          for (const [index, part] of content.entries()) {
+            const afterId = content[index - 1]?.id ?? null
+            if (current.content.some((entry) => entry.id === part.id)) {
+              const { id, mistakes: _mistakes, ...patch } = part
+              changes.push({ action: "update", id, patch: { ...patch, parent: null } }, { action: "move", id, afterId })
+            } else changes.push({ action: "add", part, afterId })
+          }
+          result = await base.execute("topic_updateTopic", { scratchpadId: role.scratchpadHandle, name: plan.title, changes })
+        }
         if (!result.success) throw new Error(result.text)
         output = { summary: "Topic plan ready for learner confirmation.", evidence: content.flatMap((part) => part.references) }
         errorMessage = undefined
