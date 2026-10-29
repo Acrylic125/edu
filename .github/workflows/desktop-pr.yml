@@ -1,0 +1,38 @@
+name: Check desktop pull request
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+concurrency:
+  group: desktop-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Build, check tag, and test
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-desktop
+      - name: Build app
+        run: pnpm --dir desktop build
+      - name: Check proposed release tag
+        env:
+          RELEASE_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
+          RELEASE_PR_BODY: ${{ github.event.pull_request.body }}
+        run: node desktop/scripts/prepare-release.mjs auto
+      - name: Test
+        run: |
+          node --test desktop/scripts/prepare-release.test.mjs
+          pnpm --dir desktop test
+          pnpm --dir desktop test:electron
+          pnpm --dir desktop test:rendering

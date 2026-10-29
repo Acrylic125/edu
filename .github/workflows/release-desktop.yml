@@ -1,0 +1,149 @@
+name: Release desktop
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (auto reads Conventional Commits)
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'pull_request_target' && github.event.pull_request.merged != true && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build app and test
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      - uses: ./.github/actions/setup-desktop
+      - name: Build app
+        run: pnpm --dir desktop build
+      - name: Test
+        run: |
+          node --test desktop/scripts/prepare-release.test.mjs
+          pnpm --dir desktop test
+          pnpm --dir desktop test:electron
+          pnpm --dir desktop test:rendering
+      - name: Preserve tested build
+        run: tar -czf desktop-build.tar.gz -C desktop out .test-out resources/icon.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-macos-arm64
+          path: desktop-build.tar.gz
+          retention-days: 7
+
+  prepare-tag:
+    name: Prepare tag
+    needs: build-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      base_tag: ${{ steps.version.outputs.base_tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-desktop
+      - name: Calculate version without creating a tag
+        id: version
+        env:
+          RELEASE_BUMP: ${{ inputs.bump || 'auto' }}
+        run: node desktop/scripts/prepare-release.mjs "$RELEASE_BUMP"
+
+  prepare-release-macos:
+    name: Prepare release (macOS ARM64)
+    needs: prepare-tag
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      - uses: ./.github/actions/setup-desktop
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-macos-arm64
+      - run: tar -xzf desktop-build.tar.gz -C desktop
+      - name: Sign, notarize, and staple macOS artifacts
+        working-directory: desktop
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-tag.outputs.version }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/prepare-release-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: desktop/release/prepared/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Create tag and release
+    needs: [prepare-tag, prepare-release-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.prepare-tag.outputs.tag }}
+      RELEASE_SHA: ${{ needs.prepare-tag.outputs.sha }}
+      BASE_TAG: ${{ needs.prepare-tag.outputs.base_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify release assets
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS-macos-arm64.txt
+      - name: Create tag
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$RELEASE_SHA"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$RELEASE_TAG" "$RELEASE_SHA" -m "Release $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+      - name: Create release
+        run: |
+          notes_args=()
+          if [ -n "$BASE_TAG" ]; then
+            notes_args+=(--notes-start-tag "$BASE_TAG")
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "EdU $RELEASE_TAG" --generate-notes "${notes_args[@]}"
+          fi
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest
