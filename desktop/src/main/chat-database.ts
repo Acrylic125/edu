@@ -72,10 +72,19 @@ export class ChatDatabase {
         return null
       }
       const settings = SettingsSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload))
+      let needsMessageMigration = false
       const chats = database.prepare("SELECT payload FROM chats").all().map((row) => {
         const chat = ChatStateSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload))
         const messages = database.prepare("SELECT payload FROM messages WHERE chat_id = ? ORDER BY ordinal").all(chat.id)
           .map((row) => MessageSchema.parse(JSON.parse(JsonRowSchema.parse(row).payload)))
+        const latest = messages.at(-1)
+        const question = chat.learning.pendingQuestion
+        // Older replies rendered topic clarifications as plain text despite retaining their check reference.
+        if (chat.learning.phase === "awaiting_clarification" && chat.learning.pendingCheck && question
+          && latest?.role === "assistant" && !latest.responseQuestion && latest.content.endsWith(`\n\n${question}`)) {
+          latest.content = `${latest.content.slice(0, -question.length)}> [!CHECK]\n${question.split("\n").map((line) => `> ${line}`).join("\n")}`
+          needsMessageMigration = true
+        }
         return ChatSchema.parse({ ...chat, messages })
       }).sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
       const scratchpads = JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'scratchpads'").get())
@@ -83,6 +92,7 @@ export class ChatDatabase {
       return {
         state: StoredWorkspaceSchema.parse({ version: 2, ...settings, chats, scratchpads: JSON.parse(scratchpads.payload) }),
         needsMigration: !WorkspaceSchema.shape.scratchpads.safeParse(JSON.parse(scratchpads.payload)).success,
+        needsMessageMigration,
         filesPending: pending.payload === "true",
         removedFiles: RemovedFilesSchema.parse(JSON.parse(JsonRowSchema.parse(database.prepare("SELECT payload FROM metadata WHERE key = 'removed_files'").get()).payload)),
       }

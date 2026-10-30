@@ -13,18 +13,24 @@ description: Manage scratchpads of type, "topic". Extract "type" from `{scratchp
 4. Extend the walkthrough from the learner's supported explanation, then continue to the next objective.
 5. Before moving to the next highest-level part, offer the learner a choice to proceed or do quick practice. Wait for their choice.
 
+When a fresh chat continues a check from another thread, read the source question and its owner with `topic_getQuestions` or `read_topic_evidence`. Register the exact question in the current thread with `topic_recordQuestion`, supplying `resumeFrom: { threadId, stepIndex }`. The host copies the criterion and returns the current thread's `pendingCheck`. Use that returned reference when saving and answering. Source indexes are local to their owner thread. A check must be registered before it is displayed; putting a foreign index in private notes does not register it. If another thread has already demonstrated the criterion, credit that evidence and continue instead of resuming the check.
+
 ## Creating Topics
 
 Steps:
 1. Identify the requested subject, scope, and level before creation. An explicit `/new-topic` command goes directly to the planner. If scope is missing, ask a focused clarification.
-2. Use the cached document index to select curriculum section IDs. The host supplies the selected text with `select_topic_sections`. Use visuals only when source headings or figures are ambiguous. Reserve practice attachments for later practice instead of citing them to retain the files.
+2. For PDFs and PPTX presentations, use the host-prepared document index. The host extracts native headings and layout. PDF pages can be reviewed as screenshots when the runner supports images. PPTX is parsed directly without an external converter; a verified matching attached PDF supplies screenshots when available. Check the source page inventory and retain every page within the requested scope, including unclassified ranges. Use `inspect_source_pages` for any page's text or image and `select_topic_sections` to read the selected curriculum sections. Plan standalone PPTX from its native text and shape layout. Request a PDF export only when essential visual content cannot be interpreted. If required PDF screenshot review remains unresolved, request a vision-capable runner. Reserve practice attachments for later practice.
 3. Without supplied curriculum sources, use web search to find suitable official documentation, textbooks, university materials, or primary publications. Read candidate pages with `inspect_web_source` to obtain host-issued section IDs. If reliable coverage is unavailable, use `request_topic_clarification`.
-4. Submit the title, selected section IDs, and concise learning goals with `submit_topic_plan`. Preserve source order. The host constructs references and stages the topic. Raw file paths and page ranges are not planning inputs.
+4. Group continuation slides and related examples into coherent learning parts; combine introductory title, agenda and recap ranges when appropriate. Avoid repeated topic headings for individual pages. Submit the title, an array of `sectionIds` for each part, and concise learning goals with `submit_topic_plan`. Preserve source order. The host constructs references and stages the topic. Raw file paths and page ranges are not planning inputs.
 5. End the invocation after submission. The host validates and commits, then renders the saved plan and confirmation request. Do not write a second summary, handoff, lesson, or question sequence.
 6. After learner confirmation, use the teaching tools to guide the learner through the sections. A requested plan revision returns to the planner before teaching resumes.
 
 ## Explaining
 [Explain in this style](WRITING_STYLE.md).
+
+Make the current example visible in the chat before asking a check. Follow the supplied visual teaching guidance: use a relevant attachment visual first, then create an original visual when the source has none suitable or needs clarification. Default to a visual when explaining structure, relationships, processes or spatial concepts. Omit it when it adds no explanatory value. A visual saved only in the scratchpad does not supply the chat's setup.
+
+Show concrete labels and inputs rather than referring to an unseen "heading", "table row" or "diagram". For a check about a retrieved row losing its heading, display a small original document excerpt with an equipment heading and a table row, alongside the isolated row returned by search. Label the excerpt as invented when it is not source content. Keep names and values consistent with the question. Show the setup and the retrieval result; leave the consequence and the chunk design for the learner to infer.
 
 ## Asking Checks and Questions
 
@@ -42,7 +48,7 @@ Before sourcing each check, practice question, or follow-up:
 
 When resuming an out-of-scope practice question, withdraw it, retain the answer history without treating the untaught requirement as a learner mistake, and replace it with an in-scope question.
 
-Record each check and follow-up once with `topic_recordQuestion`. Select its recorded step with `pendingCheck` in `save_learning_state`. The app displays the question.
+Record each check and follow-up once with `topic_recordQuestion` and the criterion-bound `check` described in [What is understanding](WHAT_IS_UNDERSTANDING.md). Select its recorded step with `pendingCheck` in `save_learning_state`. The app displays the question.
 
 ### 1. While walking through a topic
 Topic evaluation happens as the topic is being walked through. 
@@ -62,6 +68,8 @@ At the end of a highest-level curriculum part (a part with no `parent`), includi
 
 Save this navigation choice with `save_learning_state`, phase `awaiting_choice`, the prompt in `question`, and `responseOptions` labelled "Proceed" and "Quick practice". In `nextAction`, identify the completed highest-level part and the next part, and wait for the learner's choice. This choice is not an understanding check; keep it out of the recorded assessment questions.
 
+At the end of the final part, give a short recap and offer "Review" or "Quick practice" with `awaiting_choice`. Say that the planned walkthrough is finished so the learner knows why teaching paused. Keep deferred gaps in the handoff without claiming they are mastered. A topic with no next part still needs an explicit closing and next options.
+
 Resolve the learner's latest choice against the saved navigation prompt before taking any teaching action. "Quick practice" and "Keep looking for practice" both select sourcing for the completed part. Stay at that boundary until practice is resolved or the learner explicitly chooses to proceed. When no eligible question can be verified, state the limitation honestly, save phase `awaiting_choice` with "Proceed" and "Keep looking for practice", and wait. Failure to source practice does not select Proceed. Keep the next-part teaching instruction in the handoff conditional on that new choice.
 
 If the learner chooses quick practice, ask one short application question on the completed part using the sourcing rules below. Assess their answer and resolve any specific gap, then offer the proceed-or-practice choice again before moving on. If they choose proceed, begin the next highest-level part.
@@ -76,9 +84,9 @@ Keep each question focused on one objective while requiring the learner to selec
 ## Feedback and Deliberating
 After the user answers, give [FEEDBACK and DELIBERATE on the answer](FEEDBACK_AND_DELIBERATE.md)
 
-Record the actual answer with `topic_recordAnswer` before using it in the walkthrough. Preserve previous attempts and document confirmed mistakes for the part.
+Record the actual answer and its criterion assessment with `topic_recordAnswer` before using it in the walkthrough. Preserve previous attempts and document confirmed mistakes for the part. Keep uncertain interpretations in the assessment rather than documenting them as confirmed mistakes.
 
-Resolve a specific conceptual gap with an explanation and one diagnostic follow-up before advancing. Use cumulative learner evidence to decide whether a gap remains after a correction. If the learner requests a skip, retain the unresolved objective and source position in the private handoff for later review.
+Use [Feedback and deliberate](FEEDBACK_AND_DELIBERATE.md) to resolve or defer a remaining gap. Preserve the original objective and source position when deferring it. Continue teaching without declaring an unresolved goal understood.
 
 ## Maintain Scratchpad
 
@@ -96,15 +104,15 @@ Before saving, verify that each new explanatory claim follows from the recorded 
 
 ## Scratchpad format
 
-Apply this format only to the topic scratchpad. Keep chat explanations self-contained and conversational using WRITING_STYLE.md.
+Apply this slide-like format only to the topic scratchpad. The Explaining guidance also requires useful visuals in the chat; keep its prose conversational using WRITING_STYLE.md.
 
-Build a slide-like walkthrough in Markdown: one idea per step, with 1–2 short lines of explanation immediately followed by a visual. Repeat this explanation → visual rhythm as the worked example develops. Use blank lines between the explanation and visual, and `---` between steps. Keep the app-generated section headings; add a short step heading only when it clarifies the idea.
+Build a slide-like walkthrough in Markdown: one idea per step, with 1–2 short lines of explanation immediately followed by a useful visual. Repeat this explanation → visual rhythm as the worked example develops, omitting the visual only when it adds no explanatory value. Use blank lines between the explanation and visual, and `---` between steps. Keep the app-generated section headings; add a short step heading only when it clarifies the idea.
 
 Each visual must teach the preceding point: a labelled plot, Mermaid diagram, relevant table, source figure, or code excerpt. Use the supported visualization markup from WRITING_STYLE.md. Render the actual visual rather than writing a placeholder such as “plot of circle”. Split longer reasoning into additional steps rather than a dense paragraph. Show equations beside the short explanation and pair quantitative relationships with a plot; a formula alone does not replace that plot.
 
 For example, after assessing the learner's explanation of $x^2 + y^2 = r^2$, save their reasoning beside a labelled circle plot. When they explain the role of $r$, extend that step with a radius segment for $r = 2$ and equal axis scales. Continue from the same example, changing one idea at a time.
 
-Before saving, verify that every step pairs a short explanation with a relevant rendered visual, stays within taught concepts, and preserves earlier working. This changes document presentation only; retain the existing curriculum, progress, questions, mistakes, stable block IDs and state schema.
+Before saving, verify that each step uses a rendered visual where it helps, stays within taught concepts, and preserves earlier working. This changes document presentation only; retain the existing curriculum, progress, questions, mistakes, stable block IDs and state schema.
 
 ## Structured content
 
@@ -120,6 +128,12 @@ All changes in one call succeed together. Keep IDs stable across wording changes
 Save new and revised walkthrough steps with `topic_editContent`, omitting `present` by default. Write the chat explanation or feedback in the normal final reply. Only when the learner explicitly asks to show stored blocks in chat, set `present` to their ordered IDs; the app renders them and the recorded check, so omit a duplicate final explanation.
 
 The app creates the directory, anchors, section headings, citations and final terminology table. Use `topic_updateTopic` for requested curriculum or metadata changes. Record questions, answers and progress with their dedicated tools. Keep private assessment keys in the chat handoff.
+
+## Curriculum scope
+
+When revising scope, inspect the sources for added parts or changed goals and references. Unchanged parts do not require new source reads.
+
+After a curriculum edit, select the continuation from the returned state and save a fresh handoff. Treat removed parts as historical. Check the updated requirements before claiming that a part is complete.
 
 ## Topic terminology
 

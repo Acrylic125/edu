@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import { load } from "cheerio"
@@ -6,19 +6,27 @@ import type { ChatCompletionTool } from "openai/resources/chat/completions"
 import { z } from "zod"
 import type { WorkerJob } from "../shared/contracts"
 import { DocumentSectionSchema } from "../shared/document-index"
-import { ScratchpadNameSchema, TopicPartSchema, TopicReferenceSchema } from "../shared/topic-state"
+import { ScratchpadNameSchema, TopicChangeSchema, TopicStateSchema, TopicPartSchema, TopicReferenceSchema } from "../shared/topic-state"
 import { RoleJobSchema, RoleSummarySchema } from "../shared/tutor-workflow"
 import { extractMaterial, indexDocument, materialDigest } from "../main/material-extraction"
+import { matchingPresentationPdf } from "../shared/presentation-source"
 import { createTutorSession } from "./tutor"
 import { readSkillCatalog, teachingSkills } from "./tutor-skills"
+import { reviewDocumentWithCodex } from "./document-vision"
 
 const SelectSectionsSchema = z.object({ sectionIds: z.array(DocumentSectionSchema.shape.id).min(1).max(100), includeVisuals: z.boolean().default(false) }).strict()
 const SubmitPlanSchema = z.object({
   title: ScratchpadNameSchema,
-  sections: z.array(z.object({ sectionId: DocumentSectionSchema.shape.id, name: TopicPartSchema.shape.name.optional(), goals: TopicPartSchema.shape.goals.max(3) }).strict()).min(1).max(100),
+  sections: z.array(z.object({
+    sectionIds: z.array(DocumentSectionSchema.shape.id).min(1).max(100).optional().describe("Reviewed source ranges to combine into this learning part, in page order."),
+    sectionId: DocumentSectionSchema.shape.id.optional().describe("Legacy single-range input. Prefer sectionIds to group continuation slides."),
+    name: TopicPartSchema.shape.name.optional(),
+    goals: TopicPartSchema.shape.goals.max(3),
+  }).strict().refine((part) => (part.sectionId !== undefined) !== (part.sectionIds !== undefined), "Supply sectionIds for each learning part.")).min(1).max(100),
 }).strict()
 const WebSourceSchema = z.object({ url: z.url({ protocol: /^https?$/ }) }).strict()
 const ClarificationSchema = z.object({ question: z.string().trim().min(1).max(2000) }).strict()
+const InspectPagesSchema = z.object({ materialId: z.uuid(), firstPage: z.number().int().positive(), lastPage: z.number().int().positive(), includeVisuals: z.boolean().default(true) }).strict()
 
 export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<typeof RoleJobSchema>, persist: Parameters<typeof createTutorSession>[3], activity: (message: string) => void) {
   const available = [...new Map([
@@ -40,8 +48,8 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
       bytes = Buffer.from(material.text)
     }
     const digest = materialDigest(bytes, extension)
-    if (material.documentIndex?.digest !== digest) {
-      if (material.documentIndex || material.kind === "image" || (material.kind === "pdf" && material.pages.some((page) => page.trim().length < 80))) {
+    if (material.documentIndex?.digest !== digest || material.documentIndex.version !== 2) {
+      if (material.documentIndex || material.kind === "image" || extension === ".pdf" || extension === ".pptx") {
         activity("Indexing source headings")
         const extracted = await extractMaterial(bytes, extension, job.sourceCacheDirectory ?? join(dirname(job.assetDirectory), "source-cache"))
         material = { ...material, ...extracted }
@@ -52,15 +60,21 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
     const practice = /tutorial|worksheet|problem[ _-]*set|practice[ _-]*sheet|assignment/i.test(`${material.name}\n${(material.pages[0] ?? material.text).slice(0, 250)}`)
     source.material = material
     source.practice = practice
+    if (!practice && (material.kind === "pdf" || material.kind === "image") && job.codex && job.runner.provider === "codex" && material.documentIndex?.pageMap?.some((page) => page.needsVisualReview)) {
+      const review = await reviewDocumentWithCodex(material, source.directory, job.codex, job.runner.model,
+        job.sourceCacheDirectory ?? join(dirname(job.assetDirectory), "source-cache"), activity)
+      source.material = { ...material, documentIndex: review.index }
+    }
   }
-  const curriculum = indexed.filter((source) => !source.practice)
+  const curriculumSources = indexed.filter((source) => !source.practice)
+  const curriculum = curriculumSources.filter((source) => !matchingPresentationPdf(source.material, curriculumSources.map((entry) => entry.material)))
   const indexedJob = structuredClone(job)
   const replaceMaterial = (material: WorkerJob["chat"]["materials"][number]) => indexed.find((source) => source.material.id === material.id)?.material ?? material
   indexedJob.chat.materials = indexedJob.chat.materials.map(replaceMaterial)
   for (const scratchpad of indexedJob.scratchpads) scratchpad.materials = scratchpad.materials.map(replaceMaterial)
   for (const scratchpad of indexedJob.workspaceScratchpads) scratchpad.materials = scratchpad.materials?.map(replaceMaterial)
   const skillPaths = ["skills/MANAGE_TOPIC.md", ...teachingSkills,
-    "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/tools.md", "scratchpad_templates/topic/scratchpad_topic.md"]
+    "scratchpad_templates/topic/schema.md", "scratchpad_templates/topic/scratchpad_topic.md"]
   const base = await createTutorSession(indexedJob, activity, undefined, { ...persist, skillPaths })
   const management = await readFile(join(job.skillDirectory, "skills/MANAGE_TOPIC.md"), "utf8")
   const catalog = await readSkillCatalog(job.skillDirectory, teachingSkills)
@@ -83,6 +97,7 @@ export async function createTopicPlannerSession(job: WorkerJob, role: z.infer<ty
   const tools: ChatCompletionTool[] = [
     { type: "function", function: { name: "read_skill", description: "Read a topic role skill or reference when needed.", parameters: z.toJSONSchema(z.object({ path: z.enum(skillPaths) })) } },
     { type: "function", function: { name: "select_topic_sections", description: "Read indexed curriculum sections in one batch. Supply only the IDs needed for the requested scope. The host supplies their text and records source evidence. Request images only to resolve ambiguous headings or figures.", parameters: z.toJSONSchema(SelectSectionsSchema) } },
+    { type: "function", function: { name: "inspect_source_pages", description: "Inspect any granted source page, including pages outside selected sections. Images preserve layout and diagrams. Read at most 3 visual pages or 15 text pages per call.", parameters: z.toJSONSchema(InspectPagesSchema) } },
     { type: "function", function: { name: "inspect_web_source", description: "Fetch and inspect an actual source page after native web search. Returns a host-issued section ID and its content. Use that ID in the plan. A URL from search results alone cannot be cited.", parameters: z.toJSONSchema(WebSourceSchema) } },
     { type: "function", function: { name: "submit_topic_plan", description: "Save the proposed curriculum using reviewed section IDs. The host constructs part IDs, file paths, page ranges, and citations. No reference fields are accepted. This ends planning immediately; the host presents confirmation after commit.", parameters: z.toJSONSchema(SubmitPlanSchema) } },
     { type: "function", function: { name: "request_topic_clarification", description: "Return a specific missing scope or source question without creating a topic.", parameters: z.toJSONSchema(ClarificationSchema) } },
@@ -98,15 +113,21 @@ Topic references available through read_skill: ${JSON.stringify(skillPaths.filte
 Task: ${role.request.task}
 Context: ${role.request.context.relevantContext}
 Indexed curriculum sections: ${JSON.stringify([...sections.values()].map(({ section, materialId }) => ({ ...section, materialId })))}
+Source page inventory: ${JSON.stringify(curriculum.map(({ material }) => ({ materialId: material.id, name: material.name, pageCount: material.pages.length || 1, visualsAvailable: material.kind === "pdf" || material.kind === "image", unresolvedPages: material.documentIndex?.pageMap?.filter((page) => page.needsVisualReview).map((page) => page.page) ?? [] })))}
 Practice attachments retained automatically: ${JSON.stringify(indexed.filter((source) => source.practice).map(({ material }) => ({ name: material.name, pageCount: material.pages.length || 1 })))}
-Select the requested section IDs together with select_topic_sections. Preserve their source order, headings, and continuation ranges. Do not navigate by guessing page numbers or spawn section readers. OCR is a navigation aid; inspect source images if a heading is unclear. Do not inspect or cite deferred practice attachments just to preserve them.
+The heading map is provisional navigation, not a limit on readable pages. Use inspect_source_pages to inspect any source page's text or image. Select the requested section IDs together with select_topic_sections. Preserve source order and continuation ranges. PPTX uses native text and shape layout without a converter; screenshots are available only from PDF or image attachments. A verified matching PDF is used once as the curriculum source. For standalone PPTX, plan from native content and request a PDF only when essential visual content cannot be understood. Unclassified ranges must not be silently omitted. If unresolved images cannot be inspected by this provider, request clarification or a vision-capable runner rather than claim complete coverage. Do not inspect or cite deferred practice attachments just to preserve them.
 If no suitable curriculum source is supplied, use native web search, then inspect_web_source for candidate official documentation, textbooks, university materials, or primary publications. Use at most two search rounds. If sources remain unavailable, ask a focused clarification.
-Submit a concise plan with submit_topic_plan: title, selected section IDs, and one or two essential learning goals per section with concise understoodWhen criteria. Use a name override only to clarify a source heading. The host owns references and page ranges. Do not generate questions, answer keys, worked lessons, a handoff, or a final learner reply. These belong to teaching after confirmation.`,
+Submit a concise plan with submit_topic_plan: title, selected section IDs, and one or two essential learning goals per section with concise understoodWhen criteria. Each learning part accepts sectionIds: an array of reviewed index ranges. Combine continuation slides, examples, and introductory title/agenda/recap ranges into coherent learning parts. Do not create one part per slide or repeat the same heading across parts. For example, Walkthrough pages 9–23 is one part containing all its sectionIds. Use a name override for the combined topic. The host owns references and page ranges. Do not generate questions, answer keys, worked lessons, a handoff, or a final learner reply. These belong to teaching after confirmation.`,
     async readMessageImages() { return [] },
     async execute(name: string, input: Parameters<typeof base.execute>[1]) {
       try {
         if (output) throw new Error("Planning has ended.")
         if (name === "read_skill") return base.execute(name, input)
+        if (name === "inspect_source_pages") {
+          const { materialId, firstPage, lastPage, includeVisuals } = InspectPagesSchema.parse(input)
+          if (!curriculum.some(({ material }) => material.id === materialId)) throw new Error("Select a granted curriculum source.")
+          return base.execute("read_material", { id: materialId, firstPage, lastPage, includeVisuals })
+        }
         if (name === "select_topic_sections") {
           const { sectionIds, includeVisuals } = SelectSectionsSchema.parse(input)
           const selected = sectionIds.map((id) => {
@@ -180,15 +201,54 @@ Submit a concise plan with submit_topic_plan: title, selected section IDs, and o
         }
         if (name !== "submit_topic_plan") throw new Error("Use indexed section selection and submit_topic_plan. Raw topic writes and page references are unavailable during planning.")
         const plan = SubmitPlanSchema.parse(input)
-        if (new Set(plan.sections.map((section) => section.sectionId)).size !== plan.sections.length) throw new Error("Each indexed section can appear only once in the plan.")
+        const selectedIds = plan.sections.flatMap((part) => part.sectionIds ?? [part.sectionId!])
+        if (new Set(selectedIds).size !== selectedIds.length) throw new Error("Each indexed section can appear only once in the plan.")
+        const claimedIds = new Set<string>()
         const content = plan.sections.map((part, index) => {
-          const source = sections.get(part.sectionId)
-          if (!source || !reviewed.has(part.sectionId)) throw new Error("Read the selected section before including it in the plan.")
-          return { id: `tp-section-${index + 1}`, name: part.name ?? source.section.title, references: [source.reference], goals: part.goals, mistakes: [] }
+          const selected = (part.sectionIds ?? [part.sectionId!]).map((sectionId) => {
+            const source = sections.get(sectionId)
+            if (!source || !reviewed.has(sectionId)) throw new Error("Read the selected section before including it in the plan.")
+            const material = curriculum.find((entry) => entry.material.id === source.materialId)?.material
+            if (material && (material.kind === "pdf" || material.kind === "image") && material.documentIndex?.pageMap?.some((page) => page.page >= source.section.firstPage && page.page <= source.section.lastPage && page.needsVisualReview))
+              throw new Error("This source range still requires screenshot review. Use a vision-capable runner or supply a visually reviewed source before submitting its plan.")
+            return source
+          })
+          const references: z.infer<typeof TopicReferenceSchema>[] = []
+          for (const source of selected) {
+            const reference = structuredClone(source.reference)
+            const previous = references.at(-1)
+            if ((reference.type === "pdf" || reference.type === "ppt") && previous?.type === reference.type && previous.path === reference.path) {
+              const last = previous.pages.at(-1)!
+              const next = reference.pages[0]
+              if (next.from < last.from) throw new Error("Keep combined source sections in page order.")
+              if (next.from <= last.to + 1) last.to = Math.max(last.to, next.to)
+              else previous.pages.push(...reference.pages)
+            } else references.push(reference)
+          }
+          let id = `tp-section-${index + 1}`
+          if (role.mode !== "create") {
+            const current = TopicStateSchema.parse(role.snapshot?.state)
+            const existing = current.content.find((entry) => !claimedIds.has(entry.id) && JSON.stringify(entry.references) === JSON.stringify(references))
+            id = existing?.id ?? `tp-${randomUUID()}`
+          }
+          claimedIds.add(id)
+          return { id, name: part.name ?? selected[0].section.title, references, goals: part.goals, mistakes: [] }
         })
         let result
         if (role.mode === "create") result = await base.execute("topic_createTopic", { scratchpad: { type: "topic", version: "11-10-2026", name: plan.title, content } })
-        else result = await base.execute("topic_updateTopic", { scratchpadId: role.scratchpadHandle, name: plan.title, content })
+        else {
+          const current = TopicStateSchema.parse(role.snapshot?.state)
+          const changes: z.infer<typeof TopicChangeSchema>[] = current.content.filter((part) => !content.some((entry) => entry.id === part.id))
+            .map((part) => ({ action: "remove", id: part.id }))
+          for (const [index, part] of content.entries()) {
+            const afterId = content[index - 1]?.id ?? null
+            if (current.content.some((entry) => entry.id === part.id)) {
+              const { id, mistakes: _mistakes, ...patch } = part
+              changes.push({ action: "update", id, patch: { ...patch, parent: null } }, { action: "move", id, afterId })
+            } else changes.push({ action: "add", part, afterId })
+          }
+          result = await base.execute("topic_updateTopic", { scratchpadId: role.scratchpadHandle, name: plan.title, changes })
+        }
         if (!result.success) throw new Error(result.text)
         output = { summary: "Topic plan ready for learner confirmation.", evidence: content.flatMap((part) => part.references) }
         errorMessage = undefined

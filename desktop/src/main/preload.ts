@@ -1,3 +1,4 @@
+import { AppUpdateSchema } from "../shared/app-updates"
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import {
   Channel,
@@ -8,6 +9,14 @@ import {
 } from "../shared/contracts"
 
 const bridge: DesktopBridge = {
+  appUpdateState: async () => AppUpdateSchema.parse(await ipcRenderer.invoke(Channel.appUpdateState)),
+  checkAppUpdate: async () => AppUpdateSchema.parse(await ipcRenderer.invoke(Channel.checkAppUpdate)),
+  installAppUpdate: async () => AppUpdateSchema.parse(await ipcRenderer.invoke(Channel.installAppUpdate)),
+  subscribeAppUpdates: (listener) => {
+    const receive = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof AppUpdateSchema.parse>[0]) => listener(AppUpdateSchema.parse(payload))
+    ipcRenderer.on(Channel.appUpdateChanged, receive)
+    return () => ipcRenderer.removeListener(Channel.appUpdateChanged, receive)
+  },
   copyText: (text, materialIds = []) => ipcRenderer.invoke(Channel.copyText, { text, materialIds }),
   reuseMaterials: async (materialIds, draftIds = []) => MaterialDraftSchema.array().parse(await ipcRenderer.invoke(Channel.reuseMaterials, { materialIds, draftIds })),
   snapshot: async () =>

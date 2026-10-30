@@ -22,9 +22,15 @@ extraResources:
     filter:
       - "**/*"
       - "!codex{,/**}"
+publish:
+  provider: github
+  owner: Acrylic125
+  repo: edu
+  releaseType: release
 asar: true
 # Node OCR workers do not have Electron's ASAR filesystem patches, including for transitive imports.
 asarUnpack:
+  - node_modules/pdfjs-dist/**
   - node_modules/tesseract.js/**
   - node_modules/tesseract.js-core/**
   - node_modules/@tesseract.js-data/eng/**

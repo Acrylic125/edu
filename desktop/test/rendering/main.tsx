@@ -1,4 +1,5 @@
 import { testStaging } from "./staging"
+import { testAppUpdates } from "./app-updates"
 import { testScratchpadFiles } from "./scratchpad-files"
 import { testPlanConfirmation } from "./plan-confirmation"
 import { testResponseChoice } from "./response-choice"
@@ -40,6 +41,7 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testAppUpdates(root, host)
   await testPastedTopicMentions(root, host)
   await testPlanConfirmation(root, host)
   await testResponseChoice(root, host)
@@ -200,6 +202,17 @@ async function runRenderingTests() {
     flushSync(() => root.render(<ThemeProvider><ProviderConnectionSetup snapshot={next} /></ThemeProvider>))
     assert(host.querySelector(`[aria-label="${name} runtime"]`)?.textContent?.includes("Not detected") === true, `${name} settings must explain when no executable is found`)
   }
+
+  const escapedDiagrams = [
+    "Bound processing and locate the exact passage.",
+    "```mermaid\\nflowchart LR\\n  R[1,200-page report] -->|bounded job| A[Pages 80–95: relevant appendix]\\n  R -->|separate bounded job| B[Another page range]\\n  A -. independent work may overlap .-> B\\n```",
+    "Keep the document and page locators with the passage.",
+    "```mermaid\\nflowchart LR\\n  Doc[Report title and URI] --> P[Page 88]\\n  P --> C1[Chunk ID: c-17]\\n  P --> C2[Chunk ID: c-18]\\n  C2 --> Claim[Exact passage supporting a claim]\\n```",
+  ].join("\n\n")
+  flushSync(() => root.render(<StudyMarkdown text={escapedDiagrams} scratchpads={[]} materials={[]} onOpenScratchpad={() => {}} onOpenMaterial={() => {}} />))
+  await waitFor(() => host.querySelectorAll('[aria-label="Mermaid diagram"] svg').length === 2)
+  assert(!host.textContent?.includes("\\nflowchart"), "Escaped saved diagrams must render as SVG instead of inline Mermaid code")
+  assert(host.textContent?.includes("Keep the document and page locators with the passage.") === true, "Diagram repair must preserve the surrounding explanation")
 
   for (const failure of failures) console.error(`FAIL: ${failure}`)
   root.unmount()

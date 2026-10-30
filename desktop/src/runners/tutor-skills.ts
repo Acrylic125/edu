@@ -7,8 +7,9 @@ export const skillFiles = [
   "skills/MANAGE_TOPIC.md", "skills/MANAGE_TEST.md", "skills/MANAGE_GENERIC.md",
   ...teachingSkills,
   ...(["topic", "test", "generic"] as const).flatMap((role) => [
-    `scratchpad_templates/${role}/schema.md`, `scratchpad_templates/${role}/tools.md`, `scratchpad_templates/${role}/scratchpad_${role}.md`,
+    `scratchpad_templates/${role}/schema.md`, `scratchpad_templates/${role}/scratchpad_${role}.md`,
   ]),
+  ...(["test", "generic"] as const).map((role) => `scratchpad_templates/${role}/tools.md`),
 ] as const
 
 const SkillHeaderSchema = z.object({ name: z.string().min(1), description: z.string().min(1).max(2000) })

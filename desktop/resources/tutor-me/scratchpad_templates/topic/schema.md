@@ -58,6 +58,12 @@ type Topic = {
         steps: {
           question: string,
           answerFromUser?: string // answer may not be provided (i.e. termination / not yet answered)
+          check?: TopicCheck,
+          assessment?: TopicAnswerAssessment,
+          assessmentHistory?: TopicAnswerAssessment[],
+          additionalAnswers?: { messageId: string, answerFromUser: string }[],
+          resumeFrom?: { threadId: string, stepIndex: number },
+          reviewStartIndex?: number // Managed by the host when a completed part starts practice
         }[]
       }
     }
@@ -70,6 +76,8 @@ type TopicScratchpadType = {
 ```
 
 ## Shared thread coordination
+
+`TopicCheck` selects zero-based `goalIndex` and `criterionIndex` from the part's existing goals and states `reasoningTask`, `missingEvidence`, and `expectedEvidence`. `TopicAnswerAssessment` selects the same criterion. It stores `status` as `demonstrated`, `uncertain`, or `contradicted`, with `evidence` entries containing `stepIndex` and the complete verbatim answer in `quote`. It separates `interpretation` from that evidence and retains a `remainingGap` for unresolved understanding. These private assessment fields remain in structured state rather than the public walkthrough. Legacy steps may omit them.
 
 `threadTutors` is shared state that lets threads see what other threads are doing. Each entry identifies a writing thread and stores its per-part status and ordered question/answer steps. An absent `answerFromUser` means the recorded question has no answer yet, including a terminated or skipped check.
 

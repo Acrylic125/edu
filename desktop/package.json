@@ -17,7 +17,8 @@
     "dev:renderer": "vite --config vite.renderer.config.ts --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "package": "pnpm build && electron-builder && pnpm test:packaged",
-    "package:dir": "pnpm build && electron-builder --dir -c.mac.identity=null && pnpm test:packaged"
+    "package:dir": "pnpm build && electron-builder --dir -c.mac.identity=null && pnpm test:packaged",
+    "test:source-images": "electron-vite build --config electron.test.config.ts && node scripts/test-source-images.mjs"
   },
   "dependencies": {
     "@arizeai/openinference-semantic-conventions": "2.14.0",
@@ -33,8 +34,11 @@
     "@opentelemetry/sdk-trace-base": "2.12.0",
     "@tesseract.js-data/eng": "1.0.0",
     "cheerio": "1.2.0",
+    "electron-updater": "^6.8.11",
+    "fflate": "0.8.2",
     "officeparser": "8.1.1",
     "openai": "^7.32.0",
+    "pdfjs-dist": "6.2.108",
     "tesseract.js": "7.0.0",
     "unpdf": "^1.8.1",
     "zod": "^4.4.3"

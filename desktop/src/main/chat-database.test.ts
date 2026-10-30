@@ -9,7 +9,7 @@ import { z } from "zod"
 import { WorkspaceSchema } from "../shared/contracts"
 import { WorkflowRecordSchema } from "../shared/tutor-workflow"
 import { ChatDatabase } from "./chat-database"
-import { newChat, newScratchpad } from "./workspace"
+import { newChat, newScratchpad, WorkspaceRepository } from "./workspace"
 import { StoredJsonSchema } from "./workspace-migrations"
 
 test("legacy database fields migrate without losing scratchpad links or workflow context", async (t) => {
@@ -69,4 +69,30 @@ test("legacy field migration updates cached tool requirements while preserving c
     type: "topic", content: "topicId", scratchpad: { name: "Fractions" },
     properties: { scratchpadId: { type: "string" } }, required: ["scratchpadId"], scratchpadIds: ["new"],
   })
+})
+
+test("reopening a workspace repairs saved topic-check clarification styling without changing ordinary clarifications", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "edu-check-presentation-"))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const database = new ChatDatabase(join(directory, "state.sqlite"))
+  const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "default" }
+  const scratchpad = newScratchpad("Structure-aware chunks", "topic")
+  const topic = newChat(runner.id)
+  const ordinary = newChat(runner.id)
+  const question = "Does this row establish Model B's limit? Explain what is missing."
+  topic.learning = { ...topic.learning, phase: "awaiting_clarification", pendingQuestion: question, privateAnswerKey: "No; the row refers to Model A", pendingCheck: { scratchpadId: scratchpad.id, scratchpadPartId: "tp-context", stepIndex: 0 } }
+  topic.messages.push({ id: randomUUID(), role: "assistant", content: `The heading identifies Model A.\n\n${question}`, createdAt: topic.createdAt, scratchpadIds: [] })
+  const materialRequest = "Could you attach the source document?"
+  ordinary.learning = { ...ordinary.learning, phase: "awaiting_clarification", pendingQuestion: materialRequest }
+  ordinary.messages.push({ id: randomUUID(), role: "assistant", content: materialRequest, createdAt: ordinary.createdAt, scratchpadIds: [] })
+  database.save(WorkspaceSchema.parse({ version: 2, runners: [runner], scratchpads: [scratchpad], chats: [topic, ordinary] }))
+  const workspace = new WorkspaceRepository(directory)
+  const restored = await workspace.load()
+  const expected = `The heading identifies Model A.\n\n> [!CHECK]\n> ${question}`
+  assert.equal(restored.chats.find((chat) => chat.id === topic.id)?.messages.at(-1)?.content, expected)
+  const persisted = database.load()
+  assert.equal(persisted?.needsMessageMigration, false, "The repair must be stored, not reapplied on every read")
+  assert.equal(persisted?.state.chats.find((chat) => chat.id === topic.id)?.messages.at(-1)?.content, expected)
+  assert.equal(persisted?.state.chats.find((chat) => chat.id === ordinary.id)?.messages.at(-1)?.content, materialRequest)
+  assert.equal((await workspace.load()).chats.find((chat) => chat.id === topic.id)?.messages.at(-1)?.content, expected, "Reopening must not add duplicate check cards")
 })

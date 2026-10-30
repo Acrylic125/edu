@@ -18,7 +18,12 @@ import { nativeProcessIdentity, reconcileNativeProcesses } from "./native-proces
 
 function scratchpadVersion(snapshot: z.infer<typeof RoleJobSchema>["snapshot"]) {
   let content = null
-  if (snapshot) content = { state: snapshot.state, notes: snapshot.learning.notes, archived: snapshot.archived, planConfirmed: snapshot.planConfirmed, materials: snapshot.materials }
+  if (snapshot) {
+    let notes: string | undefined = snapshot.learning.notes
+    // Structured Markdown is a projection and can change between app builds without an underlying edit.
+    if (snapshot.state?.type !== "generic" && snapshot.state?.document) notes = undefined
+    content = { state: snapshot.state, notes, archived: snapshot.archived, planConfirmed: snapshot.planConfirmed, materials: snapshot.materials }
+  }
   return createHash("sha256").update(JSON.stringify(content)).digest("hex")
 }
 
@@ -220,7 +225,7 @@ export class TutorWorkflowRepository {
       for (const job of batch.jobs) {
         if (job.status !== "ready" || !job.output) throw new Error("Every required role must be ready before committing.")
         const current = state.scratchpads.find((scratchpad) => scratchpad.id === job.scratchpadId) ?? null
-        if (job.mode === "existing" && scratchpadVersion(current) !== job.baseVersion) throw new Error("Scratchpad changed since this role started. Correct the revision conflict before retrying.")
+        if (job.mode === "existing" && scratchpadVersion(current) !== scratchpadVersion(job.snapshot)) throw new Error("Scratchpad changed since this role started. Correct the revision conflict before retrying.")
         if (job.mode === "create" && current) throw new Error("The allocated scratchpad identity is already in use.")
         for (const dependency of job.dependencies) {
           const latest = state.scratchpads.find((scratchpad) => scratchpad.id === dependency.id) ?? null

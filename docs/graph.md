@@ -42,9 +42,55 @@ flowchart TB
 
 Direct routes create host-granted jobs and enter the same topic role subgraph used by Tutor delegation. Each role runs preparation, native execution, and validation before commit. Commit waits for every required job in the batch. Context preparation and history compaction run before coordinator invocations. Original conversation records remain stored.
 
+## Topic assessment transitions
+
+Confirmed Topic writers execute Topic writes and handoff saves through `desktop/src/runners/topic-workflow.ts`. This nested graph runs inside the native tool loop. Skill reads and other read tools bypass it. Test, Generic, read-only Topic roles, and topic planning retain their existing execution paths.
+
+```mermaid
+flowchart TD
+	Context["Inject MANAGE_TOPIC and skill catalog"] --> Agent["Agent chooses a tool or reply"]
+	Agent -->|"tool request"| Kind{"Tool kind"}
+	Kind -->|"read_skill or other read"| Read["Validate access and execute read"]
+	subgraph TopicTools["Topic write and handoff-save subgraph"]
+		Reconcile["reconcile_saved_assessments<br/>Stage completion from eligible saved evidence"]
+		Apply["apply_tool<br/>Validate and stage requested operation"]
+		subgraph CompletionNode["apply_assessment_completion"]
+			Eligible{"Successful topic_recordAnswer<br/>or topic_activatePart?"}
+			Complete["Stage completion for parts with<br/>every required criterion demonstrated"]
+			Noop["Leave progress unchanged"]
+			Eligible -->|"yes"| Complete
+			Eligible -->|"no"| Noop
+		end
+		Reconcile --> Apply
+		Apply --> Eligible
+	end
+
+	Kind -->|"Topic write or save_learning_state"| Reconcile
+	Read --> Result["Return tool result to agent"]
+	Complete --> Result
+	Noop --> Result
+	Result --> Agent
+	Agent -->|"finish_role"| Finish["Validate role completion"]
+	Agent -->|"learner reply"| Reply["Validate saved handoff and response"]
+	Finish --> Host["Outer workflow validates and commits before publication"]
+	Reply --> Host
+```
+
+The diagram expands the condition inside `apply_assessment_completion`. The graph visits that node after every Topic write or handoff save. The node applies completion only after a successful `topic_recordAnswer` or `topic_activatePart`; other calls leave it without further changes. Completion follows the answer write so it can inspect the newly recorded assessment before the agent chooses its next action.
+
+The role receives `MANAGE_TOPIC` on entry and a catalog of general teaching skills. The agent chooses when to call `read_skill` for a skill body or topic reference. The host enforces the allowed paths, but this subgraph does not require particular skill reads or enforce the broader teaching sequence. All three subgraph nodes run deterministic code within the same native invocation.
+
+Completion requires a valid demonstrated assessment for every criterion in every goal of the part. Evidence quotes must match recorded answers in the same thread and part. The latest assessment takes precedence, including reassessments of earlier steps. An uncertain or contradictory reassessment reopens the part. A new question on a completed part starts a review cycle that requires fresh evidence. Legacy answers without assessments cannot establish completion.
+
+The host stages generated `complete` operations through the same repository as agent writes. Each operation includes a hash of its goals and evidence, which the host checks again at commit. Persisted operation identities and assessment order make interrupted retries reusable without discarding later reassessments. Before any Topic write or handoff save, the workflow also reconciles older active parts with sufficient saved evidence. Reconciliation changes progress through staged operations and preserves learner history.
+
+A thread's `currentPartId` records navigation independently of mastery. The learner can defer an incomplete part and focus elsewhere while its unresolved assessments remain active. Older states retain the existing focus fallback until a navigation tool records the current part.
+
 ## Ordinary response latency
 
 An eligible confirmed-topic turn uses one topic-role invocation, followed by commit and `presentRoleReply`. The host skips the routing Tutor invocation and publishes the role's stored response without a final Tutor rewrite.
+
+The Topic tool graph adds deterministic local work and host persistence, with no evaluator, coordinator, or rewrite model invocation.
 
 The direct route requires exactly one selected, unarchived, confirmed topic, no scratchpad command or creation request, and bounded conversation context. Topic selection uses explicit mentions, the confirmation target, a pending check, the opened topic, and recent message targets. An unrelated draft does not prevent routing to the selected confirmed topic.
 

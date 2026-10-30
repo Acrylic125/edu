@@ -1,49 +1,55 @@
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { createWorker, OEM } from "tesseract.js"
-import { createIsomorphicCanvasFactory, extractText, getDocumentProxy, renderPageAsImage } from "unpdf"
+import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { OfficeGenerator, OfficeParser } from "officeparser"
 import { z } from "zod"
 import { MaterialSchema } from "../shared/contracts"
-import { DocumentIndexSchema } from "../shared/document-index"
-import { materialSections } from "../runners/material-sections"
+import { DocumentIndexSchema, DocumentPageSchema } from "../shared/document-index"
+import { documentPage } from "./document-structure"
+import { presentationLayout } from "./presentation-layout"
 
 const ExtractedMaterialSchema = MaterialSchema.pick({ kind: true, text: true, pages: true, documentIndex: true })
 
-export function indexDocument(digest: string, pages: string[], name: string, ocrPages: number[] = []) {
-  const headings = materialSections({ pages }).filter((heading) => heading.number.includes("."))
-  const starts = headings.filter((heading, index) => index === 0 || heading.number !== headings[index - 1].number)
-  let sections = starts.map((heading, index) => ({
-    id: `section-${digest.slice(0, 16)}-${heading.page}`,
-    title: `${heading.number} ${heading.title}`,
-    firstPage: heading.page,
-    lastPage: (starts[index + 1]?.page ?? pages.length + 1) - 1,
-  }))
-  if (!sections.length) sections = pages.map((page, index) => ({
-    id: `section-${digest.slice(0, 16)}-${index + 1}`,
-    title: page.split("\n").find((line) => line.trim())?.trim().slice(0, 160) || name,
-    firstPage: index + 1, lastPage: index + 1,
-  }))
-  return DocumentIndexSchema.parse({ version: 1, digest, sections, ocrPages })
+export function indexDocument(digest: string, pages: string[], name: string, ocrPages: number[] = [], structure?: z.infer<typeof DocumentPageSchema>[]) {
+  if (!pages.length) throw new Error("The source has no pages.")
+  const pageMap = structure ?? pages.map((text, offset) => {
+    const headings = []
+    for (const line of text.split("\n")) {
+      const heading = /^([1-9]\d{0,2}\.|[1-9]\d{0,2}(?:\.\d{1,3})+\.?)\s+(.+)/.exec(line.trim())
+      if (!heading || !/^(?:\p{L}|\d+\p{L}|\d+['’])/u.test(heading[2]) || /[=×÷+*<>]/.test(heading[2])) continue
+      const number = heading[1].replace(/\.$/, "")
+      headings.push({ text: `${number} ${heading[2]}`, level: number.split(".").length })
+    }
+    let headingSource: z.infer<typeof DocumentPageSchema>["headingSource"] = "unresolved"
+    if (headings.length) headingSource = "text"
+    return { page: offset + 1, blocks: [{ type: "paragraph", text, depth: 0 }], headings, headingSource, needsVisualReview: !headings.length }
+  })
+  const sections: z.infer<typeof DocumentIndexSchema>["sections"] = []
+  for (const page of pageMap) {
+    let title = `Unclassified pages`
+    if (page.headings.length) title = page.headings.map((heading) => heading.text).join(" / ").slice(0, 1000)
+    const previous = sections.at(-1)
+    // Reviewed headingless pages can continue a section; unresolved pages remain visible as gaps.
+    if (previous && (previous.title === title || (!page.headings.length && !page.needsVisualReview))) {
+      previous.lastPage = page.page
+    } else {
+      sections.push({ id: `section-${digest.slice(0, 16)}-${page.page}`, title, firstPage: page.page, lastPage: page.page })
+    }
+  }
+  return DocumentIndexSchema.parse({ version: 2, digest, sections, ocrPages, pageCount: pages.length, pageMap })
 }
 
 export function materialDigest(buffer: Buffer, extension: string) {
-  return createHash("sha256").update(buffer).update(`indexed-text-v2:${extension}`).digest("hex")
-}
-
-function createOcrWorker(cacheDirectory: string) {
-  return createWorker("eng", OEM.LSTM_ONLY, {
-    langPath: join(dirname(require.resolve("@tesseract.js-data/eng/package.json")), "4.0.0_best_int").replace("app.asar/", "app.asar.unpacked/"),
-    workerPath: require.resolve("tesseract.js/src/worker-script/node/index.js").replace("app.asar/", "app.asar.unpacked/"),
-    cachePath: cacheDirectory,
-  })
+  return createHash("sha256").update(buffer).update(`structured-pages-v4:${extension}`).digest("hex")
 }
 
 export async function readCachedExtraction(buffer: Buffer, extension: string, cacheDirectory: string) {
   const cachePath = join(cacheDirectory, `${materialDigest(buffer, extension)}.json`)
   try {
-    return ExtractedMaterialSchema.parse(JSON.parse(await readFile(cachePath, "utf8")))
+    const cached = ExtractedMaterialSchema.parse(JSON.parse(await readFile(cachePath, "utf8")))
+    if (cached.documentIndex?.version !== 2 || cached.documentIndex.digest !== materialDigest(buffer, extension) || cached.documentIndex.pageCount !== (cached.pages.length || 1)) return
+    return cached
   } catch (error) {
     if (!(error instanceof z.ZodError || error instanceof SyntaxError || (error instanceof Error && "code" in error && error.code === "ENOENT"))) throw error
   }
@@ -57,76 +63,38 @@ export async function extractMaterial(buffer: Buffer, extension: string, cacheDi
   let text = ""
   let pages: string[] = []
   let kind: z.infer<typeof MaterialSchema>["kind"] = "text"
-  const ocrPages: number[] = []
-  if (extension === ".pdf") {
-    kind = "pdf"
-    const pdf = await getDocumentProxy(new Uint8Array(buffer), {
-      disableFontFace: true,
-      CanvasFactory: await createIsomorphicCanvasFactory(() => import("@napi-rs/canvas")),
-    })
-    try {
-      const extracted = await extractText(pdf, { mergePages: false })
-      pages = extracted.text
-      const missing = pages.flatMap((page, index) => page.trim().length < 80 ? [index] : [])
-      if (missing.length) {
-        await mkdir(cacheDirectory, { recursive: true, mode: 0o700 })
-        let next = 0
-        const workers = []
-        try {
-          for (let index = 0; index < Math.min(3, missing.length); index++) {
-            const worker = await createOcrWorker(cacheDirectory)
-            workers.push(worker)
-          }
-          const operations = await Promise.allSettled(workers.map(async (worker) => {
-            while (next < missing.length) {
-              const index = missing[next++]
-              const image = await renderPageAsImage(pdf, index + 1, { canvasImport: () => import("@napi-rs/canvas"), scale: 1.3 })
-              const result = await worker.recognize(Buffer.from(image))
-              if (result.data.text.trim().length > pages[index].trim().length) {
-                pages[index] = result.data.text.trim()
-                ocrPages.push(index + 1)
-              }
-            }
-          }))
-          const failure = operations.find((result) => result.status === "rejected")
-          if (failure?.status === "rejected") throw failure.reason
-        } finally {
-          await Promise.allSettled(workers.map((worker) => worker.terminate()))
-        }
-      }
-      text = pages.join("\n\n")
-    } finally {
-      await pdf.loadingTask.destroy()
+  let structure: z.infer<typeof DocumentPageSchema>[] | undefined
+  if (extension === ".pdf" || extension === ".pptx") {
+    let fileType: "pdf" | "pptx" = "pdf"
+    if (extension === ".pptx") fileType = "pptx"
+    const worker = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")
+    let pdfWorkerSrc: string | undefined
+    if (worker.includes("app.asar/")) pdfWorkerSrc = pathToFileURL(worker.replace("app.asar/", "app.asar.unpacked/")).href
+    const document = await OfficeParser.parseOffice(buffer, { fileType, ignoreSlideMasters: true, ocr: false, ...(pdfWorkerSrc ? { pdfWorkerSrc } : {}) })
+    const containers = document.content.filter((node) => node.type === "page" || node.type === "slide")
+    if (!containers.length) throw new Error("The document has no readable pages or slides.")
+    structure = containers.map((node, offset) => documentPage(node, offset + 1))
+    if (extension === ".pptx") {
+      const layout = presentationLayout(buffer)
+      if (layout.length !== structure.length) throw new Error("The slide manifest and extracted slide count disagree.")
+      structure = structure.map((page, offset) => ({ ...page, ...layout[offset], blocks: [...page.blocks, ...layout[offset].blocks] }))
     }
-  } else if (extension === ".pptx") {
-    const presentation = await OfficeParser.parseOffice(buffer, {
-      fileType: "pptx",
-      ignoreSlideMasters: true,
-    })
-    for (const slide of presentation.content.filter((node) => node.type === "slide")) {
-      const extracted = await OfficeGenerator.generate({ ...presentation, content: [slide] }, "text")
+    for (const node of containers) {
+      const extracted = await OfficeGenerator.generate({ ...document, content: [node] }, "text")
       pages.push(extracted.value.trim())
     }
-    if (pages.length === 0) throw new Error("The presentation has no readable slides.")
-    text = pages.map((page, index) => `Slide ${index + 1}\n${page}`).join("\n\n")
+    if (extension === ".pdf") kind = "pdf"
+    text = pages.join("\n\n")
   } else if ([".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
     kind = "image"
     if (buffer.length > 8 * 1024 * 1024) throw new Error("Use images smaller than 8 MB.")
-    await mkdir(cacheDirectory, { recursive: true, mode: 0o700 })
-    const worker = await createOcrWorker(cacheDirectory)
-    try {
-      text = (await worker.recognize(buffer)).data.text.trim()
-      ocrPages.push(1)
-    } finally {
-      await worker.terminate()
-    }
-    if (!text) text = "Image source. Inspect the original image to resolve its content."
+    text = "Image source. Inspect the original image to resolve its content."
   } else {
     if (buffer.includes(0)) throw new Error("The attachment is not a readable text file.")
     text = buffer.toString("utf8")
   }
   const indexedPages = pages.length ? pages : [text]
-  const documentIndex = indexDocument(digest, indexedPages, "Source", ocrPages.sort((left, right) => left - right))
+  const documentIndex = indexDocument(digest, indexedPages, "Source", [], structure)
   const result = ExtractedMaterialSchema.parse({ kind, text, pages, documentIndex })
   await mkdir(cacheDirectory, { recursive: true, mode: 0o700 })
   const temporary = `${cachePath}.${randomUUID()}.tmp`

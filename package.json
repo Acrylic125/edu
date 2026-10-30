@@ -8,6 +8,7 @@
     "landing:check": "pnpm --dir landing check",
     "desktop:dev": "pnpm --dir desktop dev",
     "desktop:build": "pnpm --dir desktop build",
-    "desktop:package": "pnpm --dir desktop package"
+    "desktop:package": "pnpm --dir desktop package",
+    "test:index-materials": "pnpm --dir desktop exec tsx ../tests/index-materials.ts"
   }
 }
