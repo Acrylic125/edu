@@ -1,4 +1,5 @@
 import { testStaging } from "./staging"
+import { testAppUpdates } from "./app-updates"
 import { testScratchpadFiles } from "./scratchpad-files"
 import { testPlanConfirmation } from "./plan-confirmation"
 import { testResponseChoice } from "./response-choice"
@@ -40,6 +41,7 @@ async function waitFor(check: () => boolean) {
 async function runRenderingTests() {
   const host = document.getElementById("root")!
   const root = createRoot(host)
+  await testAppUpdates(root, host)
   await testPastedTopicMentions(root, host)
   await testPlanConfirmation(root, host)
   await testResponseChoice(root, host)

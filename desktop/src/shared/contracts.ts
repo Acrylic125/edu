@@ -1,3 +1,4 @@
+import { AppUpdateSchema } from "./app-updates"
 import { z } from "zod"
 import { DocumentIndexSchema } from "./document-index"
 import { TopicPartSchema } from "./topic-state"
@@ -358,6 +359,10 @@ export const WorkerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), error: z.string() }),
 ])
 export const Channel = {
+  appUpdateState: "edu:app-update-state",
+  appUpdateChanged: "edu:app-update-changed",
+  checkAppUpdate: "edu:check-app-update",
+  installAppUpdate: "edu:install-app-update",
   copyText: "edu:copy-text",
   reuseMaterials: "edu:reuse-materials",
   snapshot: "edu:snapshot",
@@ -399,6 +404,10 @@ export type Chat = z.infer<typeof ChatSchema>
 export type LearningState = z.infer<typeof LearningStateSchema>
 export type WorkerJob = z.infer<typeof WorkerJobSchema>
 export type DesktopBridge = {
+  appUpdateState: () => Promise<z.infer<typeof AppUpdateSchema>>
+  subscribeAppUpdates: (listener: (state: z.infer<typeof AppUpdateSchema>) => void) => () => void
+  checkAppUpdate: () => Promise<z.infer<typeof AppUpdateSchema>>
+  installAppUpdate: () => Promise<z.infer<typeof AppUpdateSchema>>
   copyText: (text: string, materialIds?: string[]) => Promise<void>
   reuseMaterials: (materialIds: string[], draftIds?: string[]) => Promise<z.infer<typeof MaterialDraftSchema>[]>
   snapshot: () => Promise<Snapshot>

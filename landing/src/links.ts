@@ -1,4 +1,4 @@
 export const links = {
-  download: import.meta.env.DOWNLOAD_URL ?? "",
+  download: "https://github.com/Acrylic125/edu/releases/latest/download/EdU-mac-arm64.dmg",
   skill: "",
 };

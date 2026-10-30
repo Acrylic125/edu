@@ -1,3 +1,5 @@
+import { autoUpdater } from "electron-updater"
+import { DesktopUpdates } from "./app-updates"
 import { CopiedMessageSchema, messageClipboardHtml } from "../shared/message-clipboard"
 import { randomUUID } from "node:crypto"
 import { access, constants, mkdir, stat } from "node:fs/promises"
@@ -60,6 +62,7 @@ else app.setPath("userData", join(app.getPath("appData"), "edu"))
 let window: BrowserWindow | undefined
 let manager: RunnerManager | undefined
 let providers: ProviderRegistry | undefined
+let updates: DesktopUpdates | undefined
 let quitting = false
 let shuttingDown = false
 const ownsLock = app.requestSingleInstanceLock()
@@ -155,6 +158,42 @@ else {
         )
           throw new Error("Untrusted desktop request.")
       }
+      updates = new DesktopUpdates(autoUpdater, app.getVersion(), app.isPackaged, (state) => {
+        if (window && !window.isDestroyed()) window.webContents.send(Channel.appUpdateChanged, state)
+      }, async () => {
+        shuttingDown = true
+        updates?.stop()
+        try {
+          await manager?.shutdown()
+          quitting = true
+          autoUpdater.quitAndInstall(false, true)
+        } catch (error) {
+          shuttingDown = false
+          quitting = false
+          updates?.start()
+          throw error
+        }
+      })
+      const appUpdates = updates
+      autoUpdater.on("error", () => {
+        // Squirrel can reject an update asynchronously after quitAndInstall returns.
+        if (!quitting || appUpdates.state.phase !== "downloaded") return
+        shuttingDown = false
+        quitting = false
+        appUpdates.start()
+      })
+      ipcMain.handle(Channel.appUpdateState, (event) => {
+        trusted(event)
+        return appUpdates.state
+      })
+      ipcMain.handle(Channel.checkAppUpdate, (event) => {
+        trusted(event)
+        return appUpdates.check()
+      })
+      ipcMain.handle(Channel.installAppUpdate, (event) => {
+        trusted(event)
+        return appUpdates.update()
+      })
       ipcMain.handle(Channel.copyText, async (event, raw) => {
         trusted(event)
         const { text, materialIds } = CopiedMessageSchema.parse(raw)
@@ -530,6 +569,7 @@ else {
       )
       createWindow()
       registry.startPolling()
+      appUpdates.start()
       app.on("activate", () => {
         if (shuttingDown) return
         if (!window) createWindow()
@@ -549,10 +589,14 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit()
 })
 app.on("before-quit", (event) => {
-  if (quitting) return
+  if (quitting) {
+    providers?.close()
+    return
+  }
   event.preventDefault()
   if (shuttingDown) return
   shuttingDown = true
+  updates?.stop()
   window?.hide()
   providers?.close()
   void (manager?.shutdown() ?? Promise.resolve()).finally(() => {
