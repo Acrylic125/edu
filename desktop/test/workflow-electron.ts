@@ -10,6 +10,7 @@ import { RunnerManager } from "../src/runners/manager"
 import { TutorWorkflowRepository } from "../src/main/tutor-workflow"
 import { Channel, RuntimeUpdateSchema, SnapshotSchema } from "../src/shared/contracts"
 import { createBatchedUpdate } from "../src/shared/batched-update"
+import { indexDocument, materialDigest } from "../src/main/material-extraction"
 
 async function main() {
   await app.whenReady()
@@ -21,6 +22,12 @@ async function main() {
       { id: randomUUID(), name: "vector-spaces-copy.pdf", kind: "pdf" as const, text: "Vector spaces", pages: Array.from({ length: 70 }, (_, index) => `${["6.1 Vector spaces", "6.2 Subspaces", "6.3 Span", "6.4 Later material"][index] ?? "Continuation"}\nLecture page ${index + 1}. ${"Definition and source example. ".repeat(4)}`) },
       { id: randomUUID(), name: "tutorial-copy.pdf", kind: "pdf" as const, text: "Vector spaces tutorial", pages: ["Tutorial page 1", "Tutorial page 2", "Tutorial page 3"] },
     ]
+    const indexedMaterials = planMaterials.map((material) => {
+      const index = indexDocument(materialDigest(Buffer.from("Extracted-PDF fixture"), ".pdf"), material.pages, material.name)
+      // This transport fixture starts after indexing; real parser and visual review have separate tests.
+      const documentIndex = indexDocument(index.digest, material.pages, material.name, [], index.pageMap?.map((page) => ({ ...page, needsVisualReview: false })))
+      return { ...material, documentIndex }
+    })
     const executable = join(directory, "claude.mjs")
     // This process is the external provider boundary; the application and MCP transport remain real.
     await writeFile(executable, `#!/usr/bin/env node
@@ -124,7 +131,7 @@ async function main() {
     console.log("PASS: Electron send → delegation → commit → provider failure → Retry → persisted reply")
     const planChat = newChat(runner.id)
     planChat.titleGenerated = true
-    planChat.materials = planMaterials
+    planChat.materials = indexedMaterials
     const assets = join(directory, "chats", planChat.id, "assets")
     await mkdir(assets, { recursive: true })
     for (const material of planMaterials) await writeFile(join(assets, material.name), "Extracted-PDF fixture")
@@ -152,7 +159,7 @@ async function main() {
     for (const mode of ["plain", "explicit", "upload", "empty"] as const) {
       const greeting = newChat(runner.id)
       greeting.ownerScratchpadId = plan.id
-      if (mode === "upload" || mode === "empty") greeting.materials = [planMaterials[0]]
+      if (mode === "upload" || mode === "empty") greeting.materials = [indexedMaterials[0]]
       await workspace.mutate((state) => state.chats.push(greeting))
       let materialIds: string[] | undefined
       if (mode === "explicit") materialIds = [plan.materials[1].id]

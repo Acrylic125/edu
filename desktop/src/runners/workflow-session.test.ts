@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { z } from "zod"
 import { DocumentSectionSchema } from "../shared/document-index"
+import { indexDocument, materialDigest } from "../main/material-extraction"
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
 import { test } from "node:test"
@@ -264,7 +265,7 @@ test("planning section IDs produce canonical asset references owned by the host"
   const runner = { id: randomUUID(), name: "Tutor", provider: "codex", model: "test" }
   const chat = newChat(runner.id)
   const material = { id: randomUUID(), name: "vector-spaces-copy.pdf", kind: "pdf" as const, text: "Vector spaces and their axioms. ".repeat(4), pages: ["6.1 Vector spaces\n" + "Vector spaces and their axioms. ".repeat(4)] }
-  chat.materials.push(material)
+  chat.materials.push({ ...material, documentIndex: indexDocument(materialDigest(Buffer.from("Embedded text fixture"), ".pdf"), material.pages, material.name) })
   await writeFile(join(directory, material.name), "Embedded text fixture")
   const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: directory })
   const role = RoleJobSchema.parse({ jobId: randomUUID(), stageId: randomUUID(), scratchpadId: randomUUID(), scratchpadHandle: "scratchpad_1", role: "topic", access: "write", mode: "create", snapshot: null, baseVersion: null, operations: [], request: { target: { mode: "create", type: "topic" }, task: "Plan vector spaces", requestedAccess: "write", context: { learnerMessageIds: [], materialIds: [material.id], readDependencies: [], relevantContext: "" } } })
