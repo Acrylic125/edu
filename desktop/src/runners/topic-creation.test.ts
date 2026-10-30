@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { z } from "zod"
 import { DocumentSectionSchema } from "../shared/document-index"
+import { indexDocument, materialDigest } from "../main/material-extraction"
 import { test, type TestContext } from "node:test"
 import { newChat, WorkspaceRepository } from "../main/workspace"
 import { TutorWorkflowRepository } from "../main/tutor-workflow"
@@ -31,7 +32,13 @@ async function fixture(t: TestContext, attached: boolean, content = "/new-topic 
       }) },
       { id: randomUUID(), name: "tutorial.pdf", kind: "pdf", text: "Tutorial practice for later", pages: ["Tutorial exercises for later teaching"] },
     )
-    for (const material of chat.materials) await writeFile(join(assets, material.name), `${material.name}: source bytes`)
+    for (const material of chat.materials) {
+      const bytes = Buffer.from(`${material.name}: source bytes`)
+      await writeFile(join(assets, material.name), bytes)
+      const provisional = indexDocument(materialDigest(bytes, ".pdf"), material.pages, material.name)
+      // This fixture represents already-reviewed continuation pages; unresolved gaps have separate tests.
+      material.documentIndex = indexDocument(provisional.digest, material.pages, material.name, [], provisional.pageMap?.map((page) => ({ ...page, needsVisualReview: false })))
+    }
   }
   await workspace.mutate((state) => state.chats.push(chat))
   const job = WorkerJobSchema.parse({ runner, chat, scratchpads: [], skillDirectory: resolve("resources/tutor-me"), assetDirectory: assets, sourceCacheDirectory: join(directory, "source-cache") })

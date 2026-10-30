@@ -28,6 +28,7 @@ import { ScratchpadMutationSchema, ScratchpadTypeSchema, TestStateSchema, scratc
 import { scratchpadToolDefinitions, scratchpadTools } from "./scratchpad-tools"
 import type { TurnTelemetry } from "./telemetry"
 import { readCachedExtraction } from "../main/material-extraction"
+import { matchingPresentationPdf } from "../shared/presentation-source"
 import { readSourceImages } from "../main/source-images"
 import { materialSections } from "./material-sections"
 import { importStructuredContent } from "../main/structured-content-migration"
@@ -588,29 +589,34 @@ Focused scratchpads: ${JSON.stringify(mapTopicReferenceIds(z.json().parse(JSON.p
             .join("\n\n")
           if (result.length > 60_000)
             throw new Error("This excerpt is too large. Read fewer pages.")
-          if (
-            material.kind === "image" ||
-            (includeVisuals && material.kind === "pdf")
-          ) {
+          let visualSource = entry
+          if (material.name.toLowerCase().endsWith(".pptx")) {
+            result += `\nNative slide layout: ${JSON.stringify(material.documentIndex?.pageMap?.filter((page) => page.page >= firstPage && page.page <= lastPage).map((page) => ({ page: page.page, blocks: page.blocks })) ?? [])}`
+            const companion = matchingPresentationPdf(material, sources.map((source) => source.material))
+            const matched = sources.find((source) => source.material.id === companion?.id)
+            if (matched) visualSource = matched
+            else if (includeVisuals) result += "\nSlide screenshots are unavailable for this PPTX. Use its native text and shape layout. If an essential figure cannot be interpreted, request a PDF export."
+          }
+          if (result.length > 60_000) throw new Error("This excerpt and its layout are too large. Read fewer pages.")
+          if (material.kind === "image" || (includeVisuals && visualSource.material.kind === "pdf")) {
             if (lastPage - firstPage >= 3)
               throw new Error("Read at most 3 visual pages at a time.")
-            const images = await readSourceImages(material, directory, firstPage, lastPage)
+            const visual = visualSource.material
+            const images = await readSourceImages(visual, visualSource.directory, firstPage, lastPage)
             for (let page = firstPage; page <= lastPage; page++) {
               const png = images[page - firstPage]
-              const url = `edu-source://${id}/${page}`
-              result += `\nSource image page ${page}: ![${material.name}, page ${page}](${url}). Embed this image when quoting or examining the source figure itself. For explaining concepts, create an original illustration. Exclude answer annotations for pending assessments.`
+              const url = `edu-source://${visual.id}/${page}`
+              result += `\nSource image page ${page}: ![${visual.name}, page ${page}](${url}). Embed this image when quoting or examining the source figure itself. For explaining concepts, create an original illustration. Exclude answer annotations for pending assessments.`
               sourceImages.push(
-                {
-                  type: "text",
-                  text: `${material.name}, page ${page}. Display URL: ${url}`,
-                },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: `data:image/png;base64,${png.toString("base64")}`,
-                  },
-                },
+                { type: "text", text: `${visual.name}, page ${page}. Display URL: ${url}` },
+                { type: "image_url", image_url: { url: `data:image/png;base64,${png.toString("base64")}` } },
               )
+            }
+            if (visual.id !== id) {
+              await stage?.recordRead?.(visual.id, firstPage, lastPage)
+              const read = readPages.get(visual.id) ?? new Set<number>()
+              for (let page = firstPage; page <= lastPage; page++) read.add(page)
+              readPages.set(visual.id, read)
             }
           }
           await stage?.recordRead?.(id, firstPage, lastPage)
