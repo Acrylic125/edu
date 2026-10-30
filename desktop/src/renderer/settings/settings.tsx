@@ -1,3 +1,4 @@
+import { AppUpdateControl } from "../app-updates"
 import { useState } from "react"
 import { ArrowLeft, Check, Settings } from "lucide-react"
 import { useThemeMode } from "@edu/ui/theme"
@@ -78,14 +79,17 @@ function SettingsSidebar({
         </button>
       }
       footer={
-        <button
-          className="ml-auto rounded-full bg-sidebar-accent p-2 text-sidebar-accent-foreground"
-          aria-label="Settings"
-          aria-current="page"
-          title="Settings"
-        >
-          <Settings className="size-5" />
-        </button>
+        <>
+          <AppUpdateControl />
+          <button
+            className="ml-auto rounded-full bg-sidebar-accent p-2 text-sidebar-accent-foreground"
+            aria-label="Settings"
+            aria-current="page"
+            title="Settings"
+          >
+            <Settings className="size-5" />
+          </button>
+        </>
       }
     >
       <nav className="space-y-1.5" aria-label="Settings sections">

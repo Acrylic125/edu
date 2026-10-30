@@ -12,7 +12,11 @@ pnpm landing:build
 The development server runs at `http://localhost:4321`. The production site is
 generated in `landing/dist`.
 
-Set the Electron download URL with the `DOWNLOAD_URL` environment variable, or
-set it in `src/links.ts`. The skill URL remains configured in `src/links.ts`.
-Each button is disabled until its URL is set; configured buttons render as
-links. Rebuild after changing URLs.
+The download button uses GitHub's latest-release URL for `EdU-mac-arm64.dmg`.
+The desktop release workflow publishes that fixed asset name alongside the
+versioned installers. After this landing-page change is deployed and a release
+with that asset is published, each new release updates the download target
+without a Vercel rebuild or environment-variable change. `DOWNLOAD_URL` is no
+longer used.
+
+The skill URL remains configured in `src/links.ts`.

@@ -35,6 +35,7 @@ jobs:
       - name: Test
         run: |
           node --test desktop/scripts/prepare-release.test.mjs
+          node --test desktop/scripts/prepare-update-manifest.test.mjs
           pnpm --dir desktop test
           pnpm --dir desktop test:electron
           pnpm --dir desktop test:rendering

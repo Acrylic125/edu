@@ -44,5 +44,7 @@ xcrun stapler validate "$zip_check/EdU.app"
 
 mkdir -p release/prepared
 cp "$dmg" "$zip" release/prepared/
+cp "$dmg" release/prepared/EdU-mac-arm64.dmg
+node scripts/prepare-update-manifest.mjs release/signed release/prepared "$RELEASE_VERSION"
 # Stapling changes the DMG bytes, so calculate checksums only after verification.
-(cd release/prepared && shasum -a 256 ./*.dmg ./*.zip > SHA256SUMS-macos-arm64.txt)
+(cd release/prepared && shasum -a 256 ./*.dmg ./*.zip ./*.blockmap ./latest-mac.yml > SHA256SUMS-macos-arm64.txt)

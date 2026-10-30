@@ -1,3 +1,4 @@
+import { AppUpdateControl } from "./app-updates"
 import { isStagedChat } from "../shared/thread-ownership"
 import { clipboardMaterialIds, messageCopyText } from "../shared/message-clipboard"
 import { messageText } from "../shared/message-text"
@@ -1467,14 +1468,17 @@ export function DesktopSidebar({
         </button>
       }
       footer={
-        <button
-          className="ml-auto rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Settings"
-          title="Settings"
-          onClick={openSettings}
-        >
-          <Settings className="size-5" />
-        </button>
+        <>
+          <AppUpdateControl />
+          <button
+            className="ml-auto rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Settings"
+            title="Settings"
+            onClick={openSettings}
+          >
+            <Settings className="size-5" />
+          </button>
+        </>
       }
     >
       <button
